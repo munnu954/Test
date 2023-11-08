@@ -1,0 +1,172 @@
+Sure! Here's an example of Spring Boot code that converts a `data.csv` file to `data.json` using Apache Flink and pushes the converted data to Apache Kafka:
+
+```java
+import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.runtime.state.memory.MemoryStateBackend;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
+import org.apache.flink.table.api.Table;
+import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.table.sources.CsvTableSource;
+
+public class FlinkCsvToJsonConverter {
+
+    public static void main(String[] args) throws Exception {
+        String csvfile = "path/to/your/data.csv";
+        String kafkaTopic = "your-kafka-topic";
+        String kafkaBootstrapServers = "localhost:9092";
+
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        final StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+
+        // Read the CSV file
+        CsvTableSource csvTableSource = CsvTableSource.builder()
+                .path(csvfile)
+                .ignoreParseErrors()
+                .fieldDelimiter(",")
+                .field("name", Types.STRING)
+                .field("age", Types.INT)
+                .build();
+
+        tableEnv.registerTableSource("csvTable", csvTableSource);
+
+        // Convert CSV to JSON
+        Table result = tableEnv.sqlQuery("SELECT to_json(struct(name, age)) AS json FROM csvTable");
+
+        // Set up Kafka producer
+        FlinkKafkaProducer<String> kafkaProducer = new FlinkKafkaProducer<>(
+                kafkaTopic,
+                new SimpleStringSchema(),
+                new Properties());
+        kafkaProducer.setWriteTimestampToKafka(false);
+        kafkaProducer.setBootstrapServers(kafkaBootstrapServers);
+
+        // Write the JSON data to Kafka
+        result.select("json")
+                .writeToSink(kafkaProducer);
+
+        env.execute("CSV to JSON Converter");
+    }
+}
+```
+
+Make sure to replace `csvfile`, `kafkaTopic`, and `kafkaBootstrapServers` with the appropriate values for your use case.
+
+This code uses Apache Flink's `CsvTableSource` to read the `data.csv` file and register it as a table called "csvTable". Then, it uses a SQL query to convert the CSV data to JSON format using the `to_json` function. Finally, it configures a `FlinkKafkaProducer` to push the JSON data to Apache Kafka.
+
+Note that you will need to include the necessary Flink, Kafka, and JSON dependencies in your Maven or Gradle build file for this code to work properly.
+
+
+
+
+
+
+
+Certainly! Here's the same example of Spring Boot code structured in a way that follows the recommended project structure:
+
+Project structure:
+```
+your-flink-project/
+├── src/
+│   ├── main/
+│   │   ├── java/
+│   │   │   └── com/
+│   │   │       └── yourpackage/
+│   │   │           └── CsvToJsonToKafkaApplication.java
+│   │   ├── resources/
+│   │   │   ├── your-csv-file.csv
+│   │   │   └── kafka-credentials.yaml
+│   ├── test/
+│   │   └── java/
+│   │       └── com/
+│   │           └── yourpackage/
+│   │               └── CsvToJsonToKafkaApplicationTest.java
+└── pom.xml
+```
+
+CsvToJsonToKafkaApplication.java:
+```java
+package com.yourpackage;
+
+import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
+import org.apache.flink.table.api.Table;
+import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.table.sources.CsvTableSource;
+
+import java.util.Properties;
+
+public class CsvToJsonToKafkaApplication {
+
+    public static void main(String[] args) throws Exception {
+        String csvfile = CsvToJsonToKafkaApplication.class.getResource("/your-csv-file.csv").getPath();
+        String kafkaTopic = "your-kafka-topic";
+        String kafkaCredentialsPath = CsvToJsonToKafkaApplication.class.getResource("/kafka-credentials.yaml").getPath();
+
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        final StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+
+        // Read the CSV file
+        CsvTableSource csvTableSource = CsvTableSource.builder()
+                .path(csvfile)
+                .ignoreParseErrors()
+                .fieldDelimiter(",")
+                .field("name", Types.STRING)
+                .field("age", Types.INT)
+                .build();
+
+        tableEnv.registerTableSource("csvTable", csvTableSource);
+
+        // Convert CSV to JSON
+        Table result = tableEnv.sqlQuery("SELECT to_json(struct(name, age)) AS json FROM csvTable");
+
+        // Set up Kafka producer properties
+        Properties kafkaProducerProps = KafkaConfigReader.readKafkaProperties(kafkaCredentialsPath);
+
+        // Set up Kafka producer
+        FlinkKafkaProducer<String> kafkaProducer = new FlinkKafkaProducer<>(
+                kafkaTopic,
+                new SimpleStringSchema(),
+                kafkaProducerProps);
+        kafkaProducer.setWriteTimestampToKafka(false);
+
+        // Write the JSON data to Kafka
+        result.select("json")
+                .writeToSink(kafkaProducer);
+
+        env.execute("CSV to JSON Converter");
+    }
+}
+```
+
+KafkaConfigReader.java:
+```java
+package com.yourpackage;
+
+import org.yaml.snakeyaml.Yaml;
+
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.util.Properties;
+
+public class KafkaConfigReader {
+
+    public static Properties readKafkaProperties(String kafkaCredentialsPath) {
+        Properties properties = new Properties();
+        try (InputStream inputStream = new FileInputStream(kafkaCredentialsPath)) {
+            Yaml yaml = new Yaml();
+            properties.putAll(yaml.load(inputStream));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return properties;
+    }
+}
+```
+
+Note: Remember to update the package name `com.yourpackage` to match your project's package structure. Also, make sure to place your CSV file under `src/main/resources` and your Kafka credentials YAML file under `src/main/resources`.
+
+Make sure to replace `your-csv-file.csv` with the actual filename and `your-kafka-topic` with the desired Kafka topic in the `CsvToJsonToKafkaApplication.java` file.
+
+The `KafkaConfigReader` class is responsible for loading the Kafka producer properties from the credentials YAML file.

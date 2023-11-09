@@ -1,0 +1,117 @@
+To convert a CSV file to JSON format using Apache Flink and send the converted JSON data to Kafka, you would need to create the following classes and packages:
+
+1. Create a Maven project and add the required dependencies.
+
+2. Create a package called `com.example.csvtojson`.
+
+3. Create a class called `CSVToJsonConverter` in the `com.example.csvtojson` package. This class will contain the main logic for converting the CSV file to JSON format.
+
+```java
+package com.example.csvtojson;
+
+import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.core.fs.FileSystem;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
+import org.apache.flink.streaming.connectors.kafka.internals.KeyedSerializationSchemaWrapper;
+import org.apache.flink.table.api.EnvironmentSettings;
+import org.apache.flink.table.api.Table;
+import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.sources.CsvTableSource;
+import org.apache.flink.types.Row;
+
+import java.util.Properties;
+
+public class CSVToJsonConverter {
+    public static void main(String[] args) throws Exception {
+        // Set up the execution environment
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        EnvironmentSettings settings = EnvironmentSettings.newInstance().useBlinkPlanner().inStreamingMode().build();
+        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env, settings);
+
+        // Configure CSV Table Source
+        String csvPath = "<path-to-csv-file>"; // Specify the path to your CSV file
+        CsvTableSource csvTableSource = CsvTableSource.builder()
+                .path(csvPath)
+                .fieldDelimiter(",")
+                .ignoreFirstLine()
+                .field("column1", Types.STRING)
+                .field("column2", Types.INT)
+                .field("column3", Types.DOUBLE)
+                // Add more fields if necessary
+                .build();
+
+        // Register CSV Table Source
+        tableEnv.registerTableSource("csv_table", csvTableSource);
+
+        // Convert CSV table to JSON table
+        Table csvTable = tableEnv.scan("csv_table");
+        Table jsonTable = csvTable.select("column1, column2, column3")
+                .toAppendStream(Row.class)
+                .toTable(tableEnv)
+                .select("CAST(column1 AS STRING) AS key, CAST(JSON_OBJECT('column1', column1, 'column2', column2, 'column3', column3) AS STRING) AS value");
+
+        // Convert JSON table to DataStream
+        DataStream<String> jsonStream = tableEnv.toAppendStream(jsonTable, Row.class)
+                .map(row -> row.getField("value"))
+                .map(Object::toString);
+
+        // Configure Kafka producer properties
+        String kafkaBootstrapServers = "<kafka-bootstrap-servers>"; // Specify the Kafka bootstrap servers
+        Properties props = new Properties();
+        props.setProperty("bootstrap.servers", kafkaBootstrapServers);
+
+        // Send the converted JSON data to Kafka
+        jsonStream.addSink(new FlinkKafkaProducer<>(
+                "<kafka-topic>",
+                new KeyedSerializationSchemaWrapper<>(new SimpleStringSchema()),
+                props,
+                FlinkKafkaProducer.Semantic.EXACTLY_ONCE));
+
+        // Execute the Flink job
+        env.execute("CSV to JSON Converter");
+    }
+}
+```
+
+Make sure to replace the placeholders (`<path-to-csv-file>`, `<kafka-bootstrap-servers>`, and `<kafka-topic>`) with the actual values for your use case.
+
+4. Add the required dependencies in your `pom.xml` file:
+
+```xml
+<dependencies>
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-java</artifactId>
+        <version>1.12.1</version>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-streaming-java_2.12</artifactId>
+        <version>1.12.1</version>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-table-api-java-bridge_2.12</artifactId>
+        <version>1.12.1</version>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-connector-kafka_2.12</artifactId>
+        <version>1.12.1</version>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-connector-kafka-base_2.12</artifactId>
+        <version>1.12.1</version>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-table-planner-blink_2.12</artifactId>
+        <version>1.12.1</version>
+    </dependency>
+</dependencies>
+```
+
+That's it! You can now run the `CSVToJsonConverter` class to convert the CSV file to JSON format using Apache Flink and send it to Kafka.

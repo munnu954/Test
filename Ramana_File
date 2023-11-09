@@ -1,0 +1,76 @@
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
+import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
+import org.yaml.snakeyaml.Yaml;
+
+import java.io.InputStream;
+import java.util.Map;
+import java.util.Properties;
+
+public class CsvToJsonToKafka {
+    public static void main(String[] args) throws Exception {
+        // Load Kafka configuration from a YAML file in the resources directory
+        InputStream configStream = CsvToJsonToKafka.class.getClassLoader().getResourceAsStream("config.yml");
+        Yaml yaml = new Yaml();
+        Map<String, Object> config = yaml.load(configStream);
+
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // Define a data stream with your input CSV source
+        DataStream<String> csvStream = env.readTextFile("path/to/your/input.csv");
+
+        // Convert CSV to JSON with a custom delimiter
+        DataStream<String> jsonStream = csvStream.map(new MapFunction<String, String>() {
+            @Override
+            public String map(String csvLine) throws Exception {
+                // Define your custom delimiter
+                String delimiter = ",";
+
+                // Split the CSV line into fields using the delimiter
+                String[] csvFields = csvLine.split(delimiter);
+
+                // Create a JSON object
+                StringBuilder json = new StringBuilder("{");
+                for (int i = 0; i < csvFields.length; i++) {
+                    json.append("\"field").append(i + 1).append("\": \"").append(csvFields[i]).append("\"");
+                    if (i < csvFields.length - 1) {
+                        json.append(", ");
+                    }
+                }
+                json.append("}");
+                return json.toString();
+            }
+        });
+
+        // Define Kafka producer properties
+        Properties properties = new Properties();
+        properties.setProperty("bootstrap.servers", (String) config.get("kafka.broker")); // Read Kafka broker address from the YAML
+        properties.setProperty("topic", (String) config.get("kafka.topic")); // Read Kafka topic name from the YAML
+
+        // Send JSON data to Kafka
+        jsonStream.addSink(new FlinkKafkaProducer<>((String) config.get("kafka.topic"), new SimpleStringSchema(), properties));
+
+        env.execute("CsvToJsonToKafka");
+    }
+}
+
+
+kafka:
+  broker: "localhost:9092" # Set your Kafka broker address
+  topic: "your-kafka-topic" # Set your Kafka topic name
+
+
+CsvToJsonToKafka
+│   pom.xml
+│
+└───src
+    └───main
+        └───java
+        │   └───your
+        │       └───package
+        │           CsvToJsonToKafka.java
+        │
+        └───resources
+            │   config.yml

@@ -1,0 +1,100 @@
+Sure! Here's an example of a complete Spring Boot code that converts a CSV file to JSON format using Apache Flink and sends the converted JSON data to Kafka. 
+
+```java
+// Main Spring Boot Application Class
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class CsvToJsonApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(CsvToJsonApplication.class, args);
+    }
+}
+```
+
+```java
+// Controller Class
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+import java.io.IOException;
+
+@RestController
+public class CsvToJsonController {
+
+    private final CsvToJsonService csvToJsonService;
+
+    public CsvToJsonController(CsvToJsonService csvToJsonService) {
+        this.csvToJsonService = csvToJsonService;
+    }
+
+    @PostMapping("/convert")
+    public void convertCsvToJson(@RequestParam("file") MultipartFile file) throws IOException {
+        csvToJsonService.convertCsvToJson(file);
+    }
+}
+```
+
+```java
+// Service Class
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.java.tuple.Tuple3;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.util.Collector;
+import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
+import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
+import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
+@Service
+public class CsvToJsonService {
+
+    private final String kafkaBrokers = "localhost:9092";
+    private final String kafkaTopic = "converted-json";
+    
+    public void convertCsvToJson(MultipartFile file) throws IOException {
+        // Create the execution environment
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // Read CSV file
+        DataStream<String> csvData = env.readTextFile(file.getOriginalFilename());
+
+        // Convert CSV to JSON format
+        DataStream<String> jsonData = csvData.flatMap(new CsvToJsonMapper());
+
+        // Send the converted JSON data to Kafka
+        FlinkKafkaProducer<String> kafkaProducer = new FlinkKafkaProducer<>(kafkaBrokers, kafkaTopic, new SimpleStringSchema());
+        jsonData.addSink(kafkaProducer);
+
+        // Execute the job
+        env.execute("CSV to JSON Conversion");
+    }
+
+    public static class CsvToJsonMapper implements FlatMapFunction<String, String> {
+        @Override
+        public void flatMap(String csvRecord, Collector<String> out) {
+            // Split the CSV record based on delimiters
+            String[] fields = csvRecord.split(",");
+
+            // Create key-value pairs for each field
+            Tuple3<String, String, String> pair = new Tuple3<>(fields[0], fields[1], fields[2]);
+
+            // Convert the key-value pairs to JSON format
+            String jsonString = "{\"field1\":\"" + pair.f0 + "\", " +
+                    "\"field2\":\"" + pair.f1 + "\", " +
+                    "\"field3\":\"" + pair.f2 + "\"}";
+            out.collect(jsonString);
+        }
+    }
+}
+```
+
+In this example, the `CsvToJsonController` class is responsible for handling the HTTP POST request to convert the CSV file. The uploaded file is passed to the `convertCsvToJson` method in the `CsvToJsonService` class, where the conversion from CSV to JSON using Apache Flink and sending the converted JSON data to Kafka happens.
+
+Make sure to have the necessary dependencies for Apache Flink, Apache Kafka, and Spring Boot in your `pom.xml` file, and configure the Kafka broker and topic as per your requirements.
+
+Note: This example assumes that Apache Flink and Apache Kafka are already installed and running on your system.

@@ -1,114 +1,63 @@
-Certainly! Here's an example of how you can achieve this using Spring Boot to fetch data from an H2 database and send it to Kafka at a regular 5-minute interval.
-
-First, let's set up the necessary dependencies in your `pom.xml` file:
-
-```xml
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-data-jpa</artifactId>
-</dependency>
-
-<dependency>
-    <groupId>org.springframework.kafka</groupId>
-    <artifactId>spring-kafka</artifactId>
-</dependency>
-
-<dependency>
-    <groupId>com.h2database</groupId>
-    <artifactId>h2</artifactId>
-    <scope>runtime</scope>
-</dependency>
-```
-
-Next, create a Spring Boot application class, `DemoApplication.java`:
+Here's a complete SpringBoot project for converting CSV file to JSON format using Apache Flink and sending the converted JSON file data to KAFKA:
 
 ```java
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.scheduling.annotation.EnableScheduling;
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.java.ExecutionEnvironment;
+import org.apache.flink.api.java.DataSet;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
+import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
 
-@SpringBootApplication
-@EnableScheduling
-public class DemoApplication {
+public class CsvToJsonConverter {
 
-    public static void main(String[] args) {
-        SpringApplication.run(DemoApplication.class, args);
+    public static void main(String[] args) throws Exception {
+
+        final ParameterTool params = ParameterTool.fromArgs(args);
+        final String input = params.get("input");
+        final String outputTopic = params.get("outputTopic");
+
+        final ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
+        final StreamExecutionEnvironment streamEnv = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        DataSet<String> csvData = env.readTextFile(input);
+
+        DataSet<String> json = csvData.map(new MapFunction<String, String>() {
+            @Override
+            public String map(String value) throws Exception {
+                String[] fields = value.split(",");
+                // Convert CSV data to JSON format
+                String jsonValue = "{";
+                for (int i = 0; i < fields.length; i++) {
+                    jsonValue += "\"" + "field" + (i+1) + "\":" + "\"" + fields[i] + "\"";
+                    if(i < fields.length - 1) {
+                        jsonValue += ",";
+                    }
+                }
+                jsonValue += "}";
+                return jsonValue;
+            }
+        });
+
+        // Sending the JSON data to Kafka
+        FlinkKafkaProducer<String> kafkaProducer = new FlinkKafkaProducer<>(outputTopic, new SimpleStringSchema(), params.getProperties());
+        json.addSink(kafkaProducer);
+
+        streamEnv.execute("CSV to JSON Converter");
     }
 }
 ```
 
-Next, create a model class, `DataModel.java`, to represent the data you want to fetch from the H2 database:
+In this project, we use Apache Flink to read the CSV file, convert the data to JSON format, and then send the JSON data to Kafka. We use `DataSet` for batch processing and `StreamExecutionEnvironment` for streaming processing.
 
-```java
-import javax.persistence.Entity;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
-import javax.persistence.Id;
+We use the `MapFunction` to convert the CSV data to JSON format, and then use the `FlinkKafkaProducer` to send the JSON data to Kafka.
 
-@Entity
-public class DataModel {
+To run this project, you can use the following command:
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    private String data;
-
-    // getters and setters
-}
+```
+./bin/flink run -c CsvToJsonConverter /path/to/your/jarfile.jar --input /path/to/your/input.csv --outputTopic yourOutputTopic
 ```
 
-Next, create a repository interface, `DataRepository.java`, to interact with the H2 database using Spring Data JPA:
+Here, you would replace `/path/to/your/jarfile.jar` with the actual path to your jar file, `/path/to/your/input.csv` with the actual path to your input CSV file, and `yourOutputTopic` with the name of your output Kafka topic.
 
-```java
-import org.springframework.data.jpa.repository.JpaRepository;
-
-public interface DataRepository extends JpaRepository<DataModel, Long> {
-    // custom query methods if needed
-}
-```
-
-Now, create a service class, `DataFetcherService.java`, to fetch data from the H2 database and send it to Kafka:
-
-```java
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
-@Service
-public class DataFetcherService {
-    
-    private final DataRepository dataRepository;
-    private final KafkaTemplate<String, String> kafkaTemplate;
-    
-    @Autowired
-    public DataFetcherService(DataRepository dataRepository, KafkaTemplate<String, String> kafkaTemplate) {
-        this.dataRepository = dataRepository;
-        this.kafkaTemplate = kafkaTemplate;
-    }
-
-    @Scheduled(fixedDelay = 300000) // Run every 5 minutes (300,000 milliseconds)
-    public void fetchDataAndSendToKafka() {
-        // Fetch data from the H2 database
-        List<DataModel> data = dataRepository.findAll();
-        
-        // Process the data if needed
-        
-        // Send data to Kafka
-        data.forEach(d -> kafkaTemplate.send("your-kafka-topic", d.getData()));
-    }
-}
-```
-
-Finally, configure Kafka in your `application.properties` file:
-
-```properties
-spring.kafka.bootstrap-servers=your-kafka-bootstrap-servers
-spring.kafka.producer.key-serializer=org.apache.kafka.common.serialization.StringSerializer
-spring.kafka.producer.value-serializer=org.apache.kafka.common.serialization.StringSerializer
-```
-
-Replace `your-kafka-topic` with the actual Kafka topic you want to use, and `your-kafka-bootstrap-servers` with the proper Kafka bootstrap servers.
-
-That's it! You now have a Spring Boot application that fetches data from an H2 database and sends it to Kafka every 5 minutes.
+You can also modify the code to include delimiters and datastreams as per your requirements.

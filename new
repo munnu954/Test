@@ -1,93 +1,117 @@
-Certainly! Here's an example code that demonstrates how to convert CSV data to JSON format using Apache Flink, use data stream and delimiter, and produce the message to Kafka.
+Sure! Here's a Spring Boot project that converts a CSV file to JSON format using Apache Flink and sends the converted JSON file data to Apache Kafka. It utilizes delimiters and datastreams for processing the data.
+
+First, let's set up the necessary dependencies in the Maven `pom.xml` file:
+
+```xml
+<dependencies>
+    <!-- Spring Boot dependencies -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+
+    <!-- Apache Flink dependencies -->
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-java</artifactId>
+        <version>1.13.0</version>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-streaming-java_2.12</artifactId>
+        <version>1.13.0</version>
+    </dependency>
+
+    <!-- Apache Kafka dependencies -->
+    <dependency>
+        <groupId>org.springframework.kafka</groupId>
+        <artifactId>spring-kafka</artifactId>
+    </dependency>
+</dependencies>
+```
+
+Next, create a CSVProcessorService class that defines the logic for processing the CSV data and sending it to Kafka:
 
 ```java
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.ProcessFunction;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.api.functions.source.SourceFunction;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction.Context;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
-import org.apache.flink.util.Collector;
-import org.apache.kafka.clients.producer.ProducerConfig;
 
-import java.util.Arrays;
-import java.util.Properties;
+@Service
+public class CSVProcessorService {
 
-public class CsvToJsonConverter {
+    @Value("${kafka.bootstrap-servers}")
+    private String kafkaBootstrapServers;
 
-    public static void main(String[] args) throws Exception {
-        final String csvFilePath = "/path/to/your/csv/file.csv";
-        final String kafkaTopic = "your-kafka-topic";
-        final String kafkaBootstrapServers = "localhost:9092";
+    @Value("${kafka.topic}")
+    private String kafkaTopic;
 
-        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+    public void processCSV(String csvFilePath) throws Exception {
+        // Initialize the Flink execution environment
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        // Read the CSV file and convert it to JSON format
-        DataStream<String> csvDataStream = env.addSource(new CSVSource(csvFilePath))
-                .process(new CsvToJsonProcessor());
+        // Read the CSV file and convert each record to JSON format
+        DataStream<String> csvDataStream = env.readTextFile(csvFilePath);
+        DataStream<String> jsonDataStream = csvDataStream.map(new MapFunction<String, String>() {
+            @Override
+            public String map(String csvRecord) throws Exception {
+                // Convert the CSV record to JSON format
+                String[] fields = csvRecord.split(",");
+                String jsonRecord = "{\"field1\": \"" + fields[0] + "\", \"field2\": \"" + fields[1] + "\"}";
 
-        // Write the JSON data to Kafka
-        Properties kafkaProps = new Properties();
-        kafkaProps.setProperty(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaBootstrapServers);
-        FlinkKafkaProducer<String> kafkaProducer = new FlinkKafkaProducer<>(kafkaTopic,
-                new SimpleStringSchema(),
-                kafkaProps);
-        csvDataStream.addSink(kafkaProducer);
-
-        env.execute("CSV to JSON Converter");
-    }
-
-    private static class CSVSource implements SourceFunction<String> {
-        private final String csvFilePath;
-
-        private volatile boolean isRunning = true;
-
-        public CSVSource(String csvFilePath) {
-            this.csvFilePath = csvFilePath;
-        }
-
-        @Override
-        public void run(SourceContext<String> ctx) throws Exception {
-            // Read the CSV file line by line and emit each line as a string
-            // You can adjust the logic here based on your file structure and delimiter
-            // For simplicity, assuming that CSV fields are comma-separated without quotes
-            Files.lines(Paths.get(csvFilePath))
-                    .forEach(ctx::collect);
-        }
-
-        @Override
-        public void cancel() {
-            isRunning = false;
-        }
-    }
-
-    private static class CsvToJsonProcessor extends ProcessFunction<String, String> {
-        @Override
-        public void processElement(String csvRow, Context ctx, Collector<String> out) throws Exception {
-            // Convert the CSV row to JSON format
-            // You can adjust the logic here based on your CSV structure and delimiter
-            // For simplicity, assuming that CSV fields are comma-separated without quotes
-            String[] csvFields = csvRow.split(",");
-            StringBuilder jsonBuilder = new StringBuilder();
-            jsonBuilder.append("{");
-            for (int i = 0; i < csvFields.length; i++) {
-                String field = csvFields[i].trim();
-                jsonBuilder.append("\"field").append(i).append("\": \"").append(field).append("\"");
-                if (i < csvFields.length - 1) {
-                    jsonBuilder.append(",");
-                }
+                return jsonRecord;
             }
-            jsonBuilder.append("}");
-            out.collect(jsonBuilder.toString());
-        }
+        });
+
+        // Send the converted JSON data to Kafka
+        jsonDataStream.addSink(new FlinkKafkaProducer<>(
+                kafkaBootstrapServers, // Kafka bootstrap servers
+                kafkaTopic, // Kafka topic
+                new SimpleStringSchema() // Serialization schema
+        ));
+
+        // Execute the Flink job
+        env.execute("CSV to JSON Converter");
     }
 }
 ```
 
-In this code, we use Apache Flink to convert CSV data to JSON format. The CSV data is read from the provided file (`csvFilePath`) using a custom `SourceFunction` called `CSVSource`. Then, each CSV row is processed by the `CsvToJsonProcessor` which splits the row by the delimiter (assuming it's a comma in this example) and builds a JSON object. Finally, the JSON data is written to Kafka using the `FlinkKafkaProducer`.
+In this code, we use the `StreamExecutionEnvironment` to execute the Flink job. We read the CSV file using `env.readTextFile(csvFilePath)` which returns a `DataStream<String>`. We then use the `map` function to convert each CSV record to JSON format. Finally, we use the `FlinkKafkaProducer` to send the converted JSON data to Kafka.
 
-Please note that you need to provide the file path of your CSV file (`csvFilePath`), Kafka topic name (`kafkaTopic`), and Kafka's bootstrap servers (`kafkaBootstrapServers`) in the code for it to work properly. Make sure you have Apache Kafka installed and running on your machine before executing the code.
+Make sure to replace `${kafka.bootstrap-servers}` and `${kafka.topic}` with the appropriate Kafka bootstrap servers address and topic name.
+
+To use this service in a Spring Boot application, create a REST controller that invokes the CSVProcessorService:
+
+```java
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class CSVController {
+
+    @Autowired
+    private CSVProcessorService csvProcessorService;
+
+    @PostMapping("/convert")
+    public void convertCSVToJSON(@RequestParam("csvFilePath") String csvFilePath) throws Exception {
+        csvProcessorService.processCSV(csvFilePath);
+    }
+}
+```
+
+This controller exposes a POST endpoint `/convert` that accepts a parameter `csvFilePath` which contains the path to the CSV file to be converted.
+
+Make sure to configure Kafka properties in the application.properties file:
+
+```
+kafka.bootstrap-servers=<kafka-bootstrap-servers>
+kafka.topic=<kafka-topic>
+```
+
+Replace `<kafka-bootstrap-servers>` with the address of your Kafka bootstrap servers, and `<kafka-topic>` with the desired topic name.
+
+That's it! You can now start the Spring Boot application and send a POST request to `/convert` with the `csvFilePath` parameter set to the path of the CSV file you want to convert. The converted JSON data will be sent to Kafka.

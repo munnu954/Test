@@ -1,7 +1,8 @@
-Sure! I can help you with that. Here's an example of a Spring Boot application that uses Apache Flink to convert a CSV file to JSON format and push the data to Kafka. 
+Sure! Here's an example Spring Boot code that uses Apache Flink to convert a CSV file to JSON format and push the converted JSON data to Kafka. It includes the necessary dependencies in the pom.xml file and the application.properties file for configuration.
 
-1. Start by creating a new Spring Boot project with the necessary dependencies. Add the following dependencies to your `pom.xml` file:
+Please note that this is a simplified example, and you may need to modify it based on your specific requirements.
 
+1. Pom.xml Dependencies:
 ```xml
 <dependencies>
     <!-- Spring Boot dependencies -->
@@ -9,174 +10,88 @@ Sure! I can help you with that. Here's an example of a Spring Boot application t
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter</artifactId>
     </dependency>
-    
-    <!-- Flink dependencies -->
+
+    <!-- Apache Flink dependencies -->
     <dependency>
         <groupId>org.apache.flink</groupId>
         <artifactId>flink-java</artifactId>
-        <version>1.13.0</version>
+        <version>1.12.4</version>
     </dependency>
     <dependency>
         <groupId>org.apache.flink</groupId>
-        <artifactId>flink-clients_2.12</artifactId>
-        <version>1.13.0</version>
+        <artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
+        <version>1.12.4</version>
     </dependency>
-    
-    <!-- Kafka dependencies -->
+
+    <!-- Apache Kafka dependencies -->
     <dependency>
-        <groupId>org.springframework.kafka</groupId>
-        <artifactId>spring-kafka</artifactId>
-    </dependency>
-    
-    <!-- CSV dependencies -->
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-csv</artifactId>
-        <version>1.13.0</version>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-kafka</artifactId>
     </dependency>
 </dependencies>
 ```
 
-2. Next, create an `application.properties` file in the `src/main/resources` directory and configure the Kafka properties:
-
+2. Application.properties:
 ```properties
-# Kafka properties
+# Kafka configuration
 spring.kafka.bootstrap-servers=localhost:9092
-spring.kafka.producer.value-serializer=org.apache.kafka.common.serialization.StringSerializer
-spring.kafka.consumer.group-id=csv-to-json-converter
+spring.kafka.topic=converted-json-topic
+spring.kafka.producer.value-serializer=org.springframework.kafka.support.serializer.JsonSerializer
+
+# Flink configuration
+flink.jobmanager.hostname=localhost
+flink.jobmanager.port=8081
 ```
 
-3. Create a Java package structure for your classes. You can use the following structure:
-
-```
-com.example.csvtojson
-  └─ controller
-  │   └─ CsvToJsonConverterController.java
-  │
-  └─ flink
-  │   └─ CsvToJsonFlinkJob.java
-  │
-  └─ model
-  │   └─ Record.java
-  │
-  └─ application
-      └─ CsvToJsonApplication.java
-```
-
-4. Implement the `CsvToJsonConverterController` class that exposes an API to trigger the conversion process:
-
+3. Spring Boot Application Code:
 ```java
-package com.example.csvtojson.controller;
-
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-@RequestMapping("/convert")
-@RestController
-public class CsvToJsonConverterController {
-
-    @PostMapping
-    public String convertCsvToJson() throws Exception {
-        // Trigger Flink job to convert CSV to JSON
-        CsvToJsonFlinkJob.runJob();
-        return "Conversion started";
-    }
-}
-```
-
-5. Implement the `CsvToJsonFlinkJob` class that performs the CSV to JSON conversion using Apache Flink:
-
-```java
-package com.example.csvtojson.flink;
-
 import org.apache.flink.api.common.functions.MapFunction;
-import org.apache.flink.api.java.ExecutionEnvironment;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.api.functions.source.FileProcessingMode;
-import org.apache.flink.streaming.api.functions.source.FileStateMonitorFunction;
-import org.apache.flink.streaming.api.functions.source.ProcessingTimeService;
-import org.apache.flink.streaming.api.functions.source.TimestampedFileInputSplit;
-import org.apache.flink.streaming.api.functions.source.TimestampedInputSplit;
-import org.apache.flink.streaming.api.functions.source.timestamps.BoundedOutOfOrdernessTimestampExtractor;
-import org.apache.flink.streaming.api.functions.timestamps.AscendingTimestampExtractor;
-import org.apache.flink.streaming.api.functions.timestamps.AscendingTimestampExtractorWithCleanup;
-import org.apache.flink.streaming.api.functions.timestamps.BoundedOutOfOrdernessTimestampExtractorWithCleanup;
-import org.apache.flink.streaming.api.functions.timestamps.IngestionTimeExtractor;
-import org.apache.flink.streaming.api.functions.timestamps.SystemClock;
-import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
-import org.apache.flink.streaming.api.operators.TimestampedCollector;
-import org.apache.flink.streaming.api.operators.TimestampedOperatorSubtaskState;
-import org.apache.flink.streaming.runtime.tasks.RegularProcessTimeService;
-import org.apache.flink.table.api.Table;
-import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
-import org.apache.flink.types.Row;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.stereotype.Component;
-
-import javax.annotation.PostConstruct;
-
-@Component
-public class CsvToJsonFlinkJob {
-
-    private final KafkaTemplate<String, String> kafkaTemplate;
-
-    public CsvToJsonFlinkJob(KafkaTemplate<String, String> kafkaTemplate) {
-        this.kafkaTemplate = kafkaTemplate;
-    }
-
-    @PostConstruct
-    public void init() {
-        // Set up Flink job when the bean is initialized
-        runJob();
-    }
-
-    public void runJob() {
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
-        // Read CSV as a DataStream
-        DataStream<String> csvDataStream = env.readTextFile("path_to_csv_file.csv");
-
-        // Convert each CSV record to JSON format
-        DataStream<String> jsonDataStream = csvDataStream
-                .map((MapFunction<String, String>) csvRecord -> convertCsvToJson(csvRecord));
-
-        // Push the converted JSON data to Kafka
-        jsonDataStream.addSink(new SinkFunction<String>() {
-            @Override
-            public void invoke(String jsonRecord) throws Exception {
-                kafkaTemplate.send("topic_name", jsonRecord);
-            }
-        });
-
-        env.execute("CSV to JSON Conversion Job");
-    }
-
-    private String convertCsvToJson(String csvRecord) {
-        // Implement logic to convert CSV record to JSON format
-        // You can use libraries like Jackson or Gson for serialization
-    }
-}
-```
-
-6. Finally, implement the `CsvToJsonApplication` class to bootstrap the Spring Boot application:
-
-```java
-package com.example.csvtojson.application;
-
+import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
+import org.apache.flink.streaming.connectors.kafka.internals.KeyedSerializationSchemaWrapper;
+import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class CsvToJsonApplication {
+public class CsvToJsonConverter {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-    public static void main(String[] args) {
-        SpringApplication.run(CsvToJsonApplication.class, args);
+        // Read the CSV file
+        String csvFilePath = "<path-to-your-csv-file>";
+        env.readTextFile(csvFilePath)
+                .map(new CsvToJsonMapper())
+                .map(map -> new Tuple2<>(map.get("id"), map.toString()))
+                .addSink(new FlinkKafkaProducer<>(
+                        "<your-kafka-bootstrap-servers>",
+                        "<your-kafka-topic>",
+                        new KeyedSerializationSchemaWrapper<>(new SimpleStringSchema())
+                ));
+
+        env.execute("CSV to JSON Conversion");
+
+        SpringApplication.run(CsvToJsonConverter.class, args);
+    }
+
+    static class CsvToJsonMapper implements MapFunction<String, Map<String, String>> {
+        @Override
+        public Map<String, String> map(String line) throws Exception {
+            // Split the CSV line using the "|" delimiter
+            String[] fields = line.split("\\|");
+
+            // Convert the CSV fields to key-value pairs (using field names as keys)
+            Map<String, String> jsonMap = new HashMap<>();
+            jsonMap.put("id", fields[0]);
+            jsonMap.put("name", fields[1]);
+            // Add more fields as needed
+
+            return jsonMap;
+        }
     }
 }
 ```
 
-Remember to replace the placeholders with actual values, such as the path for your CSV file and the Kafka topic name.
-
-That's it! You now have a Spring Boot application that uses Apache Flink to convert a CSV file to JSON format and push the data to Kafka using the | delimiters and DataStreams.
+Replace the placeholders in the code with the appropriate values specific to your application, such as the file path, Kafka server details, Kafka topic name, and additional CSV to JSON field mappings.

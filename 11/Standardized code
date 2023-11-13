@@ -1,75 +1,112 @@
-Sure! Here's the standardized version of the code:
+Sure! Here's an example of how you can write JUnit test cases for the code you provided:
 
 ```java
-import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
-import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.annotation.Bean;
-import org.springframework.kafka.annotation.EnableKafka;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.core.DefaultKafkaProducerFactory;
-import org.springframework.kafka.core.ProducerFactory;
-import java.util.Properties;
+import org.apache.flink.test.util.AbstractTestBase;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-@SpringBootApplication
-@EnableKafka
-public class Main {
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.util.ArrayList;
+import java.util.List;
 
-    private static String bootstrapServer;
-    private static String topic;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
-    public static void main(String[] args) throws Exception {
-        SpringApplication.run(Main.class, args);
+public class MainTest extends AbstractTestBase {
 
+    // Test data for file source
+    private final List<String> testData = new ArrayList<>();
+
+    private final ByteArrayOutputStream outContent = new ByteArrayOutputStream();
+    private final PrintStream originalOut = System.out;
+
+    @BeforeEach
+    public void setUp() {
+        // Redirect system.out for testing
+        System.setOut(new PrintStream(outContent));
+
+        // Prepare test data for file source
+        testData.add("data1,data2,data3");
+        testData.add("data4,data5,data6");
+    }
+
+    @Test
+    public void testMainMethod() throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
 
-        Properties properties = new Properties();
-        properties.setProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServer);
+        String path = "src\\main\\resources\\files";
+        final FileSource<String> source = FileSource
+                .forRecordStreamFormat(new TestTextLineInputFormat(testData), new Path(path))
+                .build();
+        final DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "file-source");
 
-        FlinkKafkaConsumer<String> consumer = new FlinkKafkaConsumer<>(topic, new SimpleStringSchema(), properties);
+        // Redirect system.out for testing
+        System.setOut(new PrintStream(outContent));
 
-        DataStream<String> stream = env.addSource(consumer);
-
-        stream.flatMap(new MyFlatMapFunction())
-                .addSink(kafkaSink());
+        Main.main(new String[0]);
 
         env.execute();
+
+        // Verify system.out output
+        assertEquals("Hello world!", outContent.toString().trim());
     }
 
-    @Bean
-    public KafkaTemplate<String, String> kafkaTemplate() {
-        return new KafkaTemplate<>(producerFactory());
+    @Test
+    public void testMyFlatMapFunction() throws Exception {
+        MyFlatMapFunction function = new MyFlatMapFunction();
+        Collector<String> collector = new TestCollector<>();
+
+        function.flatMap("data1,data2,data3", collector);
+
+        // Verify collected data
+        List<String> collectedData = ((TestCollector<String>) collector).getCollectedData();
+        assertEquals("{\"key1\":\"data1\",\"key2\":\"data2\",\"key3\":\"data3\"}", collectedData.get(0));
     }
 
-    @Bean
-    public ProducerFactory<String, String> producerFactory() {
-        Properties properties = new Properties();
-        properties.setProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServer);
+    private static class TestTextLineInputFormat extends TextLineInputFormat {
+        private final List<String> input;
 
-        return new DefaultKafkaProducerFactory<>(properties);
+        public TestTextLineInputFormat(List<String> input) {
+            this.input = input;
+        }
+
+        @Override
+        public boolean reachedEnd() {
+            return input.isEmpty();
+        }
+
+        @Override
+        public Tuple2<Long, String> nextRecord(Tuple2<Long, String> reuse) {
+            if (!input.isEmpty()) {
+                String value = input.remove(0);
+                return Tuple2.of(0L, value);
+            }
+            return null;
+        }
     }
 
-    @Bean
-    public KafkaSink<String> kafkaSink() {
-        return new KafkaSink<>("your-topic", kafkaTemplate());
-    }
-}
+    private static class TestCollector<T> implements Collector<T> {
+        private final List<T> collectedData = new ArrayList<>();
 
-public class MyFlatMapFunction implements FlatMapFunction<String, Tuple2<String, Integer>> {
-    @Override
-    public void flatMap(String s, Collector<Tuple2<String, Integer>> collector) throws Exception {
-        String[] arr = s.split(",");
-        for (String input: arr) {
-            collector.collect(new Tuple2<>(input, 1));
+        @Override
+        public void collect(T record) {
+            collectedData.add(record);
+        }
+
+        @Override
+        public void close() {
+            // No-op
+        }
+
+        public List<T> getCollectedData() {
+            return collectedData;
         }
     }
 }
 ```
 
-In the standardized code, the variable names have been changed to follow Java naming conventions (e.g., "bootstarpServer" -> "bootstrapServer"). The code formatting has also been adjusted for better readability. Please note that this code assumes you have the required dependencies and header files included.
+In these test cases, I've used Flink's `AbstractTestBase` to set up a test environment for Flink-specific classes and utilities. I've also implemented a `TestTextLineInputFormat` to provide test data for the file source and a `TestCollector` for collecting the output of the `MyFlatMapFunction`.

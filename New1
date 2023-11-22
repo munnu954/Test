@@ -1,48 +1,108 @@
-To copy an existing CSV file from one location to another in a SpringBoot application, we can use the following code:
+To create a Flink job to convert a CSV file to a JSON file, we can follow these steps:
 
-1. Create an application.yml file in the src/main/resources folder and add the following properties:
+1. Create a Maven project with the following dependencies:
 
-file:
-  source: /path/to/source/file.csv
-  destination: /path/to/destination/folder/
+<dependencies>
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-java</artifactId>
+        <version>${flink.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-streaming-java_${scala.binary.version}</artifactId>
+        <version>${flink.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-clients_${scala.binary.version}</artifactId>
+        <version>${flink.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>org.apache.flink</groupId>
+        <artifactId>flink-csv</artifactId>
+        <version>${flink.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>${jackson.version}</version>
+    </dependency>
+</dependencies>
+
+<properties>
+    <flink.version>1.13.2</flink.version>
+    <scala.binary.version>2.12</scala.binary.version>
+    <jackson.version>2.12.5</jackson.version>
+</properties>
 
 
-2. Create a class called FileCopyService:
+2. Create a Flink job class with the following code:
 
-@Service
-public class FileCopyService {
+public class CsvToJsonJob {
+
+    public static void main(String[] args) throws Exception {
+        
+        // set up the execution environment
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        
+        // read the CSV file
+        DataStream<Tuple2<Boolean, Row>> csvData = env
+                .readFile(new TextInputFormat(new Path("input.csv")), "input.csv")
+                .map(new CsvToRowMapper());
+        
+        // convert the CSV data to JSON
+        DataStream<String> jsonData = csvData
+                .map(new RowToJsonMapper())
+                .map(JsonNode::toString);
+        
+        // write the JSON data to a file
+        jsonData.writeAsText("output.json", FileSystem.WriteMode.OVERWRITE);
+        
+        // execute the Flink job
+        env.execute("CsvToJsonJob");
+    }
     
-    @Value("${file.source}")
-    private String sourceFilePath;
+    private static class CsvToRowMapper implements MapFunction<String, Tuple2<Boolean, Row>> {
+
+        private transient CsvParser csvParser;
+
+        @Override
+        public Tuple2<Boolean, Row> map(String value) throws Exception {
+            if (csvParser == null) {
+                csvParser = new CsvParser(CsvPreference.STANDARD_PREFERENCE);
+            }
+            String[] fields = csvParser.parseLine(value);
+            Row row = new Row(fields.length);
+            for (int i = 0; i < fields.length; i++) {
+                row.setField(i, fields[i]);
+            }
+            return Tuple2.of(true, row);
+        }
+    }
     
-    @Value("${file.destination}")
-    private String destinationFolderPath;
-    
-    public void copyFile() throws IOException {
-        Path sourcePath = Paths.get(sourceFilePath);
-        Path destinationPath = Paths.get(destinationFolderPath, sourcePath.getFileName().toString());
-        Files.copy(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING);
+    private static class RowToJsonMapper implements MapFunction<Tuple2<Boolean, Row>, JsonNode> {
+
+        private transient ObjectMapper objectMapper;
+
+        @Override
+        public JsonNode map(Tuple2<Boolean, Row> value) throws Exception {
+            if (objectMapper == null) {
+                objectMapper = new ObjectMapper();
+            }
+            ObjectNode jsonNode = objectMapper.createObjectNode();
+            for (int i = 0; i < value.f1.getArity(); i++) {
+                jsonNode.put(value.f1.getArity() + "", value.f1.getField(i).toString());
+            }
+            return jsonNode;
+        }
     }
 }
 
 
-3. In the main application class, inject the FileCopyService bean and call the copyFile() method:
+3. Run the Flink job using the following command:
 
-@SpringBootApplication
-public class Application implements CommandLineRunner {
-
-    @Autowired
-    private FileCopyService fileCopyService;
-
-    public static void main(String[] args) {
-        SpringApplication.run(Application.class, args);
-    }
-
-    @Override
-    public void run(String... args) throws Exception {
-        fileCopyService.copyFile();
-    }
-}
+./bin/flink run -c CsvToJsonJob target/csv-to-json-job-1.0-SNAPSHOT.jar
 
 
-This code will read the file path properties from the application.yml file and copy the CSV file from the source location to the destination folder. The file name will remain the same.
+This will read the input.csv file, convert its contents to JSON format, and write the output to a file named output.json.

@@ -1,87 +1,54 @@
-https://github.com/techtter/springboot-kafka-docker/
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.context.annotation.Bean;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestTemplate;
 
+@SpringBootApplication
+public class FlinkJobSubmitApplication {
 
-import org.apache.kafka.streams.KafkaStreams;
-import org.apache.kafka.streams.StreamsBuilder;
-import org.apache.kafka.streams.StreamsConfig;
-import org.apache.kafka.streams.kstream.KStream;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.stereotype.Service;
+    @Value("${flink.api.url}")
+    private String flinkApiUrl;
 
-import java.util.Properties;
+    @Bean
+    public RestTemplate restTemplate(RestTemplateBuilder builder) {
+        return builder.build();
+    }
 
-@Service
-public class KafkaAuditQueueConsumer {
+    public static void main(String[] args) {
+        SpringApplication.run(FlinkJobSubmitApplication.class, args);
+    }
 
-    @KafkaListener(topics = "AuditQueue")
-    public void consumeFromKafka(String message) {
-        // Create properties for Kafka Streams
-        Properties props = new Properties();
-        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "audit-queue-consumer");
-        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+    @RestController
+    public class FlinkJobController {
 
-        // Create a StreamsBuilder
-        StreamsBuilder builder = new StreamsBuilder();
+        private final RestTemplate restTemplate;
 
-        // Consume data from Kafka topic
-        KStream<String, String> source = builder.stream("AuditQueue");
+        public FlinkJobController(RestTemplate restTemplate) {
+            this.restTemplate = restTemplate;
+        }
 
-        // Process the data
-        source.foreach((key, value) -> {
-            // Implement logic to process the data from the Audit Queue
-            System.out.println("Received message from Audit Queue: " + value);
-        });
-
-        // Build the KafkaStreams and start it
-        KafkaStreams streams = new KafkaStreams(builder.build(), props);
-        streams.start();
+        @GetMapping("/submitJob")
+        public String submitJob(@RequestParam("jarPath") String jarPath,
+                               @RequestParam("delimiter") String delimiter,
+                               @RequestParam("input") String input,
+                               @RequestParam("kafkaOutTopic") String kafkaOutTopic) {
+            String submitJobUrl = flinkApiUrl + "/jars/" + jarPath + "/run";
+            String requestBody = "{\"entryClass\":\"com.example.MainClass\"," +
+                    "\"programArgs\":\"--delimiter " + delimiter + " --input " + input + " --kafkaOutTopic " + kafkaOutTopic + "\"}";
+            String response = restTemplate.postForObject(submitJobUrl, requestBody, String.class);
+            return response;
+        }
     }
 }
 
 
+In the application.yml file:
 
-Here's a Kafka Consumer class for consuming the data from the Kafka Audit Queue using Kafka Streams in a Spring Boot application:
-
-import org.apache.kafka.streams.KafkaStreams;
-import org.apache.kafka.streams.StreamsBuilder;
-import org.apache.kafka.streams.StreamsConfig;
-import org.apache.kafka.streams.kstream.KStream;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.stereotype.Service;
-
-import java.util.Properties;
-
-@Service
-public class KafkaAuditQueueConsumer {
-
-    @KafkaListener(topics = "AuditQueue")
-    public void consumeFromKafka(String message) {
-        // Create properties for Kafka Streams
-        Properties props = new Properties();
-        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "audit-queue-consumer");
-        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
-
-        // Create a StreamsBuilder
-        StreamsBuilder builder = new StreamsBuilder();
-
-        // Consume data from Kafka topic
-        KStream<String, String> source = builder.stream("AuditQueue");
-
-        // Process the data
-        source.foreach((key, value) -> {
-            // Implement logic to process the data from the Audit Queue
-            System.out.println("Received message from Audit Queue: " + value);
-        });
-
-        // Build the KafkaStreams and start it
-        KafkaStreams streams = new KafkaStreams(builder.build(), props);
-        streams.start();
-    }
-}
-
-
-In this class, we use the @KafkaListener annotation to listen to messages from the "AuditQueue" Kafka topic. When a message is received, it is processed within the consumeFromKafka method. The Kafka Streams API is used to create a stream from the topic and process the incoming messages.
-
-This class can be included in a Spring Boot project and will consume messages from the "AuditQueue" Kafka topic using Kafka Streams.
+flink:
+  api:
+    url: http://localhost:8081

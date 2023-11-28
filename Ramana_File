@@ -1,72 +1,81 @@
-Here is the modified KafkaConsumer class code:
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Collections;
+import java.util.List;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 
-@Service
-public class KafkaConsumer 
+public class KafkaConsumerTest {
 
-    @Value("file.source")
-    private String sourceFilePath;
+    @Mock
+    private FlinkApiController flinkApiController;
 
-    @Value("file.destination")
-    private String destinationFolderPath;
+    @InjectMocks
+    private KafkaConsumer kafkaConsumer;
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
+    @BeforeEach
+    public void setup() {
+        MockitoAnnotations.openMocks(this);
+        kafkaConsumer = new KafkaConsumer(); // Initialize the KafkaConsumer instance
 
-    @Autowired
-    private FlinkApiController flinkApi;
+        // Set the FlinkApiController mock
+        kafkaConsumer.setFlinkApi(flinkApiController);
+    }
 
-    @KafkaListener(topics="spring.kafka.producer.topic-name", groupId="spring.kafka.consumer.group-id")
-    public void consume(SpaceCollector message) throws IOException, CsvValidationException 
-        LOGGER.info(String.format("Message received -> 
+    @Test
+    public void testConsume_Success() throws IOException, CsvValidationException {
+        // Mocking dependencies
+        SpaceCollector message = new SpaceCollector();
+        message.setINPUT_FILE_PATH("test.csv");
 
-        String inputFilePath = message.getINPUT_FILE_PATH();
-        if(inputFilePath != null        !inputFilePath.isEmpty()) 
-            sourceFilePath = inputFilePath;
-        
+        // Mock behavior
+        Mockito.when(flinkApiController.triggerJob(any())).thenReturn("Success response");
 
-        writeCsvFile();
-        List<String[]> rows = retrieveCsvFile();
-        deleteCsvFile();
+        // Call the method
+        assertDoesNotThrow(() -> kafkaConsumer.consume(message));
 
-        String response = flinkApi.triggerJob(rows, message);
-        LOGGER.info("Flink Response:" + response);
-    
+        // Assertions - Example: Check if the message input file path is not null after consumption
+        assertNotNull(message.getINPUT_FILE_PATH());
+        // Add further assertions based on your expected behavior after consuming
+    }
 
-    private void writeCsvFile() throws IOException 
-        Path sourcePath = Paths.get(sourceFilePath);
-        Path destinationPath = Paths.get(destinationFolderPath, sourcePath.getFileName().toString());
+    @Test
+    public void testWriteCsvFile() {
+        // Call the method
+        assertDoesNotThrow(() -> kafkaConsumer.writeCsvFile());
 
-        Files.copy(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING);
-    
+        // Assertions - Example: Check if the file exists after writing
+        Path filePath = Path.of("destinationFolderPath/test.csv");
+        assertTrue(Files.exists(filePath));
+    }
 
-    private List<String[]> retrieveCsvFile() throws IOException, CsvValidationException 
-        List<String[]> rows = new ArrayList<>();
+    @Test
+    public void testRetrieveCsvFile() throws IOException {
+        // Mocking CSV file retrieval
+        Mockito.when(kafkaConsumer.retrieveCsvFile()).thenReturn(Collections.singletonList(new String[]{"data1", "data2"}));
 
-        try (CSVParser parser = new CSVParser(new FileReader(sourceFilePath), CSVFormat.DEFAULT)) 
-            for (CSVRecord record : parser) 
-                String[] row = new String[record.size()];
-                for (int i = 0; i < record.size(); i++) 
-                    row[i] = record.get(i);
-                
-                rows.add(row);
-                LOGGER.info("CSV row: ", Arrays.toString(row));
-            
-            LOGGER.info("Successfully read  rows from CSV file ", rows.size(), sourceFilePath);
-         catch (IOException e) 
-            LOGGER.error("Error reading CSV file ", sourceFilePath, e);
-            throw e;
-        
-        return rows;
-    
+        // Call the method
+        List<String[]> rows = kafkaConsumer.retrieveCsvFile();
 
-    private void deleteCsvFile() throws IOException 
-        Files.deleteIfExists(Paths.get(sourceFilePath));
-    
- 
+        // Assertions
+        assertNotNull(rows); // Ensure rows were retrieved
+        assertFalse(rows.isEmpty()); // Ensure rows are not empty
+        assertEquals(2, rows.get(0).length); // Check the length of retrieved row data
+    }
 
-Changes made:
+    @Test
+    public void testDeleteCsvFile() {
+        // Call the method
+        assertDoesNotThrow(() -> kafkaConsumer.deleteCsvFile());
 
-1. Added a null check for input file path before using it to set the source file path.
-2. Injected FlinkApiController as a dependency using @Autowired annotation.
-3. Modified the triggerJob() method call to pass the rows list and message object as parameters.
-4. Wrapped the code inside try-catch block to handle IOException and CsvValidationException in retrieveCsvFile() method. Also, added a throw statement to propagate the exception to the caller method.
-5. Moved the LOGGER.error statement inside the catch block in retrieveCsvFile() method.
+        // Assertions - Example: Check if the file was deleted
+        Path filePath = Path.of("sourceFilePath");
+        assertFalse(Files.exists(filePath));
+    }
+}

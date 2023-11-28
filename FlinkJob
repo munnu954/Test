@@ -1,79 +1,152 @@
-Here is an example of Junit5 test cases for Kafka Producer and Kafka Consumer using @Mock method for success and failure scenarios:
+of Kafka Producer and Kafka Consumer using @Mock method.
 
+Here is the sample code for Junit5 test cases for Kafka Producer and Kafka Consumer:
+
+KafkaProducerTest.java
+
+```
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+
+import java.util.concurrent.ExecutionException;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import static org.mockito.Mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
+import org.springframework.util.concurrent.ListenableFuture;
 
 @ExtendWith(MockitoExtension.class)
-public class KafkaTest {
+public class KafkaProducerTest {
 
-    @Mock
-    private KafkaProducer<String, String> producer;
+private static final Logger LOGGER = LoggerFactory.getLogger(KafkaProducerTest.class);
 
-    @Mock
-    private KafkaConsumer<String, String> consumer;
+@Mock
+private KafkaTemplate kafkaTemplate;
 
-    @Test
-    public void testKafkaProducerSuccess() {
-        // Arrange
-        String topic = "test-topic";
-        String key = "key";
-        String value = "value";
+private KafkaProducer kafkaProducer;
 
-        // Act
-        producer.send(new ProducerRecord<>(topic, key, value));
-
-        // Assert
-        verify(producer, times(1)).send(any(ProducerRecord.class));
-    }
-
-    @Test
-    public void testKafkaProducerFailure() {
-        // Arrange
-        String topic = "test-topic";
-        String key = "key";
-        String value = "value";
-
-        // Act
-        doThrow(new RuntimeException("Failed to send message")).when(producer).send(any(ProducerRecord.class));
-
-        // Assert
-        assertThrows(RuntimeException.class, () -> producer.send(new ProducerRecord<>(topic, key, value)));
-    }
-
-    @Test
-    public void testKafkaConsumerSuccess() {
-        // Arrange
-        String topic = "test-topic";
-        ConsumerRecords<String, String> records = new ConsumerRecords<>();
-
-        // Act
-        when(consumer.poll(any())).thenReturn(records);
-
-        // Assert
-        verify(consumer, times(1)).poll(any());
-    }
-
-    @Test
-    public void testKafkaConsumerFailure() {
-        // Arrange
-        String topic = "test-topic";
-
-        // Act
-        doThrow(new RuntimeException("Failed to fetch records")).when(consumer).poll(any());
-
-        // Assert
-        assertThrows(RuntimeException.class, () -> consumer.poll(any()));
-    }
+@BeforeEach
+public void setUp() {
+kafkaProducer = new KafkaProducer(kafkaTemplate);
 }
 
+@Test
+public void testSendMessage() throws ExecutionException, InterruptedException {
+String topic = "test-topic";
+String message = "{\"id\":1,\"name\":\"John Doe\"}";
 
-In the above code, we have used the @Mock annotation to create mock instances of KafkaProducer and KafkaConsumer. We then write test cases for success and failure scenarios for both the producer and consumer. We use Mockito's verify and when methods to verify the behavior of the mocks and simulate failure scenarios. Finally, we use assertThrows to assert that the expected exceptions are thrown in the failure scenarios.
+ListenableFuture> listenableFuture = new MockListenableFuture();
+
+RecordMetadata recordMetadata = new RecordMetadata(null, 0, 0, 0, 0L, 0, 0);
+SendResult sendResult = new SendResult(topic, message), recordMetadata);
+
+((MockListenableFuture) listenableFuture).set(sendResult);
+
+Mockito.when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(listenableFuture);
+
+kafkaProducer.sendMessage(topic, message);
+
+verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+
+LOGGER.info("Message sent successfully to Kafka topic: {}", topic);
+}
+
+@Test
+public void testSendMessageWithException() throws ExecutionException, InterruptedException {
+String topic = "test-topic";
+String message = "{\"id\":2,\"name\":\"Jane Doe\"}";
+
+ListenableFuture> listenableFuture = new MockListenableFuture();
+((MockListenableFuture) listenableFuture).setException(new RuntimeException("Failed to send message"));
+
+Mockito.when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(listenableFuture);
+
+try {
+kafkaProducer.sendMessage(topic, message);
+} catch (Exception ex) {
+assertEquals("Failed to send message", ex.getMessage());
+}
+
+verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+
+LOGGER.info("Message failed to send to Kafka topic: {}", topic);
+}
+}
+```
+
+KafkaConsumerTest.java
+
+```
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+
+import java.util.List;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.springframework.kafka.listener.config.ContainerProperties;
+import org.springframework.kafka.test.utils.KafkaTestUtils;
+
+@ExtendWith(MockitoExtension.class)
+public class KafkaConsumerTest {
+
+private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumerTest.class);
+
+@Mock
+private KafkaConsumer kafkaConsumer;
+
+private KafkaConsumerConfig kafkaConsumerConfig;
+
+@BeforeEach
+public void setUp() {
+kafkaConsumerConfig = new KafkaConsumerConfig();
+kafkaConsumerConfig.setConsumerFactory(consumerFactory());
+}
+
+private ConsumerFactory consumerFactory() {
+return new DefaultKafkaConsumerFactoryKafkaTestUtils.embeddedKafka().getBrokersAsString(),
+"test-topic", "1", StringDeserializer.class.getName()));
+}
+
+@Test
+public void testConsumeMessage() {
+String topic = "test-topic";
+
+ContainerProperties containerProperties = new ContainerProperties(topic);
+containerProperties.setMessageListener(new KafkaMessageListener());
+
+KafkaConsumer consumer = kafkaConsumerConfig.kafkaListenerContainerFactory().createConsumer();
+consumer.subscribe(List.of(topic));
+
+ConsumerRecords consumerRecords = KafkaTestUtils.getRecords(consumer, 1000);
+
+assertEquals(0, consumerRecords.count());
+
+LOGGER.info("Message consumed successfully from Kafka topic: {}", topic);
+
+consumer.close();
+}
+}
+```
+
+Note: The sample code is just for reference purposes and will not work as it is. You need to modify it according to your requirements.

@@ -1,153 +1,71 @@
-Here is the sample JUnit5 test case code for the above scenarios:
+Sure, I can help you with that. Here's an example of how you can write JUnit 5 test cases for Kafka Producer and Kafka Consumer using the @Mock method:
 
-Positive Test Cases:
+```java
+import static org.mockito.Mockito.*;
 
-1\. Create Operation:
+import java.util.concurrent.ExecutionException;
 
-```
-@Test
-void testCreateRecord() {
-    // Initialize input data
-    Record record = new Record("John", "Doe", "john.doe@example.com");
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.StringSerializer;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.serializer.JsonSerializer;
 
-    // Call create method to insert record into database
-    Record createdRecord = dao.create(record);
+@ExtendWith(MockitoExtension.class)
+public class KafkaTest {
 
-    // Verify that a new record is created successfully
-    assertNotNull(createdRecord.getId());
-    assertEquals(record.getFirstName(), createdRecord.getFirstName());
-    assertEquals(record.getLastName(), createdRecord.getLastName());
-    assertEquals(record.getEmail(), createdRecord.getEmail());
+    @Mock
+    private KafkaTemplate<String, SampleMessage> kafkaTemplate;
+
+    @Captor
+    private ArgumentCaptor<ProducerRecord<String, SampleMessage>> captor;
+
+    @Test
+    public void testKafkaProducerSuccess() throws ExecutionException, InterruptedException {
+        SampleMessage sampleMessage = new SampleMessage("Hello World");
+        kafkaTemplate.send("topic", sampleMessage);
+
+        verify(kafkaTemplate, times(1)).send(captor.capture());
+        ProducerRecord<String, SampleMessage> producerRecord = captor.getValue();
+
+        // Asserts
+        assertEquals("topic", producerRecord.topic());
+        assertNotNull(producerRecord.key());
+        assertEquals(sampleMessage, producerRecord.value());
+    }
+
+    @Test
+    public void testKafkaConsumerSuccess() {
+        SampleMessage sampleMessage = new SampleMessage("Hello World");
+
+        ConsumerRecord<String, SampleMessage> consumerRecord = new ConsumerRecord<>("topic", 0, 0, new String(),
+                sampleMessage);
+
+        ConsumerSeekCallback callback = mock(ConsumerSeekCallback.class);
+        ConsumerSeekAware consumerSeekAware = mock(ConsumerSeekAware.class);
+        when(consumerSeekAware.seekToEnd(any())).thenReturn(callback); // Seek to the end of the topic
+
+        KafkaConsumer<String, SampleMessage> kafkaConsumer = mock(KafkaConsumer.class);
+        when(kafkaConsumer.poll(any(Duration.class))).thenReturn(SingletonMap.single("topic", singletonList(consumerRecord)));
+
+        SampleConsumer sampleConsumer = new SampleConsumer(kafkaConsumer, consumerSeekAware);
+        sampleConsumer.listen();
+
+        // Verify if the message was processed correctly
+        verify(someService, times(1)).processMessage(any());
+    }
 }
 ```
 
-2\. Read Operation:
+In the above example, I've used the Mockito library to mock the KafkaTemplate and KafkaConsumer instances. The first test case `testKafkaProducerSuccess` verifies if the KafkaProducer is able to send the message to the specified topic correctly.
 
-```
-@Test
-void testReadRecord() {
-    // Initialize input data
-    Record record = new Record("John", "Doe", "john.doe@example.com");
+The second test case `testKafkaConsumerSuccess` mocks the KafkaConsumer and verifies if it correctly processes a consumed message.
 
-    // Insert record into database
-    Record createdRecord = dao.create(record);
+You can add more assertions and customize the test cases as per your requirements.
 
-    // Call read method to retrieve record from database
-    Record retrievedRecord = dao.read(createdRecord.getId());
-
-    // Verify that the retrieved record matches the expected data
-    assertNotNull(retrievedRecord);
-    assertEquals(createdRecord.getId(), retrievedRecord.getId());
-    assertEquals(createdRecord.getFirstName(), retrievedRecord.getFirstName());
-    assertEquals(createdRecord.getLastName(), retrievedRecord.getLastName());
-    assertEquals(createdRecord.getEmail(), retrievedRecord.getEmail());
-}
-```
-
-3\. Update Operation:
-
-```
-@Test
-void testUpdateRecord() {
-    // Initialize input data
-    Record record = new Record("John", "Doe", "john.doe@example.com");
-
-    // Insert record into database
-    Record createdRecord = dao.create(record);
-
-    // Update the record with new data
-    createdRecord.setFirstName("Jane");
-    createdRecord.setLastName("Smith");
-    createdRecord.setEmail("jane.smith@example.com");
-
-    // Call update method to update the record in database
-    Record updatedRecord = dao.update(createdRecord);
-
-    // Verify that the updated record matches the new data
-    assertNotNull(updatedRecord);
-    assertEquals(createdRecord.getId(), updatedRecord.getId());
-    assertEquals(createdRecord.getFirstName(), updatedRecord.getFirstName());
-    assertEquals(createdRecord.getLastName(), updatedRecord.getLastName());
-    assertEquals(createdRecord.getEmail(), updatedRecord.getEmail());
-}
-```
-
-4\. Delete Operation:
-
-```
-@Test
-void testDeleteRecord() {
-    // Initialize input data
-    Record record = new Record("John", "Doe", "john.doe@example.com");
-
-    // Insert record into database
-    Record createdRecord = dao.create(record);
-
-    // Call delete method to delete the record from database
-    dao.delete(createdRecord.getId());
-
-    // Call read method to retrieve the deleted record from database
-    Record deletedRecord = dao.read(createdRecord.getId());
-
-    // Verify that the record is no longer present in the database after deletion
-    assertNull(deletedRecord);
-}
-```
-
-Negative Test Cases:
-
-1\. Create Operation:
-
-```
-@Test
-void testCreateRecordWithInvalidData() {
-    // Initialize input data with invalid email address
-    Record record = new Record("John", "Doe", "invalid_email");
-
-    // Call create method to insert record into database
-    assertThrows(InvalidDataException.class, () -> dao.create(record));
-
-    // Verify that no record is added to the database when an error occurs
-    List<Record> records = dao.getAll();
-    assertFalse(records.contains(record));
-}
-```
-
-2\. Read Operation:
-
-```
-@Test
-void testReadNonExistentRecord() {
-    // Call read method to retrieve non-existent record from database
-    assertThrows(RecordNotFoundException.class, () -> dao.read(999));
-
-    // Verify that an appropriate exception is thrown when attempting to read a non-existent record
-}
-```
-
-3\. Update Operation:
-
-```
-@Test
-void testUpdateNonExistentRecord() {
-    // Initialize input data with non-existent record ID
-    Record record = new Record(999, "John", "Doe", "john.doe@example.com");
-
-    // Call update method to update non-existent record in database
-    assertThrows(RecordNotFoundException.class, () -> dao.update(record));
-
-    // Verify that an appropriate exception is thrown when attempting to update a non-existent record
-}
-```
-
-4\. Delete Operation:
-
-```
-@Test
-void testDeleteNonExistentRecord() {
-    // Call delete method to delete non-existent record from database
-    assertThrows(RecordNotFoundException.class, () -> dao.delete(999));
-
-    // Verify that an appropriate exception is thrown when attempting to delete a non-existent record
-}
-```
+I hope this helps you to get started with writing JUnit 5 test cases for Kafka Producer and Consumer using the @Mock method. Let me know if you need any further assistance!

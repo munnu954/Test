@@ -1,70 +1,111 @@
-Here is an example of a test class for testing CRUD operations in a Spring Boot application using H2 database.
-
-```java
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
+import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
-import static org.junit.jupiter.api.Assertions.*;
-import com.example.demo.model.Product;
-import com.example.demo.repository.ProductRepository;
+import org.mockito.Mock;
+import static org.mockito.Mockito.*;
 
-@ExtendWith(SpringExtension.class)
-@DataJpaTest
-public class ProductRepositoryTest {
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
 
-    @Autowired
-    private ProductRepository productRepository;
+@ExtendWith(MockitoExtension.class)
+public class KafkaTest 
 
-    @Test
-    public void testSaveProduct() {
-        // Create a new product
-        Product product = new Product("Test Product", 100.0, "Test description");
-        // Save the product
-        Product savedProduct = productRepository.save(product);
-        // Check if the product is saved successfully
-        assertNotNull(savedProduct.getId());
-    }
+    @Mock
+    private KafkaProducer<String, String> producer;
+
+    @Mock
+    private KafkaConsumer<String, String> consumer;
 
     @Test
-    public void testFindProductById() {
-        // Create a new product
-        Product product = new Product("Test Product", 100.0, "Test description");
-        // Save the product
-        Product savedProduct = productRepository.save(product);
-        // Find the product by id
-        Product foundProduct = productRepository.findById(savedProduct.getId()).orElse(null);
-        // Check if the product is found successfully
-        assertNotNull(foundProduct);
-        assertEquals(savedProduct.getId(), foundProduct.getId());
-    }
+    public void testKafkaProducerSuccess() 
+        // Arrange
+        String topic = "test-topic";
+        String key = "key";
+        String value = "value";
+        ProducerRecord<String, String> record = new ProducerRecord<>(topic, key, value);
+
+        // Act
+        producer.send(record);
+
+        // Assert
+        verify(producer, times(1)).send(eq(record));
+    
 
     @Test
-    public void testUpdateProduct() {
-        // Create a new product
-        Product product = new Product("Test Product", 100.0, "Test description");
-        // Save the product
-        Product savedProduct = productRepository.save(product);
-        // Update the product
-        savedProduct.setName("Updated Product");
-        Product updatedProduct = productRepository.save(savedProduct);
-        // Check if the product is updated successfully
-        assertEquals("Updated Product", updatedProduct.getName());
-    }
+    public void testKafkaProducerFailure() 
+        // Arrange
+        String topic = "test-topic";
+        String key = "key";
+        String value = "value";
+        ProducerRecord<String, String> record = new ProducerRecord<>(topic, key, value);
+
+        // Act
+        doThrow(new RuntimeException("Failed to send message")).when(producer).send(eq(record));
+
+        // Assert
+        assertThrows(RuntimeException.class, () -> producer.send(record));
+    
 
     @Test
-    public void testDeleteProduct() {
-        // Create a new product
-        Product product = new Product("Test Product", 100.0, "Test description");
-        // Save the product
-        Product savedProduct = productRepository.save(product);
-        // Delete the product
-        productRepository.delete(savedProduct);
-        // Check if the product is deleted successfully
-        assertFalse(productRepository.findById(savedProduct.getId()).isPresent());
-    }
-}
-```
+    public void testKafkaConsumerSuccess() 
+        // Arrange
+        String topic = "test-topic";
+        String key = "key";
+        String value = "value";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>(topic, 0, 0, key, value);
+        List<ConsumerRecord<String, String>> recordsList = Collections.singletonList(record);
+        ConsumerRecords<String, String> records = new ConsumerRecords<>(new HashMap<>(), recordsList);
 
-In this example, we have created a test class `ProductRepositoryTest` which contains test methods for CRUD operations. We have used the `@DataJpaTest` annotation to configure the test to use an in-memory H2 database. The `@Autowired` annotation is used to inject the `ProductRepository` for performing CRUD operations. Each test method contains positive and negative scenarios to test the CRUD operations.
+        // Act
+        when(consumer.poll(any(Duration.class))).thenReturn(records);
+
+        // Assert
+        ConsumerRecords<String, String> result = consumer.poll(Duration.ofMillis(100));
+        verify(consumer, times(1)).poll(any(Duration.class));
+        assertEquals(recordsList, result.records(topic));
+    
+
+    @Test
+    public void testKafkaConsumerFailure() 
+        // Arrange
+        String topic = "test-topic";
+
+        // Act
+        doThrow(new RuntimeException("Failed to fetch records")).when(consumer).poll(any(Duration.class));
+
+        // Assert
+        assertThrows(RuntimeException.class, () -> consumer.poll(Duration.ofMillis(100)));
+    
+
+    @Test
+    public void testKafkaProducerAndConsumer() 
+        // Arrange
+        String topic = "test-topic";
+        String key = "key";
+        String value = "value";
+        ProducerRecord<String, String> record = new ProducerRecord<>(topic, key, value);
+        ConsumerRecord<String, String> expectedRecord = new ConsumerRecord<>(topic, 0, 0, key, value);
+        List<ConsumerRecord<String, String>> expectedRecordsList = Collections.singletonList(expectedRecord);
+        ConsumerRecords<String, String> expectedRecords = new ConsumerRecords<>(new HashMap<>(), expectedRecordsList);
+
+        // Act
+        producer.send(record);
+        when(consumer.poll(any(Duration.class))).thenReturn(expectedRecords);
+
+        // Assert
+        ConsumerRecords<String, String> result = consumer.poll(Duration.ofMillis(100));
+        verify(consumer, times(1)).poll(any(Duration.class));
+        assertEquals(expectedRecordsList, result.records(topic));
+
+        // Print JSON data for debugging purposes
+        JSONObject producerJson = new JSONO

@@ -1,76 +1,80 @@
-import org.apache.flink.api.common.functions.MapFunction;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
-import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
-import org.yaml.snakeyaml.Yaml;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
+import org.springframework.boot.test.context.SpringBootTest;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 
-import java.io.InputStream;
-import java.util.Map;
-import java.util.Properties;
+@SpringBootTest
+public class KafkaConsumerTest {
 
-public class CsvToJsonToKafka {
-    public static void main(String[] args) throws Exception {
-        // Load Kafka configuration from a YAML file in the resources directory
-        InputStream configStream = CsvToJsonToKafka.class.getClassLoader().getResourceAsStream("config.yml");
-        Yaml yaml = new Yaml();
-        Map<String, Object> config = yaml.load(configStream);
+    @Mock
+    private FlinkApiController flinkApiController;
 
-        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+    @InjectMocks
+    private KafkaConsumer kafkaConsumer;
 
-        // Define a data stream with your input CSV source
-        DataStream<String> csvStream = env.readTextFile("path/to/your/input.csv");
+    @BeforeEach
+    public void setup() {
+        MockitoAnnotations.openMocks(this);
+    }
 
-        // Convert CSV to JSON with a custom delimiter
-        DataStream<String> jsonStream = csvStream.map(new MapFunction<String, String>() {
-            @Override
-            public String map(String csvLine) throws Exception {
-                // Define your custom delimiter
-                String delimiter = ",";
+    @Test
+    public void testConsume_Success() throws IOException, CsvValidationException {
+        // Mocking dependencies
+        SpaceCollector message = new SpaceCollector();
+        message.setINPUT_FILE_PATH("test.csv");
 
-                // Split the CSV line into fields using the delimiter
-                String[] csvFields = csvLine.split(delimiter);
+        Mockito.when(flinkApiController.triggerJob(any())).thenReturn("Success response");
 
-                // Create a JSON object
-                StringBuilder json = new StringBuilder("{");
-                for (int i = 0; i < csvFields.length; i++) {
-                    json.append("\"field").append(i + 1).append("\": \"").append(csvFields[i]).append("\"");
-                    if (i < csvFields.length - 1) {
-                        json.append(", ");
-                    }
-                }
-                json.append("}");
-                return json.toString();
-            }
-        });
+        // Call the method
+        kafkaConsumer.consume(message);
 
-        // Define Kafka producer properties
-        Properties properties = new Properties();
-        properties.setProperty("bootstrap.servers", (String) config.get("kafka.broker")); // Read Kafka broker address from the YAML
-        properties.setProperty("topic", (String) config.get("kafka.topic")); // Read Kafka topic name from the YAML
+        // Assertions
+        assertNotNull(message.getINPUT_FILE_PATH()); // Ensure the message input file path is not null
+        // Add further assertions based on your expected behavior after consuming
+    }
 
-        // Send JSON data to Kafka
-        jsonStream.addSink(new FlinkKafkaProducer<>((String) config.get("kafka.topic"), new SimpleStringSchema(), properties));
+    @Test
+    public void testWriteCsvFile() throws IOException {
+        // Mocking the Paths, Files.copy() and providing appropriate values for sourceFilePath and destinationFolderPath
+        kafkaConsumer.writeCsvFile();
 
-        env.execute("CsvToJsonToKafka");
+        // Assertions
+        assertTrue(Files.exists(Path.of("destinationFolderPath/test.csv"))); // Check if the file exists in the destination folder
+        // Add further assertions based on your expected behavior after writing the CSV file
+    }
+
+    @Test
+    public void testRetrieveCsvFile() throws IOException {
+        // Mocking FileReader, CSVParser, CSVRecord, etc. to simulate a CSV file reading scenario
+        Mockito.when(kafkaConsumer.retrieveCsvFile()).thenReturn(Collections.singletonList(new String[]{"data1", "data2"}));
+
+        // Call the method
+        List<String[]> rows = kafkaConsumer.retrieveCsvFile();
+
+        // Assertions
+        assertFalse(rows.isEmpty()); // Ensure rows were retrieved
+        assertEquals(2, rows.get(0).length); // Check the length of retrieved row data
+        // Add further assertions based on your expected behavior after retrieving the CSV file data
+    }
+
+    @Test
+    public void testDeleteCsvFile() throws IOException {
+        // Mocking Files.deleteIfExists() and providing appropriate values for sourceFilePath
+        kafkaConsumer.deleteCsvFile();
+
+        // Assertions
+        assertFalse(Files.exists(Path.of("sourceFilePath"))); // Ensure the file was deleted
+        // Add further assertions based on your expected behavior after deleting the CSV file
     }
 }
-
-
-kafka:
-  broker: "localhost:9092" # Set your Kafka broker address
-  topic: "your-kafka-topic" # Set your Kafka topic name
-
-
-CsvToJsonToKafka
-│   pom.xml
-│
-└───src
-    └───main
-        └───java
-        │   └───your
-        │       └───package
-        │           CsvToJsonToKafka.java
-        │
-        └───resources
-            │   config.yml

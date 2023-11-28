@@ -1,73 +1,70 @@
-As Lionel, I'm here to share some sample positive and negative scenarios for Junit5 test cases of KafkaProducer and KafkaConsumer, mocking the interactions. Please note that the code provided is a basic example and may need further modifications based on your specific requirements.
+To write JUnit5 test cases in Spring Boot with mocking, we can use Mockito for mocking KafkaProducer and KafkaConsumer classes.
 
-Positive Scenario: Sending a SpaceCollector Json message
+Here's an example of JUnit5 test cases for KafkaProducer and KafkaConsumer classes:
 
 ```java
+import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-@ExtendWith(MockitoExtension.class)
+@SpringBootTest
 public class KafkaTest {
 
+    @InjectMocks
+    private KafkaProducer kafkaProducer;
+
     @Mock
-    private KafkaProducer<String, String> kafkaProducer;
+    private KafkaTemplate<String, SpaceCollector> kafkaTemplate;
+
+    @Value("${spring.kafka.producer.topic-name}")
+    private String topicName;
 
     @Test
-    void testKafkaSender() {
-        String topic = "space-collector";
-        String message = "{\"url\":\"example.com\",\"port\":8080,\"fileType\":\"csv\",\"delimiters\":\"|\",\"input_FILE_PATH\":\"input.txt\",\"Output_File_Path\":\"output.txt\"}";
+    public void testKafkaProducer() {
+        SpaceCollector message = new SpaceCollector(1, "url", 8080, "input.csv", "output.csv", ",", "CSV");
 
-        // Mock the KafkaProducer send method
-        doNothing().when(kafkaProducer).send(any(ProducerRecord.class));
-        
-        // Execute the sending of the message
-        KafkaSender.send(spaceCollectorJson, kafkaProducer, topic);
+        doNothing().when(kafkaTemplate).send(topicName, message);
+        kafkaProducer.sendMessage(message);
 
-        // Assert that the message was sent successfully
-        verify(kafkaProducer).send(new ProducerRecord<>(topic, message));
+        verify(kafkaTemplate, times(1)).send(topicName, message);
+
+        // Assertions
+        assertNotNull(message);
+        assertEquals(message.getId(), 1);
+        assertEquals(message.getPort(), 8080);
+        assertEquals(message.getInputFilePath(), "input.csv");
+        assertEquals(message.getOutputFilePath(), "output.csv");
+    }
+
+    @InjectMocks
+    private KafkaConsumer kafkaConsumer;
+
+    @Mock
+    private FlinkApiController flinkApi;
+
+    @Value("${file.source}")
+    private String sourceFilePath;
+
+    @Value("${file.destination}")
+    private String destinationFolderPath;
+
+    @Test
+    public void testKafkaConsumer() throws IOException, CsvValidationException {
+
+        SpaceCollector message = new SpaceCollector(1, "url", 8080, "input.csv", "output.csv", ",", "CSV");
+
+        when(flinkApi.triggerJob(message)).thenReturn("flink-response");
+
+        kafkaConsumer.consume(message);
+
+        // Assertions
+        assertNotNull(message.getSourceFilePath());
+        assertEquals(message.getSourceFilePath(), sourceFilePath);
+
+        // Verify the methods were called
+        verify(flinkApi, times(1)).triggerJob(message);
     }
 }
 ```
 
-Negative Scenario: Sending a SpaceCollector Json message with missing required fields
-
-```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-@ExtendWith(MockitoExtension.class)
-public class KafkaTest {
-
-    @Mock
-    private KafkaProducer<String, String> kafkaProducer;
-
-    @Test
-    void testKafkaSender_InvalidMessage() {
-        String topic = "space-collector";
-        String message = "{\"url\":\"example.com\",\"port\":8080,\"delimiters\":\"|\",\"input_FILE_PATH\":\"input.txt\",\"Output_File_Path\":\"output.txt\"}";
-
-        // Mock the KafkaProducer send method
-        doNothing().when(kafkaProducer).send(any(ProducerRecord.class));
-        
-        // Execute the sending of the invalid message
-        KafkaSender.send(spaceCollectorJson, kafkaProducer, topic);
-
-        // Verify that the KafkaProducer send method was never called
-        verify(kafkaProducer, never()).send(any(ProducerRecord.class));
-    }
-}
-```
-
-In these examples, the KafkaSender class is responsible for sending the SpaceCollector Json message using the KafkaProducer. By mocking the KafkaProducer and asserting the interactions, we can test the behavior and ensure the message is sent correctly.
+Note: Make sure you have set up the Spring Boot environment for writing JUnit5 test cases.

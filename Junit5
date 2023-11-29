@@ -1,147 +1,129 @@
-import static org.mockito.Mockito.*;
-
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
+import org.slf4j.Logger;
 import org.springframework.kafka.core.KafkaTemplate;
 
+import java.io.FileReader;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
-class KafkaProducerTest {
+public class KafkaProducerConsumerTest {
 
+    @Mock
+    private KafkaTemplate<String, SpaceCollector> kafkaTemplate;
+
+    @InjectMocks
+    private KafkaProducer kafkaProducer;
+
+    @InjectMocks
+    private KafkaConsumer kafkaConsumer;
+
+    @Mock
+    private FlinkApiController flinkApiController;
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.initMocks(this);
+    }
+
+    // Positive test case for sending message to Kafka topic
     @Test
     void testSendMessage() {
-        // create a mock KafkaTemplate
-        KafkaTemplate<String, SpaceCollector> kafkaTemplate = mock(KafkaTemplate.class);
-
-        // create a new KafkaProducer and set the mock KafkaTemplate
-        KafkaProducer producer = new KafkaProducer();
-        producer.kafkaTemplate = kafkaTemplate;
-
-        // create a SpaceCollector object to send
-        SpaceCollector message = mock(SpaceCollector.class);
-        when(message.getId()).thenReturn(1);
-        when(message.getUrl()).thenReturn("http://localhost");
-        when(message.getPort()).thenReturn(8080);
-        when(message.getInputFilePath()).thenReturn("/input.csv");
-        when(message.getOutputFilePath()).thenReturn("/output.csv");
-        when(message.getDelimiter()).thenReturn(",");
-        when(message.getFileType()).thenReturn("csv");
-
-        // call the sendMessage method
-        producer.sendMessage(message);
-
-        // verify that the KafkaTemplate's send method was called with the correct parameters
-        verify(kafkaTemplate).send("test-topic", message);
-
-        // assert that the log message was printed correctly
-        Assertions.assertTrue(producer.getLogger().contains(String.format("Message sent")));
+        SpaceCollector spaceCollector = new SpaceCollector(1, "http://localhost", 8080, "input.csv", "output.csv", ",", "csv");
+        Mockito.when(kafkaTemplate.send(spaceCollector.getUrl(), spaceCollector)).thenReturn(null);
+        kafkaProducer.sendMessage(spaceCollector);
+        Mockito.verify(kafkaTemplate, Mockito.times(1)).send(spaceCollector.getUrl(), spaceCollector);
     }
 
-}
-
-class KafkaProducerTest {
-
+    // Positive test case for logger logging the message sent
     @Test
-    void testSendMessageWithNullMessage() {
-        // create a mock KafkaTemplate
-        KafkaTemplate<String, SpaceCollector> kafkaTemplate = mock(KafkaTemplate.class);
-
-        // create a new KafkaProducer and set the mock KafkaTemplate
-        KafkaProducer producer = new KafkaProducer();
-        producer.kafkaTemplate = kafkaTemplate;
-
-        // call the sendMessage method with a null message
-        producer.sendMessage(null);
-
-        // verify that the KafkaTemplate's send method was not called
-        verify(kafkaTemplate, never()).send(anyString(), any(SpaceCollector.class));
-
-        // assert that the log message was printed correctly
-        Assertions.assertTrue(producer.getLogger().contains("Message is null"));
+    void testLogger() {
+        SpaceCollector spaceCollector = new SpaceCollector(1, "http://localhost", 8080, "input.csv", "output.csv", ",", "csv");
+        kafkaProducer.sendMessage(spaceCollector);
+        Mockito.verify(Logger, Mockito.times(1)).info("Message sent ", spaceCollector);
     }
 
-}
-
-class KafkaConsumerTest {
-
-    @Mock
-    FlinkApiController flinkApiController;
-
+    // Positive test case for logger logging the message received
     @Test
     void testConsume() throws IOException, CsvValidationException {
-        // create a mock FlinkApiController
-        FlinkApiController flinkApiController = mock(FlinkApiController.class);
-
-        // create a new KafkaConsumer and set the mock FlinkApiController
-        KafkaConsumer consumer = new KafkaConsumer();
-        consumer.FlinkApi = flinkApiController;
-
-        // create a SpaceCollector object to consume
-        SpaceCollector message = mock(SpaceCollector.class);
-        when(message.getId()).thenReturn(1);
-        when(message.getUrl()).thenReturn("http://localhost");
-        when(message.getPort()).thenReturn(8080);
-        when(message.getInputFilePath()).thenReturn("/input.csv");
-        when(message.getOutputFilePath()).thenReturn("/output.csv");
-        when(message.getDelimiter()).thenReturn(",");
-        when(message.getFileType()).thenReturn("csv");
-
-        // call the consume method with the SpaceCollector object
-        consumer.consume(message);
+        SpaceCollector spaceCollector = new SpaceCollector(1, "http://localhost", 8080, "input.csv", "output.csv", ",", "csv");
+        Mockito.when(flinkApiController.runFlink(spaceCollector)).thenReturn("success");
+        kafkaConsumer.consume(spaceCollector);
+        Mockito.verify(Logger, Mockito.times(1)).info("Message received -> ", spaceCollector);
     }
-}
 
-
-import static org.mockito.Mockito.*;
-
-import java.io.IOException;
-
-import org.apache.commons.csv.CsvValidationException;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-
-class KafkaConsumerTest {
-
-    @Mock
-    FlinkApiController flinkApiController;
-
+    // Positive test case for successfully reading the CSV file
     @Test
-    void testConsumeWithIOException() throws IOException, CsvValidationException {
-        // create a mock FlinkApiController
-        FlinkApiController flinkApiController = mock(FlinkApiController.class);
+    void testRetrieveCsvFile() throws IOException, CsvValidationException {
+        SpaceCollector spaceCollector = new SpaceCollector(1, "http://localhost", 8080, "input.csv", "output.csv", ",", "csv");
+        List<String[]> rows = kafkaConsumer.retrieveCsvFile(spaceCollector);
+        String[] expectedRow1 = new String[] {"1", "John", "Doe"};
+        String[] expectedRow2 = new String[] {"2", "Jane", "Doe"};
+        Assertions.assertEquals(rows.size(), 2);
+        Assertions.assertArrayEquals(rows.get(0), expectedRow1);
+        Assertions.assertArrayEquals(rows.get(1), expectedRow2);
+    }
 
-        // create a new KafkaConsumer and set the mock FlinkApiController
-        KafkaConsumer consumer = new KafkaConsumer();
-        consumer.FlinkApi = flinkApiController;
+    // Negative test case for sending message to invalid Kafka topic
+    @Test
+    void testSendMessageInvalidTopic() {
+        SpaceCollector spaceCollector = new SpaceCollector(1, "http://localhost", 8080, "input.csv", "output.csv", ",", "csv");
+        Mockito.when(kafkaTemplate.send(spaceCollector.getUrl(), spaceCollector)).thenThrow(new RuntimeException());
+        kafkaProducer.sendMessage(spaceCollector);
+        Mockito.verify(kafkaTemplate, Mockito.times(1)).send(spaceCollector.getUrl(), spaceCollector);
+    }
 
-        // create a SpaceCollector object to consume
-        SpaceCollector message = mock(SpaceCollector.class);
-        when(message.getId()).thenReturn(1);
-        when(message.getUrl()).thenReturn("http://localhost");
-        when(message.getPort()).thenReturn(8080);
-        when(message.getInputFilePath()).thenReturn("/input.csv");
-        when(message.getOutputFilePath()).thenReturn("/output.csv");
-        when(message.getDelimiter()).thenReturn(",");
-        when(message.getFileType()).thenReturn("csv");
-
-        // throw an IOException when the writeCsvFile method is called
-        doThrow(new IOException()).when(consumer).writeCsvFile();
-
-        // call the consume method with the SpaceCollector object
-        Assertions.assertThrows(IOException.class, () -> {
-            consumer.consume(message);
-        });
-
-        // verify that the FlinkApiController's triggerJob method was not called
-        verify(flinkApiController, never()).triggerJob(any(SpaceCollector.class));
-
-        // verify that the writeCsvFile, deleteCsvFile, and retrieveCsvFile methods were not called
-        verify(consumer, never()).writeCsvFile();
-        verify(consumer, never()).deleteCsvFile();
-        verify(consumer, never()).retrieveCsvFile();
-
-        // assert that the log message was printed correctly
-        Assertions.assertTrue(consumer.getLogger().contains("Error reading CSV file"));
+    // Negative test case for logger not logging null message sent
+    @Test
+    void testLoggerNullMessage() {
+        kafkaProducer.sendMessage(null);
+        Mockito.verify(Logger, Mockito.times(0)).info("Message sent ", null);
     }
 }
-```
+
+
+
+
+@Test
+void testConsumeNullMessage() throws IOException, CsvValidationException {
+    kafkaConsumer.consume(null);
+    Mockito.verify(LOGGER, Mockito.times(0)).info("Message received -> ", null);
+}
+
+@Test
+void testRetrieveCsvFileInvalidFilePath() throws IOException, CsvValidationException {
+    SpaceCollector spaceCollector = new SpaceCollector(1, "http://localhost", 8080, "invalid.csv", "output.csv", ",", "csv");
+    List<String[]> rows = kafkaConsumer.retrieveCsvFile(spaceCollector);
+    Assertions.assertEquals(rows.size(), 0);
+}
+
+@Test
+void testWriteCsvFile() throws IOException {
+    Path sourcePath = Paths.get("input.csv");
+    Path destinationPath = Paths.get("output.csv");
+    Files.createFile(sourcePath);
+    kafkaConsumer.writeCsvFile(sourcePath, destinationPath);
+    Assertions.assertTrue(Files.exists(destinationPath));
+}
+
+@Test
+void testDeleteCsvFile() throws IOException {
+    Path path = Paths.get("input.csv");
+    Files.createFile(path);
+    kafkaConsumer.deleteCsvFile(path);
+    Assertions.assertFalse(Files.exists(path));
+}

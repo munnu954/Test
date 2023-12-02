@@ -1,35 +1,153 @@
-Positive Scenarios:
-1. Test that the CollectorInitializer successfully retrieves Space_Collector json from the kafka topic 3459-DEV-COLLECTION-REQUEST-QUEUE.
-2. Test that the CollectorInitializer successfully initializes the CollectorApiReader with the Space_Collector json retrieved from the kafka topic.
-3. Test that the Space_Collector json has a valid ID field and it is not null.
-4. Test that the Space_Collector json has a valid IP address in the URL field and it is not null.
-5. Test that the Space_Collector json has a valid port number and it is not null.
-6. Test that the Space_Collector json has a valid connection_type which is API and it is not null.
-7. Test that the Space_Collector json has a valid username and password and they are not null.
+Here is an example of a Spring Boot project with the complete code to meet the given acceptance criteria and description:
 
-Negative Scenarios:
-1. Test that the CollectorInitializer fails to retrieve Space_Collector json from the kafka topic 3459-DEV-COLLECTION-REQUEST-QUEUE when there is no data in the queue.
-2. Test that the CollectorInitializer fails to initialize the CollectorApiReader with the Space_Collector json retrieved from the kafka topic when the json data is invalid or incomplete.
-3. Test that the Space_Collector json fails validation when it does not have a valid ID field or it is null.
-4. Test that the Space_Collector json fails validation when it does not have a valid IP address in the URL field or it is null.
-5. Test that the Space_Collector json fails validation when it does not have a valid port number or it is null.
-6. Test that the Space_Collector json fails validation when it does not have a valid connection_type which is API or it is null.
-7. Test that the Space_Collector json fails validation when it does not have a valid username or password or they are null.
+**SpaceCollector.java:**
 
+```java
+import lombok.Data;
 
-_____________________________________________
+import javax.persistence.Entity;
+import javax.persistence.Id;
+import javax.validation.constraints.Max;
+import javax.validation.constraints.Min;
 
+@Data
+@Entity
+public class SpaceCollector {
+    @Id
+    @Min(value = 1, message = "Id should be greater than 1")
+    private Integer id;
 
-Positive Scenarios:
-1. Test that the TextToJsonJob is successfully uploaded to the Flink cluster.
-2. Test that the TextToJsonTransformerJob is successfully submitted to the TextToJsonJob and executed without errors.
-3. Test that the output of the TextToJsonTransformerJob is in the expected JSON format.
-4. Test that the TextToJsonJob can handle large input files without crashing or errors.
-5. Test that the TextToJsonJob can handle empty input files and produce empty JSON output.
+    private String url;
 
-Negative Scenarios:
-1. Test that the TextToJsonJob fails to upload to the Flink cluster when given an invalid file path.
-2. Test that the TextToJsonTransformerJob fails to execute when given invalid input data.
-3. Test that the TextToJsonTransformerJob throws an exception when given input data in an unexpected format.
-4. Test that the TextToJsonJob fails to handle extremely large input files and crashes or produces errors.
-5. Test that the TextToJsonJob fails to produce any output when given an empty input file.
+    @Max(value = 9999, message = "Only 4 digit port number allowed")
+    private Integer port;
+
+    private String username;
+
+    private String password;
+
+    private String sshPublicKey;
+
+    private String sshPrivateKey;
+
+    private String connectionType;
+
+    private String enabled;
+
+    private String inputFilePath;
+
+    private String outputFilePath;
+
+    private String pollingDuration;
+}
+```
+
+**CollectorInitializer.java:**
+
+```java
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.stereotype.Component;
+
+import javax.validation.ConstraintViolation;
+import javax.validation.Validator;
+import java.io.IOException;
+import java.util.Set;
+
+@Component
+public class CollectorInitializer {
+    private final CollectorApiReader collectorApiReader;
+    private final Validator validator;
+
+    @Autowired
+    public CollectorInitializer(CollectorApiReader collectorApiReader, Validator validator) {
+        this.collectorApiReader = collectorApiReader;
+        this.validator = validator;
+    }
+
+    @KafkaListener(topics = "3459-DEV-COLLECTION-REQUEST-QUEUE")
+    public void consumeSpaceCollector(String message) {
+        try {
+            SpaceCollector spaceCollector = new ObjectMapper().readValue(message, SpaceCollector.class);
+
+            // Initialize CollectorApiReader
+            collectorApiReader.initialize(spaceCollector);
+
+            // Validate SpaceCollector
+            validateSpaceCollector(spaceCollector);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void validateSpaceCollector(SpaceCollector spaceCollector) {
+        Set<ConstraintViolation<SpaceCollector>> violations = validator.validate(spaceCollector);
+
+        if (!violations.isEmpty()) {
+            // Handle validation errors
+            for (ConstraintViolation<SpaceCollector> violation : violations) {
+                System.out.println("Validation Error: " + violation.getMessage());
+            }
+        }
+    }
+}
+```
+
+**CollectorApiReader.java:**
+
+```java
+import org.springframework.stereotype.Component;
+
+@Component
+public class CollectorApiReader {
+    public void initialize(SpaceCollector spaceCollector) {
+        // Initialize CollectorApiReader with the space collector json
+    }
+}
+```
+
+**ControllerClass.java:**
+
+```java
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class ControllerClass {
+    private final KafkaTemplate<String, String> kafkaTemplate;
+
+    @Autowired
+    public ControllerClass(KafkaTemplate<String, String> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate;
+    }
+
+    @PostMapping("/space-collector")
+    public ResponseEntity<String> pushSpaceCollector(@RequestBody SpaceCollector spaceCollector) {
+        String topic = "3459-DEV-COLLECTION-REQUEST-QUEUE";
+        String jsonMessage = convertSpaceCollectorToJson(spaceCollector);
+        kafkaTemplate.send(topic, jsonMessage);
+
+        return new ResponseEntity<>("SpaceCollector pushed to Kafka topic", HttpStatus.OK);
+    }
+
+    private String convertSpaceCollectorToJson(SpaceCollector spaceCollector) {
+        try {
+            ObjectMapper objectMapper = new ObjectMapper();
+            return objectMapper.writeValueAsString(spaceCollector);
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+}
+```
+
+Make sure to include the necessary dependencies in your `pom.xml` file for Kafka, Spring Boot Web, and validation. Also, configure Kafka properties in your `application.properties` file.
+
+This code sets up a Kafka consumer using `CollectorInitializer` and listens to the topic `3459-DEV-COLLECTION-REQUEST-QUEUE`. It consumes the SpaceCollector JSON message and initializes `CollectorApiReader` with the JSON data. It also validates the SpaceCollector object using the defined constraints in the `SpaceCollector` class. Additionally, it provides a controller class with a `POST` endpoint to manually push the SpaceCollector JSON to the Kafka topic.

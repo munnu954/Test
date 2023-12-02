@@ -1,89 +1,141 @@
-@Test
-public void testRetrieveCsvFile() throws IOException {
-    // Set up your test environment, such as setting sourceFilePath
-    String testSourceFilePath = "test_source_file.csv";
-    kafkaConsumer.setSourceFilePath(testSourceFilePath);
+Unfortunately, as an AI language model, I cannot write and run code. However, I can provide a general structure for the SpringBoot project code to implement the requirements mentioned in the prompt.
 
-    // Create a test CSV file
-    Path testSourcePath = Path.of(testSourceFilePath);
-    Files.createFile(testSourcePath);
+1. First, create a SpringBoot project with the necessary dependencies for Kafka and REST APIs.
 
-    // Mock CSV content to be read
-    List<String[]> expectedRows = List.of(new String[]{"data1", "data2"}, new String[]{"data3", "data4"});
+2. Create a SpaceCollector class with the following attributes:
 
-    CSVParser parser = mock(CSVParser.class);
-    whenNew(CSVParser.class).withAnyArguments().thenReturn(parser);
-    when(parser.iterator()).thenReturn(expectedRows.iterator());
+```
+@Data
+@Min(value = 1, message = "Id should be greater than 1")
+@Id
+private Integer ID;
+private String URL;
+@Max(value = 9999, message = "Only 4 digit port number allowed")
+private Integer PORT;
+private String USERNAME;
+private String PASSWORD;
+private String SSH_PUBLIC_KEY;
+private String SSH_PRIVATE_KEY;
+private String CONNECTION_TYPE;
+private String ENABLED;
+private String INPUT_FILE_PATH;
+private String OUTPUT_FILE_PATH;
+private String POLLING_DURATION;
+```
 
-    List<String[]> rows = kafkaConsumer.retrieveCsvFile();
+3. Create a KafkaConfig class to configure the Kafka consumer properties and define a KafkaListenerContainerFactory bean to consume messages from the specified topic:
 
-    // Add assertions based on the behavior you expect here
-    assertEquals(2, rows.size());
-    assertArrayEquals(new String[]{"data1", "data2"}, rows.get(0));
-    assertArrayEquals(new String[]{"data3", "data4"}, rows.get(1));
+```
+@Configuration
+@EnableKafka
+public class KafkaConfig {
 
-    // Clean up test file
-    Files.deleteIfExists(testSourcePath);
+@Value("${spring.kafka.bootstrap-servers}")
+private String bootstrapServers;
+
+@Bean
+public Map consumerConfigs() {
+Map props = new HashMap
+props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+props.put(ConsumerConfig.GROUP_ID_CONFIG, "custom-api-collectors");
+props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+return props;
 }
 
+@Bean
+public ConsumerFactory consumerFactory() {
+return new DefaultKafkaConsumerFactorynew JsonDeserializer}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-import java.io.IOException;
-import java.nio.file.*;
-import java.util.*;
-
-import org.apache.commons.csv.CSVParser;
-import org.junit.jupiter.api.*;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.mockito.Mockito.*;
-
-public class KafkaConsumerTest {
-    
-    private KafkaConsumer kafkaConsumer;
-    private CSVParser parser;
-  
-    @BeforeEach
-    public void setup() {
-        kafkaConsumer = new KafkaConsumer(); // Instantiate KafkaConsumer class
-        parser = mock(CSVParser.class); // Mock CSVParser class
-    }
-
-    @Test
-    public void testRetrieveCsvFile() throws IOException {
-        String testSourceFilePath = "test_source_file.csv";
-        kafkaConsumer.setSourceFilePath(testSourceFilePath);
-
-        Path testSourcePath = Paths.get(testSourceFilePath); // Use Paths.get() to create path
-        Files.createFile(testSourcePath);
-
-        List<String[]> expectedRows = new ArrayList<>();
-        expectedRows.add(new String[]{"data1", "data2"});
-        expectedRows.add(new String[]{"data3", "data4"});
-
-        whenNew(CSVParser.class).withAnyArguments().thenReturn(parser);
-        when(parser.iterator()).thenReturn(expectedRows.iterator());
-
-        List<String[]> rows = kafkaConsumer.retrieveCsvFile();
-
-        assertEquals(2, rows.size());
-        assertArrayEquals(expectedRows.get(0), rows.get(0));
-        assertArrayEquals(expectedRows.get(1), rows.get(1));
-
-        Files.deleteIfExists(testSourcePath);
-    }
+@Bean
+public KafkaListenerContainerFactory> kafkaListenerContainerFactory() {
+ConcurrentKafkaListenerContainerFactory factory =
+new ConcurrentKafkaListenerContainerFactory
+factory.setConsumerFactory(consumerFactory());
+factory.setConcurrency(3);
+factory.getContainerProperties().setPollTimeout(3000);
+return factory;
 }
- 
-In this simplified and executable JUnit5 test case, we have used the @BeforeEach annotation to initialize the KafkaConsumer and mock the CSVParser. We have also replaced the usage of Path.of() with Paths.get() for creating the test source file path. With these updates, the test case should work as expected.
+}
+```
+
+4. Create a CollectorInitializer class that listens to messages from the specified Kafka topic and processes them accordingly:
+
+```
+@Service
+public class CollectorInitializer {
+
+private static final Logger logger = LoggerFactory.getLogger(CollectorInitializer.class);
+
+@KafkaListener(topics = "3459-DEV-COLLECTION-REQUEST-QUEUE")
+public void processMessage(SpaceCollector spaceCollector) {
+logger.info("Received SpaceCollector data: {}", spaceCollector);
+// Process the SpaceCollector data accordingly
+}
+}
+```
+
+5. Create a REST API controller class with a @PostMapping method to manually push the SpaceCollector data into the Kafka topic:
+
+```
+@RestController
+@RequestMapping("/space-collector")
+public class SpaceCollectorController {
+
+private final KafkaTemplate kafkaTemplate;
+
+@Autowired
+public SpaceCollectorController(KafkaTemplate kafkaTemplate) {
+this.kafkaTemplate = kafkaTemplate;
+}
+
+@PostMapping
+public ResponseEntity pushSpaceCollectorData(@RequestBody SpaceCollector spaceCollector) {
+kafkaTemplate.send("3459-DEV-COLLECTION-REQUEST-QUEUE", spaceCollector);
+return ResponseEntity.ok("SpaceCollector data pushed to Kafka topic successfully");
+}
+}
+```
+
+6. Finally, configure the Kafka producer properties in the application.yml file:
+
+```
+spring:
+kafka:
+bootstrap-servers: localhost:9092
+producer:
+key-serializer: org.apache.kafka.common.serialization.StringSerializer
+value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+retries: 0
+```
+
+This is the general structure of a SpringBoot project code to implement the requirements mentioned in the prompt. However, you may need to modify it according to your specific needs.
+
+
+To push the Space_Collector JSON data to the CollectorApiReader, we can modify the CollectorInitializer class to initialize the CollectorApiReader with the received SpaceCollector data. Here's the modified code:
+
+```
+@Service
+public class CollectorInitializer {
+
+private static final Logger logger = LoggerFactory.getLogger(CollectorInitializer.class);
+
+private final CollectorApiReader collectorApiReader;
+
+@Autowired
+public CollectorInitializer(CollectorApiReader collectorApiReader) {
+this.collectorApiReader = collectorApiReader;
+}
+
+@KafkaListener(topics = "3459-DEV-COLLECTION-REQUEST-QUEUE")
+public void processMessage(SpaceCollector spaceCollector) {
+logger.info("Received SpaceCollector data: {}", spaceCollector);
+collectorApiReader.initialize(spaceCollector);
+}
+}
+```
+
+In this code, we have injected the CollectorApiReader as a dependency in the CollectorInitializer constructor. Then, in the processMessage method, we have received the SpaceCollector data from the Kafka topic and passed it to the CollectorApiReader's initialize method to initialize it with the SpaceCollector JSON.
+
+Note that we assume that the CollectorApiReader has an initialize method that takes a SpaceCollector object as a parameter and initializes it with the JSON data. You may need to implement this method according to your specific requirements.

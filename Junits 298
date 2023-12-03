@@ -1,0 +1,161 @@
+import static org.mockito.Mockito.*;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.test.utils.KafkaTestUtils;
+import org.springframework.kafka.test.utils.TestUtils;
+
+public class CollectorInitializerTest {
+
+    @Test
+    public void testRetrieveSpaceCollectorJson_SuccessfullyRetrievesJsonFromKafkaTopic() {
+        KafkaTemplate<String, String> kafkaTemplate = mock(KafkaTemplate.class);
+        CollectorInitializer collectorInitializer = new CollectorInitializer(kafkaTemplate);
+        
+        collectorInitializer.retrieveSpaceCollectorJson();
+        
+        verify(kafkaTemplate).send(eq("3459-DEV-COLLECTION-REQUEST-QUEUE"), anyString());
+    }
+    
+    @Test
+    public void testInitializeCollectorApiReader_SuccessfullyInitializesWithSpaceCollectorJson() {
+        CollectorApiReader collectorApiReader = mock(CollectorApiReader.class);
+        CollectorInitializer collectorInitializer = new CollectorInitializer(collectorApiReader);
+        SpaceCollector spaceCollector = new SpaceCollector(); // create a valid SpaceCollector object
+        
+        collectorInitializer.initializeCollectorApiReader(spaceCollector);
+        
+        verify(collectorApiReader).initialize(spaceCollector);
+    }
+    
+    @Test
+    public void testSpaceCollectorJson_HasValidIdField() {
+        SpaceCollector spaceCollector = new SpaceCollector(); // create a valid SpaceCollector object
+        
+        assertNotNull(spaceCollector.getId());
+    }
+    
+    @Test
+    public void testSpaceCollectorJson_HasValidIpAddressInUrlField() {
+        SpaceCollector spaceCollector = new SpaceCollector(); // create a valid SpaceCollector object
+        
+        assertNotNull(spaceCollector.getUrl());
+        assertTrue(spaceCollector.getUrl().matches("\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")); // validate IP address format
+    }
+    
+    @Test
+    public void testSpaceCollectorJson_HasValidPortNumber() {
+        SpaceCollector spaceCollector = new SpaceCollector(); // create a valid SpaceCollector object
+        
+        assertNotNull(spaceCollector.getPort());
+        assertTrue(spaceCollector.getPort() > 0 && spaceCollector.getPort() <= 65535); // validate port range
+    }
+    
+    @Test
+    public void testSpaceCollectorJson_HasValidConnectionType() {
+        SpaceCollector spaceCollector = new SpaceCollector(); // create a valid SpaceCollector object
+        spaceCollector.setConnectionType("API");
+        
+        assertNotNull(spaceCollector.getConnectionType());
+        assertEquals("API", spaceCollector.getConnectionType());
+    }
+    
+    @Test
+    public void testSpaceCollectorJson_HasValidUsernameAndPassword() {
+        SpaceCollector spaceCollector = new SpaceCollector(); // create a valid SpaceCollector object
+        spaceCollector.setUsername("admin");
+        spaceCollector.setPassword("password");
+        
+        assertNotNull(spaceCollector.getUsername());
+        assertNotNull(spaceCollector.getPassword());
+        assertEquals("admin", spaceCollector.getUsername());
+        assertEquals("password", spaceCollector.getPassword());
+    }
+    
+    @Test
+    public void testRetrieveSpaceCollectorJson_FailsWhenNoDataInQueue() {
+        KafkaTemplate<String, String> kafkaTemplate = mock(KafkaTemplate.class);
+        KafkaTemplate<String, String> kafkaTemplateSpy = spy(kafkaTemplate);
+        CollectorInitializer collectorInitializer = new CollectorInitializer(kafkaTemplateSpy);
+        
+        doReturn(null).when(kafkaTemplateSpy).send(any(), anyString()); // simulate empty kafka topic
+        
+        String errorMessage = collectorInitializer.retrieveSpaceCollectorJson();
+        
+        assertEquals("Failed to retrieve Space_Collector json from kafka topic.", errorMessage);
+    }
+    
+    @Test
+    public void testInitializeCollectorApiReader_FailsWhenJsonIsInvalid() {
+        CollectorApiReader collectorApiReader = mock(CollectorApiReader.class);
+        CollectorApiReader collectorApiReaderSpy = spy(collectorApiReader);
+        CollectorInitializer collectorInitializer = new CollectorInitializer(collectorApiReaderSpy);
+        SpaceCollector spaceCollector = new SpaceCollector(); // create an invalid SpaceCollector object
+        
+        doThrow(new IllegalArgumentException()).when(collectorApiReaderSpy).initialize(any()); // simulate failure in initialize
+        
+        String errorMessage = collectorInitializer.initializeCollectorApiReader(spaceCollector);
+        
+        assertEquals("Failed to initialize CollectorApiReader with Space_Collector json.", errorMessage);
+    }
+    
+    @Test
+    public void testSpaceCollectorJson_InvalidIdField() {
+        SpaceCollector spaceCollector = new SpaceCollector(); // create an invalid SpaceCollector object
+        spaceCollector.setId(null);
+        
+        String errorMessage = sendJsonMessage(spaceCollector);
+        
+        assertEquals("Space_Collector json validation failed: Invalid ID field.", errorMessage);
+    }
+    
+    @Test
+    public void testSpaceCollectorJson_InvalidIpAddressInUrlField() {
+        SpaceCollector spaceCollector = new SpaceCollector(); // create an invalid SpaceCollector object
+        spaceCollector.setUrl("invalid-ip-address");
+        
+        String errorMessage = sendJsonMessage(spaceCollector);
+        
+        assertEquals("Space_Collector json validation failed: Invalid IP address in URL field.", errorMessage);
+    }
+    
+    @Test
+    public void testSpaceCollectorJson_InvalidPortNumber() {
+        SpaceCollector spaceCollector = new SpaceCollector(); // create an invalid SpaceCollector object
+        spaceCollector.setPort(-1);
+        
+        String errorMessage = sendJsonMessage(spaceCollector);
+        
+        assertEquals("Space_Collector json validation failed: Invalid port number.", errorMessage);
+    }
+    
+    @Test
+    public void testSpaceCollectorJson_InvalidConnectionType() {
+        SpaceCollector spaceCollector = new SpaceCollector(); // create an invalid SpaceCollector object
+        spaceCollector.setConnectionType("INVALID");
+        
+        String errorMessage = sendJsonMessage(spaceCollector);
+        
+        assertEquals("Space_Collector json validation failed: Invalid connection type.", errorMessage);
+    }
+    
+    @Test
+    public void testSpaceCollectorJson_InvalidUsernameOrPassword() {
+        SpaceCollector spaceCollector = new SpaceCollector(); // create an invalid SpaceCollector object
+        spaceCollector.setUsername(null);
+        
+        String errorMessage = sendJsonMessage(spaceCollector);
+        
+        assertEquals("Space_Collector json validation failed: Invalid username or password.", errorMessage);
+    }
+    
+    private String sendJsonMessage(SpaceCollector spaceCollector) {
+        KafkaTemplate<String, String> kafkaTemplate = mock(KafkaTemplate.class);
+        KafkaTemplate<String, String> kafkaTemplateSpy = spy(kafkaTemplate);
+        CollectorInitializer collectorInitializer = new CollectorInitializer(kafkaTemplateSpy);
+        
+        String jsonMessage = collectorInitializer.sendJsonMessage(spaceCollector);
+        
+        return jsonMessage;
+    }
+}

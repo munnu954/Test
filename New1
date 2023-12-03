@@ -1,143 +1,144 @@
-Here is the complete SpringBoot project complete code as per the below Acceptance Criteria and Description:
-
-
-package com.example.customapicollectors;
-
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-
-@SpringBootApplication
-public class CustomApiCollectorsApplication {
-
-    public static void main(String[] args) {
-        SpringApplication.run(CustomApiCollectorsApplication.class, args);
-    }
-
-}
-
-
-
-package com.example.customapicollectors.model;
-
-import lombok.Data;
+SpaceCollector.java:
 
 @Data
 public class SpaceCollector {
+    @JsonProperty("id")
+    private String id;
 
-    private Integer id;
+    @JsonProperty("url")
     private String url;
-    private Integer port;
+
+    @JsonProperty("port")
+    private int port;
+
+    @JsonProperty("username")
     private String username;
+
+    @JsonProperty("password")
     private String password;
+
     private String sshPublicKey;
     private String sshPrivateKey;
+
+    @JsonProperty("connection_type")
     private String connectionType;
-    private String enabled;
+
+    private boolean enabled;
     private String inputFilePath;
     private String outputFilePath;
-    private String pollingDuration;
+    private int pollingDuration;
 
+    // Getters and setters for all fields
 }
 
 
+KafkaProducerService.java:
 
-package com.example.customapicollectors.controller;
+@Service
+public class KafkaProducerService {
 
-import com.example.customapicollectors.model.SpaceCollector;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RestController;
+    private static final Logger Logger = LoggerFactory.getLogger(KafkaProducerService.class);
 
-@RestController
+    @Value("${spring.kafka.producer.topic-name}")
+    private String topicName;
+
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+
+    @Autowired
+    public KafkaProducerService(KafkaTemplate<String, Object> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate; 
+    }
+
+    public String sendJsonMessage(SpaceCollector spaceCollector) {
+        if (spaceCollector.getId() == null) {
+            return "SpaceCollector json must have an id";
+        }
+
+        if (spaceCollector.getUrl() == null || spaceCollector.getUrl().isEmpty()) {
+            return "SpaceCollector json must have a non-empty url";
+        }
+
+        if (spaceCollector.getPort() == 0) {
+            return "SpaceCollector json must have a non-zero port number";
+        }
+
+        if (!"API".equals(spaceCollector.getConnectionType())) {
+            return "SpaceCollector json must have a connection_type of 'API'";
+        }
+
+        if (spaceCollector.getUsername() == null || spaceCollector.getPassword() == null) {
+            return "SpaceCollector json must have a non-null username and password";
+        }
+
+        Logger.info(String.format("Message sent %s", spaceCollector)); 
+        kafkaTemplate.send(topicName, spaceCollector); 
+        return "jsonMessage sent successfully"; 
+    }
+
+    public void sendErrorMessage(String message){
+        Map<String, Object> map = new HashMap<>();
+        map.put("STATUS", "FAIL");
+        map.put("MESSAGE", message);
+        kafkaTemplate.send(topicName, map);
+    }
+}
+
+
+CollectorController.java:
+
+@RestController 
+@RequestMapping("/api/kafka")
 public class CollectorController {
 
     @Autowired
-    private CollectorApiReader collectorApiReader;
+    KafkaProducerService kafkaProducer;
 
-    @PostMapping("/api/v1/collectors")
-    public ResponseEntity<SpaceCollector> createCollector(@RequestBody SpaceCollector spaceCollector) {
-        try {
-            collectorApiReader.createCollector(spaceCollector);
-            return new ResponseEntity<>(spaceCollector, HttpStatus.CREATED);
-        } catch (Exception e) {
-            return new ResponseEntity<>(null, HttpStatus.INTERNAL_SERVER_ERROR);
+    @PostMapping
+    public ResponseEntity<String> pushSpaceCollectorData(@RequestBody SpaceCollector spaceCollector) {
+        String validationMessage = kafkaProducer.sendJsonMessage(spaceCollector);
+        
+        if (validationMessage != null) {
+            return ResponseEntity.badRequest().body(validationMessage);
         }
+        
+        return ResponseEntity.ok("SpaceCollector data pushed to Kafka topic successfully");
     }
-
 }
 
 
-
-package com.example.customapicollectors.service;
-
-import com.example.customapicollectors.model.SpaceCollector;
-import com.example.customapicollectors.repository.SpaceCollectorRepository;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-
-@Service
-public class CollectorService {
-
-    @Autowired
-    private SpaceCollectorRepository spaceCollectorRepository;
-
-    public SpaceCollector createCollector(SpaceCollector spaceCollector) {
-        return spaceCollectorRepository.save(spaceCollector);
-    }
-
-}
-
-
-
-package com.example.customapicollectors.repository;
-
-import com.example.customapicollectors.model.SpaceCollector;
-import org.springframework.data.jpa.repository.JpaRepository;
-
-public interface SpaceCollectorRepository extends JpaRepository<SpaceCollector, Integer> {
-
-}
-
-
-
-package com.example.customapicollectors.reader;
-
-import com.example.customapicollectors.model.SpaceCollector;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.kafka.support.KafkaHeaders;
-import org.springframework.messaging.handler.annotation.Payload;
-import org.springframework.stereotype.Component;
+CollectorApiReader.java: 
 
 @Component
 public class CollectorApiReader {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(CollectorApiReader.class);
+
+    public void initialize(SpaceCollector spaceCollector) { 
+        LOGGER.info("Initialized Api Reader", spaceCollector); 
+    }
+}
+
+
+CollectorInitializerService.java:
+
+@Service
+public class CollectorInitializerService{
+    private static final Logger LOGGER = LoggerFactory.getLogger(CollectorInitializerService.class);
+    private final CollectorApiReader collectorApiReader;
+    private final Validator validator;
+
     @Autowired
-    private SpaceCollectorRepository spaceCollectorRepository;
+    KafkaProducerService kafkaProducer;
 
-    @KafkaListener(topics = "3459-DEV-COLLECTION-REQUEST-QUEUE")
-    public void consume(String message, @Payload SpaceCollector spaceCollector) {
-        spaceCollectorRepository.save(spaceCollector);
+    @Autowired
+    public CollectorInitializerService(CollectorApiReader collectorApiReader, Validator validator) {
+        this.collectorApiReader = collectorApiReader;
+        this.validator = validator;
     }
 
-}
-
-
-``
-package com.example.customapicollectors;
-
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-
-@SpringBootApplication
-public class CustomApiCollectorsApplication {
-
-    public static void main(String[] args) {
-        SpringApplication.run(CustomApiCollectorsApplication.class, args);
+    @Kafkalistener(topics="${spring.kafka.producer.topic-name}",groupId = "${spring.kafka.consumer.group-id}")
+    public void consume(SpaceCollector spaceCollector) {
+        LOGGER.info(String.format("Received SpaceCollector data: {}", spaceCollector)); 
+        collectorApiReader.initialize(spaceCollector);
     }
-
 }
-`

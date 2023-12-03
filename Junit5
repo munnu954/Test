@@ -1,204 +1,130 @@
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.http.ResponseEntity;
 
-Positive JUnit5 Test Case for KafkaProducer:
-
-import static org.mockito.ArgumentMatchers.any;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-@RunWith(MockitoJUnitRunner.class)
-class KafkaProducerTest {
+class CollectorControllerTest {
+    
+    private CollectorController collectorController;
+    
+    @Mock
+    private KafkaProducerService kafkaProducer;
 
-  @Mock
-  private KafkaTemplate<String, SpaceCollector> kafkaTemplate;
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.initMocks(this);
+        collectorController = new CollectorController();
+        collectorController.kafkaProducer = kafkaProducer;
+    }
 
-  @InjectMocks
-  private KafkaProducer kafkaProducer;
+    // Positive Scenario 1
+    @Test
+    void testPushSpaceCollectorData_Success() {
+        SpaceCollector spaceCollector = new SpaceCollector();
+        
+        ResponseEntity<String> response = collectorController.pushSpaceCollectorData(spaceCollector);
+        
+        assertNotNull(response);
+        assertEquals(200, response.getStatusCodeValue());
+        assertEquals("SpaceCollector data pushed to Kafka topic successfully", response.getBody());
+        verify(kafkaProducer).sendJsonMessage(spaceCollector);
+    }
 
-  @Test
-  void testSendMessage() {
-    SpaceCollector message = new SpaceCollector(1, "http://example.com", 8080, "input.csv", "output.csv", ",", "csv");
-
-    kafkaProducer.sendMessage(message);
-
-    verify(kafkaTemplate).send("test-topic", message);
-  }
+    // Negative Scenario 1
+    @Test
+    void testPushSpaceCollectorData_Fail() {
+        SpaceCollector spaceCollector = new SpaceCollector();
+        
+        when(kafkaProducer.sendJsonMessage(spaceCollector)).thenReturn("Validation failed");
+        
+        ResponseEntity<String> response = collectorController.pushSpaceCollectorData(spaceCollector);
+        
+        assertNotNull(response);
+        assertEquals(400, response.getStatusCodeValue());
+        assertEquals("Validation failed", response.getBody());
+    }
 }
 
+class CollectorInitializerServiceTest {
 
-Negative JUnit5 Test Case for KafkaProducer:
+    private CollectorInitializerService collectorInitializerService;
 
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+    @Mock
+    private CollectorApiReader collectorApiReader;
 
-@RunWith(MockitoJUnitRunner.class)
-class KafkaProducerTest {
+    @Mock
+    private Validator validator;
+    
+    @Mock
+    private KafkaProducerService kafkaProducer;
 
-  @Mock
-  private KafkaTemplate<String, SpaceCollector> kafkaTemplate;
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.initMocks(this);
+        collectorInitializerService = new CollectorInitializerService(collectorApiReader, validator);
+        collectorInitializerService.kafkaProducer = kafkaProducer;
+    }
 
-  @InjectMocks
-  private KafkaProducer kafkaProducer;
+    // Positive Scenario 1
+    @Test
+    void testConsume_Success() {
+        SpaceCollector spaceCollector = new SpaceCollector();
+        
+        collectorInitializerService.consume(spaceCollector);
+        
+        verify(collectorApiReader).initialize(spaceCollector);
+    }
 
-  @Test
-  void testSendMessageWithInvalidData() {
-    SpaceCollector message = new SpaceCollector(1, "http://example.com", 10000, "input.csv", "output.csv", ",", "csv");
-
-    kafkaProducer.sendMessage(message);
-
-    verify(kafkaTemplate, never()).send(any(), any());
-  }
+    // Negative Scenario 1
+    @Test
+    void testConsume_Fail() {
+        SpaceCollector spaceCollector = new SpaceCollector();
+        
+        collectorInitializerService.consume(spaceCollector);
+        
+        verify(collectorApiReader).initialize(spaceCollector);
+    }
 }
 
+class KafkaProducerServiceTest {
+    
+    private KafkaProducerService kafkaProducerService;
 
-Positive JUnit5 Test Case for KafkaConsumer:
+    @Mock
+    private KafkaTemplate<String, Object> kafkaTemplate;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.initMocks(this);
+        kafkaProducerService = new KafkaProducerService(kafkaTemplate);
+    }
 
-@RunWith(MockitoJUnitRunner.class)
-class KafkaConsumerTest {
+    // Positive Scenario 1
+    @Test
+    void testSendJsonMessage_Success() {
+        SpaceCollector spaceCollector = new SpaceCollector();
+        
+        String result = kafkaProducerService.sendJsonMessage(spaceCollector);
+        
+        assertEquals("jsonMessage sent successfully", result);
+        verify(kafkaTemplate).send("topicName", spaceCollector);
+    }
 
-  @Mock
-  private FlinkApiController flinkApiController;
-
-  @InjectMocks
-  private KafkaConsumer kafkaConsumer;
-
-  @Test
-  void testConsume() throws IOException, CsvValidationException {
-    SpaceCollector message = new SpaceCollector(1, "http://example.com", 8080, "input.csv", "output.csv", ",", "csv");
-
-    when(flinkApiController.triggerJob(any())).thenReturn("Job completed successfully");
-
-    kafkaConsumer.consume(message);
-
-    verify(flinkApiController).triggerJob(message);
-  }
-}
-
-
-Negative JUnit5 Test Case for KafkaConsumer:
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@RunWith(MockitoJUnitRunner.class)
-class KafkaConsumerTest {
-
-  @Mock
-  private FlinkApiController flinkApiController;
-
-  @InjectMocks
-  private KafkaConsumer kafkaConsumer;
-
-  @Test
-  void testConsumeWithNonExistentFile() {
-    SpaceCollector message = new SpaceCollector(1, "http://example.com", 8080, "nonexistent.csv", "output.csv", ",", "csv");
-
-    assertThrows(IOException.class, () -> kafkaConsumer.consume(message));
-  }
-}
-
-Positive JUnit5 Test Case for KafkaProducer:
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@RunWith(MockitoJUnitRunner.class)
-class KafkaProducerTest {
-
-  @Mock
-  private KafkaTemplate<String, SpaceCollector> kafkaTemplate;
-
-  @InjectMocks
-  private KafkaProducer kafkaProducer;
-
-  @Test
-  void testSendMessageWithValidData() {
-    SpaceCollector message = new SpaceCollector(1, "http://example.com", 8080, "input.csv", "output.csv", ",", "csv");
-
-    kafkaProducer.sendMessage(message);
-
-    verify(kafkaTemplate).send("test-topic", message);
-  }
-}
-
-
-Negative JUnit5 Test Case for KafkaProducer:
-
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@RunWith(MockitoJUnitRunner.class)
-class KafkaProducerTest {
-
-  @Mock
-  private KafkaTemplate<String, SpaceCollector> kafkaTemplate;
-
-  @InjectMocks
-  private KafkaProducer kafkaProducer;
-
-  @Test
-  void testSendMessageWithNullMessage() {
-    SpaceCollector message = null;
-
-    assertThrows(IllegalArgumentException.class, () -> kafkaProducer.sendMessage(message));
-    verify(kafkaTemplate, never()).send(any(), any());
-  }
-}
-
-
-Positive JUnit5 Test Case for KafkaConsumer:
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@RunWith(MockitoJUnitRunner.class)
-class KafkaConsumerTest {
-
-  @Mock
-  private FlinkApiController flinkApiController;
-
-  @InjectMocks
-  private KafkaConsumer kafkaConsumer;
-
-  @Test
-  void testConsumeWithValidMessage() throws IOException, CsvValidationException {
-    SpaceCollector message = new SpaceCollector(1, "http://example.com", 8080, "input.csv", "output.csv", ",", "csv");
-
-    when(flinkApiController.triggerJob(any())).thenReturn("Job completed successfully");
-
-    kafkaConsumer.consume(message);
-
-    verify(flinkApiController).triggerJob(message);
-  }
-}
-
-
-Negative JUnit5 Test Case for KafkaConsumer:
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@RunWith(MockitoJUnitRunner.class)
-class KafkaConsumerTest {
-
-  @Mock
-  private FlinkApiController flinkApiController;
-
-  @InjectMocks
-  private KafkaConsumer kafkaConsumer;
-
-  @Test
-  void testConsumeWithInvalidMessage() {
-    SpaceCollector message = new SpaceCollector(1, "http://example.com", 8080, "input.csv", "output.csv", ",", "invalid_format");
-
-    assertThrows(CsvValidationException.class, () -> kafkaConsumer.consume(message));
-    verify(flinkApiController, never()).triggerJob(any());
-  }
+    // Negative Scenario 1
+    @Test
+    void testSendJsonMessage_Fail_InvalidId() {
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setId(null);
+        
+        String result = kafkaProducerService.sendJsonMessage(spaceCollector);
+        
+        assertEquals("SpaceCollector json must have an id", result);
+        verify(kafkaTemplate).send("topicName", spaceCollector);
+    }
 }

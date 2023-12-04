@@ -1,63 +1,187 @@
-Here's a complete SpringBoot project for converting CSV file to JSON format using Apache Flink and sending the converted JSON file data to KAFKA:
+Below are the positive and negative test cases for the given project code:
+
+Positive Test Cases (Junit5):
+
+1. Test Case: Validate successful message sending to Kafka topic
 
 ```java
-import org.apache.flink.api.common.functions.MapFunction;
-import org.apache.flink.api.java.ExecutionEnvironment;
-import org.apache.flink.api.java.DataSet;
-import org.apache.flink.api.java.utils.ParameterTool;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
-import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.kafka.core.KafkaTemplate;
 
-public class CsvToJsonConverter {
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 
-    public static void main(String[] args) throws Exception {
+public class KafkaProducerServiceTest {
 
-        final ParameterTool params = ParameterTool.fromArgs(args);
-        final String input = params.get("input");
-        final String outputTopic = params.get("outputTopic");
+    @Test
+    public void testSendJsonMessage_Success() {
+        // Mock KafkaTemplate
+        KafkaTemplate<String, Object> kafkaTemplate = Mockito.mock(KafkaTemplate.class);
+        KafkaProducerService kafkaProducerService = new KafkaProducerService(kafkaTemplate);
 
-        final ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
-        final StreamExecutionEnvironment streamEnv = StreamExecutionEnvironment.getExecutionEnvironment();
+        // Create a valid SpaceCollector object
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setId("1");
+        spaceCollector.setUrl("http://example.com");
+        spaceCollector.setPort(8080);
+        spaceCollector.setConnectionType("API");
+        spaceCollector.setUsername("admin");
+        spaceCollector.setPassword("password");
 
-        DataSet<String> csvData = env.readTextFile(input);
+        // Call the method under test
+        kafkaProducerService.sendJsonMessage(spaceCollector);
 
-        DataSet<String> json = csvData.map(new MapFunction<String, String>() {
-            @Override
-            public String map(String value) throws Exception {
-                String[] fields = value.split(",");
-                // Convert CSV data to JSON format
-                String jsonValue = "{";
-                for (int i = 0; i < fields.length; i++) {
-                    jsonValue += "\"" + "field" + (i+1) + "\":" + "\"" + fields[i] + "\"";
-                    if(i < fields.length - 1) {
-                        jsonValue += ",";
-                    }
-                }
-                jsonValue += "}";
-                return jsonValue;
-            }
-        });
-
-        // Sending the JSON data to Kafka
-        FlinkKafkaProducer<String> kafkaProducer = new FlinkKafkaProducer<>(outputTopic, new SimpleStringSchema(), params.getProperties());
-        json.addSink(kafkaProducer);
-
-        streamEnv.execute("CSV to JSON Converter");
+        // Verify that kafkaTemplate.send() is called with the correct parameters
+        verify(kafkaTemplate).send("topic-name", spaceCollector);
     }
 }
 ```
 
-In this project, we use Apache Flink to read the CSV file, convert the data to JSON format, and then send the JSON data to Kafka. We use `DataSet` for batch processing and `StreamExecutionEnvironment` for streaming processing.
+2. Test Case: Validate error message sending when id is missing
 
-We use the `MapFunction` to convert the CSV data to JSON format, and then use the `FlinkKafkaProducer` to send the JSON data to Kafka.
+```java
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.kafka.core.KafkaTemplate;
 
-To run this project, you can use the following command:
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 
+public class KafkaProducerServiceTest {
+
+    @Test
+    public void testSendJsonMessage_MissingId() {
+        // Mock KafkaTemplate
+        KafkaTemplate<String, Object> kafkaTemplate = Mockito.mock(KafkaTemplate.class);
+        KafkaProducerService kafkaProducerService = new KafkaProducerService(kafkaTemplate);
+
+        // Create a SpaceCollector object with missing id
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setUrl("http://example.com");
+        spaceCollector.setPort(8080);
+        spaceCollector.setConnectionType("API");
+        spaceCollector.setUsername("admin");
+        spaceCollector.setPassword("password");
+
+        // Call the method under test
+        kafkaProducerService.sendJsonMessage(spaceCollector);
+
+        // Verify that kafkaTemplate.send() is called with the error message
+        verify(kafkaTemplate).send("topic-name", createErrorMessage("Validation Failed: Missing id"));
+    }
+    
+    private Map<String, Object> createErrorMessage(String message) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("STATUS", "FAIL");
+        map.put("MESSAGE", message);
+        return map;
+    }
+}
 ```
-./bin/flink run -c CsvToJsonConverter /path/to/your/jarfile.jar --input /path/to/your/input.csv --outputTopic yourOutputTopic
+
+Negative Test Cases (Junit5):
+
+1. Test Case: Validate error message sending when url is missing
+
+```java
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.kafka.core.KafkaTemplate;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+
+public class KafkaProducerServiceTest {
+
+    @Test
+    public void testSendJsonMessage_MissingUrl() {
+        // Mock KafkaTemplate
+        KafkaTemplate<String, Object> kafkaTemplate = Mockito.mock(KafkaTemplate.class);
+        KafkaProducerService kafkaProducerService = new KafkaProducerService(kafkaTemplate);
+
+        // Create a SpaceCollector object with missing url
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setId("1");
+        spaceCollector.setPort(8080);
+        spaceCollector.setConnectionType("API");
+        spaceCollector.setUsername("admin");
+        spaceCollector.setPassword("password");
+
+        // Call the method under test
+        kafkaProducerService.sendJsonMessage(spaceCollector);
+
+        // Verify that kafkaTemplate.send() is called with the error message
+        verify(kafkaTemplate).send("topic-name", createErrorMessage("Validation Failed: Missing url"));
+    }
+    
+    private Map<String, Object> createErrorMessage(String message) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("STATUS", "FAIL");
+        map.put("MESSAGE", message);
+        return map;
+    }
+}
 ```
 
-Here, you would replace `/path/to/your/jarfile.jar` with the actual path to your jar file, `/path/to/your/input.csv` with the actual path to your input CSV file, and `yourOutputTopic` with the name of your output Kafka topic.
+2. Test Case: Validate error message sending when port is zero
 
-You can also modify the code to include delimiters and datastreams as per your requirements.
+```java
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.kafka.core.KafkaTemplate;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+
+public class KafkaProducerServiceTest {
+
+    @Test
+    public void testSendJsonMessage_ZeroPort() {
+        // Mock KafkaTemplate
+        KafkaTemplate<String, Object> kafkaTemplate = Mockito.mock(KafkaTemplate.class);
+        KafkaProducerService kafkaProducerService = new KafkaProducerService(kafkaTemplate);
+
+        // Create a SpaceCollector object with zero port
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setId("1");
+        spaceCollector.setUrl("http://example.com");
+        spaceCollector.setPort(0);
+        spaceCollector.setConnectionType("API");
+        spaceCollector.setUsername("admin");
+        spaceCollector.setPassword("password");
+
+        // Call the method under test
+        kafkaProducerService.sendJsonMessage(spaceCollector);
+
+        // Verify that kafkaTemplate.send() is called with the error message
+        verify(kafkaTemplate).send("topic-name", createErrorMessage("Validation Failed: Missing port"));
+    }
+    
+    private Map<String, Object> createErrorMessage(String message) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("STATUS", "FAIL");
+        map.put("MESSAGE", message);
+        return map;
+    }
+}
+```
+
+Modifications to make the entire project executable:
+
+Application.java:
+
+```java
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class Application {
+
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+```
+
+The above modifications enable the Spring Boot application to be executed using the `main()` method in the `Application` class.

@@ -1,156 +1,138 @@
-To fix the `java.lang.NullPointerException: Cannot invoke "String.equals(Object)"` error, you need to handle the case when `getConnectionType()` returns `null`. You can modify the condition statement as follows:
+There are several modifications and additions that need to be made to the existing code in order to incorporate the JUnit5 test cases provided above. Here are the modifications and additions:
+
+1. In the SpaceCollector class:
+   - Add the @JsonProperty annotation to each field to ensure proper serialization and deserialization of JSON.
+   - Add the lombok @Data annotation to automatically generate getters and setters for all fields.
+   - Add validation annotations to each field to enforce the validation rules specified in the test cases.
+
+   The modified SpaceCollector class should look like this:
 
 ```java
-if (spaceCollector.getConnectionType() == null || !"API".equals(spaceCollector.getConnectionType())) {
-    return "SpaceCollector JSON must have a connection_type of 'API'";
-}
-```
+import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Data;
 
-This updated condition first checks if `getConnectionType()` is `null`, and if it is, the condition evaluates to `true` and returns the error message. Otherwise, it proceeds to compare the connection type with `"API"`.
-```
-
-
-SpaceCollector.java:
+import javax.validation.constraints.NotBlank;
+import javax.validation.constraints.NotNull;
 
 @Data
 public class SpaceCollector {
+    @NotNull
     @JsonProperty("id")
     private String id;
 
+    @NotBlank
     @JsonProperty("url")
     private String url;
 
+    @NotNull
     @JsonProperty("port")
     private int port;
 
+    @NotBlank
     @JsonProperty("username")
     private String username;
 
+    @NotBlank
     @JsonProperty("password")
     private String password;
 
-    private String sshPublicKey;
-    private String sshPrivateKey;
-
-    @JsonProperty("connection_type")
-    private String connectionType;
-
-    private boolean enabled;
-    private String inputFilePath;
-    private String outputFilePath;
-    private int pollingDuration;
+    // Rest of the fields with their respective validation annotations
 
     // Getters and setters for all fields
 }
+```
 
+2. In the KafkaProducerService class:
+   - Modify the sendJsonMessage() method to validate the SpaceCollector object using javax.validation.Valid.
+   - Modify the sendErrorMessage() method to take a String parameter instead of Map<String, Object>.
+   - Change the return type of the sendJsonMessage() method to void.
+   - Remove unnecessary log statement in the sendJsonMessage() method.
+   - Modify the CollectorController class to use the modified sendJsonMessage() method.
 
-KafkaProducerService.java:
+   The modified KafkaProducerService class should look like this:
+
+```java
+import org.springframework.stereotype.Service;
+
+import javax.validation.Valid;
 
 @Service
 public class KafkaProducerService {
 
-    private static final Logger Logger = LoggerFactory.getLogger(KafkaProducerService.class);
+    // Rest of the code
 
-    @Value("${spring.kafka.producer.topic-name}")
-    private String topicName;
+    public void sendJsonMessage(@Valid SpaceCollector spaceCollector) {
+        // Validation checks
+        // ...
 
-    private final KafkaTemplate<String, Object> kafkaTemplate;
-
-    @Autowired
-    public KafkaProducerService(KafkaTemplate<String, Object> kafkaTemplate) {
-        this.kafkaTemplate = kafkaTemplate; 
-    }
-
-    public String sendJsonMessage(SpaceCollector spaceCollector) {
-        if (spaceCollector.getId() == null) {
-            return "SpaceCollector json must have an id";
-        }
-
-        if (spaceCollector.getUrl() == null || spaceCollector.getUrl().isEmpty()) {
-            return "SpaceCollector json must have a non-empty url";
-        }
-
-        if (spaceCollector.getPort() == 0) {
-            return "SpaceCollector json must have a non-zero port number";
-        }
-
-        if (!"API".equals(spaceCollector.getConnectionType())) {
-            return "SpaceCollector json must have a connection_type of 'API'";
-        }
-
-        if (spaceCollector.getUsername() == null || spaceCollector.getPassword() == null) {
-            return "SpaceCollector json must have a non-null username and password";
-        }
-
-        Logger.info(String.format("Message sent %s", spaceCollector)); 
-        kafkaTemplate.send(topicName, spaceCollector); 
-        return "jsonMessage sent successfully"; 
+        kafkaTemplate.send(topicName, spaceCollector);
     }
 
     public void sendErrorMessage(String message){
-        Map<String, Object> map = new HashMap<>();
-        map.put("STATUS", "FAIL");
-        map.put("MESSAGE", message);
-        kafkaTemplate.send(topicName, map);
+        // ...
     }
 }
+```
 
+3. In the CollectorController class:
+   - Remove the validationMessage variable and the if statement that checks if it is not null.
+   - Modify the pushSpaceCollectorData() method to use the modified sendJsonMessage() method without validation checks.
 
-CollectorController.java:
+   The modified CollectorController class should look like this:
+
+```java
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import javax.validation.Valid;
 
 @RestController 
 @RequestMapping("/api/kafka")
 public class CollectorController {
 
-    @Autowired
-    KafkaProducerService kafkaProducer;
+    // Rest of the code
 
     @PostMapping
-    public ResponseEntity<String> pushSpaceCollectorData(@RequestBody SpaceCollector spaceCollector) {
-        String validationMessage = kafkaProducer.sendJsonMessage(spaceCollector);
-        
-        if (validationMessage != null) {
-            return ResponseEntity.badRequest().body(validationMessage);
-        }
-        
+    public ResponseEntity<String> pushSpaceCollectorData(@Valid @RequestBody SpaceCollector spaceCollector) {
+        kafkaProducer.sendJsonMessage(spaceCollector);
         return ResponseEntity.ok("SpaceCollector data pushed to Kafka topic successfully");
     }
 }
+```
 
+4. In the CollectorInitializerService class:
+   - Add the @Validated annotation to the class to enable validation.
+   - Remove the KafkaProducerService instance and the autowiring of KafkaProducerService in the class.
 
-CollectorApiReader.java: 
+   The modified CollectorInitializerService class should look like this:
 
-@Component
-public class CollectorApiReader {
+```java
+import org.springframework.stereotype.Service;
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(CollectorApiReader.class);
-
-    public void initialize(SpaceCollector spaceCollector) { 
-        LOGGER.info("Initialized Api Reader", spaceCollector); 
-    }
-}
-
-
-CollectorInitializerService.java:
+import javax.validation.Valid;
+import javax.validation.constraints.NotNull;
 
 @Service
-public class CollectorInitializerService{
+@Validated
+public class CollectorInitializerService {
     private static final Logger LOGGER = LoggerFactory.getLogger(CollectorInitializerService.class);
     private final CollectorApiReader collectorApiReader;
     private final Validator validator;
 
-    @Autowired
-    KafkaProducerService kafkaProducer;
-
-    @Autowired
     public CollectorInitializerService(CollectorApiReader collectorApiReader, Validator validator) {
         this.collectorApiReader = collectorApiReader;
         this.validator = validator;
     }
 
     @Kafkalistener(topics="${spring.kafka.producer.topic-name}",groupId = "${spring.kafka.consumer.group-id}")
-    public void consume(SpaceCollector spaceCollector) {
-        LOGGER.info(String.format("Received SpaceCollector data: {}", spaceCollector)); 
+    public void consume(@NotNull @Valid SpaceCollector spaceCollector) {
+        LOGGER.info("Received SpaceCollector data: {}", spaceCollector); 
         collectorApiReader.initialize(spaceCollector);
     }
 }
+```
+
+These modifications and additions should incorporate the provided JUnit5 test cases into the existing code. It is important to note that you will need to configure a valid Kafka setup and provide the necessary configuration properties for Kafka integration tests to work properly.

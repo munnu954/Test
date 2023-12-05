@@ -1,12 +1,60 @@
-public Optional<SpaceCollector> poll(int timeout) {
-        try {
-            ConsumerRecord<String, Object> record = kafkaTemplate.receive(topicName, timeout);
-            if (record == null) {
-                return Optional.empty();
-            }
-            SpaceCollector spaceCollector = (SpaceCollector) record.value();
-            return Optional.of(spaceCollector);
-         catch (Exception e) {
-            Logger.error("Error while polling Kafka topic: " + e.getMessage());
-            return Optional.empty();
-        }}
+Here is a test class for the above code:
+
+``
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnitRunner;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import static org.junit.Assert.assertEquals;
+import static org.mockito.Mockito.when;
+
+@RunWith(MockitoJUnitRunner.class)
+public class ConsumerTest {
+
+    @Mock
+    private FlinkApi flinkApi;
+
+    @Mock
+    private KafkaProducer kafkaProducer;
+
+    @Test
+    public void testConsume() throws IOException {
+        // Arrange
+        SpaceCollector message = new SpaceCollector();
+        message.setInputFilePath(Paths.get("src/test/resources/test.csv"));
+
+        when(flinkApi.triggerJob(message, "csv")).thenReturn("Success");
+        when(kafkaProducer.sendErrorMessage("File does not exists")).thenReturn(null);
+
+        // Act
+        Consumer consumer = new Consumer(flinkApi, kafkaProducer);
+        consumer.consume(message);
+
+        // Assert
+        assertEquals("Success", consumer.getResponse());
+    }
+
+    @Test
+    public void testConsume_FileDoesNotExist() throws IOException {
+        // Arrange
+        SpaceCollector message = new SpaceCollector();
+        message.setInputFilePath(Paths.get("src/test/resources/does_not_exist.csv"));
+
+        when(flinkApi.triggerJob(message, "csv")).thenReturn(null);
+        when(kafkaProducer.sendErrorMessage("File does not exists")).thenReturn("Error");
+
+        // Act
+        Consumer consumer = new Consumer(flinkApi, kafkaProducer);
+        consumer.consume(message);
+
+        // Assert
+        assertEquals("Error", consumer.getResponse());
+    }
+}
+`

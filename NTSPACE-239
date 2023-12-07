@@ -1,213 +1,122 @@
-public String readInputPath(ParameterTool parameters, StreamExecutionEnvironment env) {
-    return parameters.getRequired("input");
-}
-
-
-
-Here is the code for the JUnit test cases for the positive and negative scenarios mentioned:
+Here are some JUnit test cases for the TextToJsonJob:
 
 ```
-import org.apache.flink.api.java.utils.ParameterTool;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.api.functions.source.FileSource;
-import org.apache.flink.streaming.api.watermark.WatermarkStrategy;
-import org.apache.kafka.common.serialization.StringSerializer;
-import org.junit.Assert;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assertions;
 
 import java.io.File;
-import java.io.FileNotFoundException;
-import java.util.Collections;
-import java.util.List;
-
-public class MainTest {
-
-    @Test
-    public void testTextToJsonJobUploadSuccess() {
-        // Setup
-        String filePath = "validFilePath";
-        String[] args = {"--input", filePath};
-        ParameterTool parameters = ParameterTool.fromArgs(args);
-        Main main = new Main();
-
-        // Execute
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        String actualPath = main.readInputPath(parameters, env);
-
-        // Verify
-        Assert.assertEquals(filePath, actualPath);
-    }
-
-    @Test
-    public void testTextToJsonJobUploadFailInvalidFilePath() {
-        // Setup
-        String invalidFilePath = "invalidFilePath";
-        String[] args = {"--input", invalidFilePath};
-        ParameterTool parameters = ParameterTool.fromArgs(args);
-        Main main = new Main();
-
-        // Verify
-        Assert.assertThrows(FileNotFoundException.class, () -> main.readInputPath(parameters, StreamExecutionEnvironment.getExecutionEnvironment()));
-    }
-
-    @Test
-    public void testTextToJsonTransformerJobExecutionSuccess() {
-        // Setup
-        String inputData = "data1,data2,data3";
-        String expectedOutput = "{\"key1\":\"data1\",\"key2\":\"data2\",\"key3\":\"data3\"}";
-        TexttoJsonTransformer transformer = new TexttoJsonTransformer();
-
-        // Execute
-        List<String> actualOutput = executeFlatMapFunction(transformer, inputData);
-
-        // Verify
-        Assert.assertEquals(Collections.singletonList(expectedOutput), actualOutput);
-    }
-
-    @Test
-    public void testTextToJsonTransformerJobExecutionFailInvalidInputData() {
-        // Setup
-        String invalidInputData = "invalidData";
-        TexttoJsonTransformer transformer = new TexttoJsonTransformer();
-
-        // Verify
-        Assert.assertThrows(Exception.class, () -> executeFlatMapFunction(transformer, invalidInputData));
-    }
-
-    @Test
-    public void testTextToJsonJobCanHandleLargeInputFiles() {
-        // TODO: Write test case to verify if the TextToJsonJob can handle large input files without crashing or errors
-    }
-
-    @Test
-    public void testTextToJsonJobCanHandleEmptyInputFiles() {
-        // TODO: Write test case to verify if the TextToJsonJob can handle empty input files and produce empty JSON output
-    }
-
-    @Test
-    public void testTextToJsonJobHandlesExtremelyLargeInputFiles() {
-        // TODO: Write test case to verify if the TextToJsonJob fails to handle extremely large input files and crashes or produces errors
-    }
-
-    @Test
-    public void testTextToJsonJobFailsWithEmptyInputFile() {
-        // TODO: Write test case to verify if the TextToJsonJob fails to produce any output when given an empty input file
-    }
-
-    private List<String> executeFlatMapFunction(TexttoJsonTransformer transformer, String inputData) throws Exception {
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        List<String> actualOutput = TestUtils.executeFlatMapFunction(env, transformer, inputData);
-        env.execute();
-        return actualOutput;
-    }
-}
-```
-
-You can use the `TestUtils` class to execute the `FlatMapFunction` and collect the output for verification.
-
-```
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.util.Collector;
-
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-public class TestUtils {
+import static org.junit.jupiter.api.Assertions.*;
 
-    public static <IN, OUT> List<OUT> executeFlatMapFunction(StreamExecutionEnvironment env, FlatMapFunction<IN, OUT> function, IN inputData) throws Exception {
-        List<OUT> output = new ArrayList<>();
-        DataStream<IN> inputStream = env.fromElements(inputData);
-        inputStream.flatMap(function).collect(new TestingCollector<>(output));
-        return output;
+public class TextToJsonJobTest {
+
+    @Test
+    public void testUploadToFlinkCluster() throws IOException {
+        // Arrange
+        String inputPath = "src/test/resources/input.txt";
+        String topic = "test-topic";
+        String bootstrapServer = "localhost:9092";
+
+        // Act
+        TextToJsonJob job = new TextToJsonJob();
+        job.setInputPath(inputPath);
+        job.setTopic(topic);
+        job.setBootstrapServer(bootstrapServer);
+        job.run();
+
+        // Assert
+        Assertions.assertTrue(job.isSuccessful());
     }
 
-    private static class TestingCollector<T> implements Collector<T> {
-        private final List<T> output;
+    @Test
+    public void testTextToJsonTransformerJob() throws IOException {
+        // Arrange
+        String inputPath = "src/test/resources/input.txt";
+        String topic = "test-topic";
+        String bootstrapServer = "localhost:9092";
 
-        public TestingCollector(List<T> output) {
-            this.output = output;
+        // Act
+        TextToJsonJob job = new TextToJsonJob();
+        job.setInputPath(inputPath);
+        job.setTopic(topic);
+        job.setBootstrapServer(bootstrapServer);
+        job.run();
+
+        // Assert
+        List<String> expectedOutput = new ArrayList<>();
+        expectedOutput.add("{\"key1\":\"value1\",\"key2\":\"value2\"}");
+        List<String> actualOutput = new ArrayList<>();
+        for (String line : job.getOutput()) {
+            actualOutput.add(line);
         }
-
-        @Override
-        public void collect(T record) {
-            output.add(record);
-        }
-
-        @Override
-        public void close() {}
+        assertEquals(expectedOutput, actualOutput);
     }
-}
-```
 
-Note: The test cases related to handling large input files and empty input files are marked with TODO comments as they require more specific implementation details. Please replace the TODO comments with appropriate test case implementations.
+    @Test
+    public void testOutputInExpectedJsonFormat() throws IOException {
+        // Arrange
+        String inputPath = "src/test/resources/input.txt";
+        String topic = "test-topic";
+        String bootstrapServer = "localhost:9092";
 
+        // Act
+        TextToJsonJob job = new TextToJsonJob();
+        job.setInputPath(inputPath);
+        job.setTopic(topic);
+        job.setBootstrapServer(bootstrapServer);
+        job.run();
 
-
-import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.api.java.utils.ParameterTool;
-import org.apache.flink.core.fs.Path;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.source.FileSource;
-import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema;
-import org.apache.flink.streaming.connectors.kafka.KafkaSink;
-import org.apache.flink.streaming.connectors.kafka.config.DeliveryGuarantee;
-import org.apache.flink.streaming.connectors.kafka.internals.KafkaRecordSerializationSchemaWrapper;
-import org.apache.flink.streaming.connectors.kafka.internals.KafkaRecordSerializationSchemaWrapper.Builder;
-import org.apache.flink.streaming.connectors.kafka.internals.KafkaRecordSerializationSchemaWrapper.ValueFetcher;
-import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema.Builder;
-import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema.ValueFetcher;
-import org.apache.flink.streaming.connectors.kafka.sink.KafkaSink;
-import org.apache.flink.streaming.connectors.kafka.sink.KafkaSinkBuilder;
-import org.apache.flink.streaming.connectors.kafka.sink.KafkaSink.Builder;
-
-import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.io.File;
-import java.io.FileNotFoundException;
-
-public class Main {
-
-    private static String bootstrapServer;
-
-    private static String topic;
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
-
-    public static void main(String[] args) throws Exception {
-        ParameterTool parameters = ParameterTool.fromArgs(args);
-
-        String inputPath = parameters.getRequired("input");
-        topic = parameters.get("topic");
-        bootstrapServer = parameters.get("bootstrapServer");
-
-        LOGGER.info("Start to read and process the file...");
-
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
-        if (!(new File(inputPath).exists())) {
-            throw new FileNotFoundException("File not found!");
+        // Assert
+        List<String> expectedOutput = new ArrayList<>();
+        expectedOutput.add("{\"key1\":\"value1\",\"key2\":\"value2\"}");
+        List<String> actualOutput = new ArrayList<>();
+        for (String line : job.getOutput()) {
+            actualOutput.add(line);
         }
-
-        final FileSource<String> source = FileSource.forRecordStreamFormat(new TextInputFormat(), new Path(inputPath)).build();
-        final DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "file-source");
-
-        KafkaSink<String> sink = KafkaSink.<String>builder()
-                .setBootstrapServers(bootstrapServer)
-                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
-                        .setTopic(topic)
-                        .setValueSerializationSchema(new SimpleStringSchema())
-                        .build())
-                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-                .build();
-
-        final DataStream<String> jsonStream = stream.flatMap(new TextToJsonTransformer());
-        jsonStream.sinkTo(sink);
-
-        env.execute();
+        assertEquals(expectedOutput, actualOutput);
     }
-}
+
+    @Test
+    public void testHandleLargeInputFiles() throws IOException {
+        // Arrange
+        String inputPath = "src/test/resources/large-input.txt";
+        String topic = "test-topic";
+        String bootstrapServer = "localhost:9092";
+
+        // Act
+        TextToJsonJob job = new TextToJsonJob();
+        job.setInputPath(inputPath);
+        job.setTopic(topic);
+        job.setBootstrapServer(bootstrapServer);
+        job.run();
+
+        // Assert
+        Assertions.assertTrue(job.isSuccessful());
+    }
+
+    @Test
+    public void testHandleEmptyInputFiles() throws IOException {
+        // Arrange
+        String inputPath = "src/test/resources/empty-input.txt";
+        String topic = "test-topic";
+        String bootstrapServer = "localhost:9092";
+
+        // Act
+        TextToJsonJob job = new TextToJsonJob();
+        job.setInputPath(inputPath);
+        job.setTopic(topic);
+        job.setBootstrapServer(bootstrapServer);
+        job.run();
+
+        // Assert
+        Assertions.assertTrue(job.isSuccessful());
+        List<String> expectedOutput = new ArrayList<>();
+        List<String> actualOutput = new ArrayList<>();
+        for (String line : job.getOutput()) {
+            actualOutput.add(line);
+        }
+        assertEquals(expectedOutput, actualOutput);
+    }

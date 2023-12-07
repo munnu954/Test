@@ -1,435 +1,133 @@
-<dependencies>
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-core</artifactId>
-        <version>1.12.4</version>
-    </dependency>
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-streaming-java</artifactId>
-        <version>1.12.4</version>
-    </dependency>
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-connector-kafka</artifactId>
-        <version>1.12.4</version>
-    </dependency>
-    <dependency>
-        <groupId>org.apache.kafka</groupId>
-        <artifactId>kafka-clients</artifactId>
-        <version>2.8.0</version>
-    </dependency>
-    <dependency>
-        <groupId>org.json</groupId>
-        <artifactId>json</artifactId>
-        <version>2018.08.19</version>
-    </dependency>
-</dependencies>
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.connectors.kafka.KafkaSink;
+import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema;
+import org.apache.flink.streaming.connectors.kafka.config.KafkaSinkConfig;
+import org.apache.flink.streaming.connectors.kafka.config.KafkaSinkConfigBase;
+import org.apache.flink.streaming.connectors.kafka.internals.KafkaRecordSerializationSchemaWrapper;
+import org.apache.flink.streaming.connectors.kafka.partitioner.FixedPartitioner;
+import org.apache.flink.streaming.connectors.kafka.partitioner.FlinkKafkaPartitioner;
+import org.apache.flink.streaming.connectors.kafka.partitioner.KafkaPartitioner;
+import org.apache.flink.streaming.connectors.kafka.partitioner.KafkaRecordPartitioner;
+import org.apache.flink.streaming.util.serialization.*;
+import org.apache.flink.core.fs.Path;
+import org.apache.flink.core.fs.FileStatus;
+import org.apache.flink.core.fs.FileSystem;
+import org.apache.flink.core.fs.FileInputSplit;
+import org.apache.flink.util.Collector;
 
+import org.junit.jupiter.api.*;
+import org.mockito.Mockito;
 
+import java.io.FileNotFoundException;
+import java.io.IOException;
 
+import static org.mockito.Mockito.*;
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+public class TestTextToJsonTransformer {
 
+    @Test
+    public void testFlatMapFunction() throws Exception {
+        TexttoJsonTransformer texttoJsonTransformer = new TexttoJsonTransformer();
+        Collector<String> collector = mock(Collector.class);
 
-AI 🤖:
-Here are some positive and negative scenarios for uploading the TextToJsonJob in the flink cluster:
+        texttoJsonTransformer.flatMap("123,456,789", collector);
 
-## Positive Scenarios
+        verify(collector).collect("{\"key1\":\"123\",\"key2\":\"456\",\"key3\":\"789\"}");
+    }
 
-1. Test Case 1: Upload the TextToJsonJob in the flink cluster and submit a test task to it. The generated json should be valid.
+    @Test
+    public void testMainPositiveScenario() throws Exception {
+        String[] args = { "--input", "test.txt", "--Topic", "topic", "--bootstrapServer", "localhost:9092" };
+        ParameterTool parameterTool = ParameterTool.fromArgs(args);
 
+        StreamExecutionEnvironment env = mock(StreamExecutionEnvironment.class);
+        when(env.getExecutionEnvironment()).thenReturn(env);
 
-@Test
-public void testUploadTextToJsonJob() throws Exception {
+        FileStatus fileStatus = mock(FileStatus.class);
+        when(fileStatus.isDirectory()).thenReturn(false);
+        when(fileStatus.getPath()).thenReturn(new Path("test.txt"));
 
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
+        FileSystem fileSystem = mock(FileSystem.class);
+        when(fileSystem.getFileStatus(any(Path.class))).thenReturn(fileStatus);
 
-    // Upload the job to the flink cluster
-    job.upload();
+        FileInputSplit[] inputSplits = new FileInputSplit[1];
+        inputSplits[0] = mock(FileInputSplit.class);
+        when(inputSplits[0].getSplitNumber()).thenReturn(0);
+        when(inputSplits[0].getPath()).thenReturn(new Path("test.txt"));
 
-    // Submit a test task to the job
-    TestTask task = new TestTask();
-    task.setInput("Hello, world!");
-    task.submit();
+        ParameterTool.fromFileSystem(fileSystem, inputSplits, 0).forEach(parameterTool::put);
 
-    // Validate the generated json
-    String json = task.getOutput();
-    JSONObject object = new JSONObject(json);
-    assertEquals("Hello, world!", object.getString("text"));
-}
+        when(parameterTool.get("input")).thenReturn("test.txt");
+        when(parameterTool.get("Topic")).thenReturn("topic");
+        when(parameterTool.get("bootstrapServer")).thenReturn("localhost:9092");
 
+        KafkaSink<String> kafkaSink = mock(KafkaSink.class);
+        KafkaSinkConfig<String> kafkaSinkConfig = mock(KafkaSinkConfig.class);
+        when(kafkaSinkConfig.build()).thenReturn(kafkaSink);
 
-2. Test Case 2: Upload the TextToJsonJob in the flink cluster and submit a test task to it with a null input. The generated json should be empty.
+        KafkaRecordSerializationSchema<String> kafkaRecordSerializationSchema = mock(KafkaRecordSerializationSchema.class);
+        when(kafkaRecordSerializationSchema.build()).thenReturn(kafkaRecordSerializationSchema);
 
+        KafkaSink.Builder<String> kafkaSinkBuilder = mock(KafkaSink.Builder.class);
+        when(kafkaSinkBuilder.setBootstrapServers(anyString())).thenReturn(kafkaSinkBuilder);
+        when(kafkaSinkBuilder.setRecordSerializer(any(KafkaRecordSerializationSchema.class))).thenReturn(kafkaSinkBuilder);
+        when(kafkaSinkBuilder.setDeliveryGuarantee(KafkaSinkConfigBase.DeliveryGuarantee.AT_LEAST_ONCE)).thenReturn(kafkaSinkBuilder);
+        when(kafkaSinkBuilder.build()).thenReturn(kafkaSinkConfig);
 
-@Test
-public void testUploadTextToJsonJobWithNullInput() throws Exception {
+        KafkaRecordSerializationSchema.Builder<String> kafkaRecordSerializationSchemaBuilder = mock(KafkaRecordSerializationSchema.Builder.class);
+        when(kafkaRecordSerializationSchemaBuilder.setTopic(anyString())).thenReturn(kafkaRecordSerializationSchemaBuilder);
+        when(kafkaRecordSerializationSchemaBuilder.setValueSerializationSchema(any(SimpleStringSchema.class))).thenReturn(kafkaRecordSerializationSchemaBuilder);
+        when(kafkaRecordSerializationSchemaBuilder.build()).thenReturn(kafkaRecordSerializationSchema);
 
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
+        when(KafkaSink.builder()).thenReturn(kafkaSinkBuilder);
+        when(KafkaRecordSerializationSchema.builder()).thenReturn(kafkaRecordSerializationSchemaBuilder);
+        
+        Main.main(args);
 
-    // Upload the job to the flink cluster
-    job.upload();
+        verify(env).fromSource(any(), any(), anyString());
 
-    // Submit a test task to the job with a null input
-    TestTask task = new TestTask();
-    task.setInput(null);
-    task.submit();
+        verify(kafkaSinkBuilder).setBootstrapServers("localhost:9092");
+        verify(kafkaSinkBuilder).setRecordSerializer(kafkaRecordSerializationSchemaBuilder);
+        verify(kafkaSinkBuilder).setDeliveryGuarantee(KafkaSinkConfigBase.DeliveryGuarantee.AT_LEAST_ONCE);
+        verify(kafkaSinkBuilder).build();
 
-    // Validate the generated json
-    String json = task.getOutput();
-    JSONObject object = new JSONObject(json);
-    assertEquals("", object.getString("text"));
-}
+        verify(env).execute();
+    }
 
+    @Test
+    public void testMainFileNotFoundException() throws Exception {
+        String[] args = { "--input", "test.txt", "--Topic", "topic", "--bootstrapServer", "localhost:9092" };
+        ParameterTool parameterTool = ParameterTool.fromArgs(args);
 
-## Negative Scenarios
+        StreamExecutionEnvironment env = mock(StreamExecutionEnvironment.class);
+        when(env.getExecutionEnvironment()).thenReturn(env);
 
-1. Test Case 3: Upload the TextToJsonJob in the flink cluster with an invalid input. The job should fail to upload.
+        FileStatus fileStatus = mock(FileStatus.class);
+        when(fileStatus.isDirectory()).thenReturn(false);
+        when(fileStatus.getPath()).thenReturn(new Path("test.txt"));
 
+        FileSystem fileSystem = mock(FileSystem.class);
+        when(fileSystem.getFileStatus(any(Path.class))).thenReturn(null);
 
-@Test
-public void testUploadTextToJsonJobWithInvalidInput() throws Exception {
+        FileInputSplit[] inputSplits = new FileInputSplit[1];
+        inputSplits[0] = mock(FileInputSplit.class);
+        when(inputSplits[0].getSplitNumber()).thenReturn(0);
+        when(inputSplits[0].getPath()).thenReturn(new Path("test.txt"));
 
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
+        ParameterTool.fromFileSystem(fileSystem, inputSplits, 0).forEach(parameterTool::put);
 
-    // Set the input to an invalid value
-    job.setInput("This is not a valid input");
+        when(parameterTool.get("input")).thenReturn("test.txt");
+        when(parameterTool.get("Topic")).thenReturn("topic");
+        when(parameterTool.get("bootstrapServer")).thenReturn("localhost:9092");
 
-    // Try to upload the job
-    try {
-        job.upload();
-        fail("The job should have failed to upload");
-    } catch (Exception e) {
-        // Expected exception
+        assertThrows(FileNotFoundException.class, () -> Main.main(args));
+
+        verify(env, never()).fromSource(any(), any(), anyString());
+        verify(env, never()).execute();
     }
 }
 
-
-2. Test Case 4: Submit a test task to the TextToJsonJob with an invalid input. The task should fail.
-
-
-@Test
-public void testSubmitTestTaskWithInvalidInput() throws Exception {
-
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Create a test task with an invalid input
-    TestTask task = new TestTask();
-    task.setInput("This is not a valid input");
-    task.submit();
-
-    // Wait for the task to finish
-    task.join();
-
-    // Check the task status
-    assertEquals(TaskStatus.FAILED, task.getStatus());
-}
-
------------------------------------------
-
-AI 🤖:
-Here are some positive and negative scenarios for uploading the TextToJsonJob in the flink cluster:
-
-## Positive Scenarios
-
-1. Test Case 1: Upload the TextToJsonJob in the flink cluster and submit a test task to it. The generated JSON should be valid.
-
-
-@Test
-public void testUploadTextToJsonJob() throws Exception {
-
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Submit a test task to the job
-    TestTask task = new TestTask();
-    task.setInput("Hello, world!");
-    task.submit();
-
-    // Validate the generated JSON
-    String json = task.getOutput();
-    JSONObject object = new JSONObject(json);
-    assertEquals("Hello, world!", object.get("text"));
-}
-
-
-2. Test Case 2: Upload the TextToJsonJob in the flink cluster and submit a test task to it. The generated JSON should contain the expected fields.
-
-
-@Test
-public void testUploadTextToJsonJobWithExpectedFields() throws Exception {
-
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Submit a test task to the job
-    TestTask task = new TestTask();
-    task.setInput("Hello, world!");
-    task.submit();
-
-    // Validate the generated JSON
-    String json = task.getOutput();
-    JSONObject object = new JSONObject(json);
-    assertEquals("Hello, world!", object.get("text"));
-    assertEquals("en", object.get("language"));
-}
-
-
-## Negative Scenarios
-
-1. Test Case 3: Upload the TextToJsonJob in the flink cluster with an invalid input. The job should fail to upload.
-
-
-@Test(expected = Exception.class)
-public void testUploadTextToJsonJobWithInvalidInput() throws Exception {
-
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster with an invalid input
-    job.upload("");
-}
-
-
-2. Test Case 4: Submit a test task to the TextToJsonJob with an invalid input. The job should fail to execute.
-
-
-@Test(expected = Exception.class)
-public void testSubmitTestTaskWithInvalidInput() throws Exception {
-
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Submit a test task to the job with an invalid input
-    TestTask task = new TestTask();
-    task.setInput("");
-    task.submit();
-}
-
----------------------------------------------
-
-Sure, here are some positive and negative scenarios for the TextToJsonJob:
-
-## Positive Scenarios
-
-1. Test Case 1: Upload the TextToJsonJob to the flink cluster and submit a test task to it. The generated JSON should be valid.
-
-
-@Test
-public void testUploadTextToJsonJob() throws Exception {
-
-    // Create a new TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Submit a test task to the job
-    TestTask task = new TestTask();
-    task.setInput("Hello, world!");
-    task.submit();
-
-    // Validate the generated JSON
-    String json = task.getOutput();
-    JSONObject object = new JSONObject(json);
-    assertEquals("Hello, world!", object.get("text"));
-}
-
-
-2. Test Case 2: Upload the TextToJsonJob to the flink cluster and submit a task with an invalid input. The job should fail.
-
-
-@Test
-public void testUploadTextToJsonJobWithInvalidInput() throws Exception {
-
-    // Create a new TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Submit a task with an invalid input
-    TestTask task = new TestTask();
-    task.setInput("!");
-    task.submit();
-
-    // Verify that the job failed
-    assertTrue(task.isFailed());
-}
-
-
-## Negative Scenarios
-
-1. Test Case 3: Try to upload a job that already exists in the flink cluster. The upload should fail.
-
-
-@Test
-public void testUploadExistingJob() throws Exception {
-
-    // Create a new TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Try to upload the job again
-    try {
-        job.upload();
-        fail("The upload should have failed");
-    } catch (Exception e) {
-        // Expected
-    }
-}
-
-
-2. Test Case 4: Try to submit a task to a job that does not exist in the flink cluster. The submission should fail.
-
-
-@Test
-public void testSubmitTaskToNonExistentJob() throws Exception {
-
-    // Create a new TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Try to submit a task to the job
-    TestTask task = new TestTask();
-    task.setInput("Hello, world!");
-    task.submit();
-
-    // Verify that the submission failed
-    assertTrue(task.isFailed());
-}
-
-
-I hope this helps
-
-
----------------------------------------------
-
-Sure, here are some positive and negative scenarios for the TextToJsonJob:
-
-Positive Scenarios
-
-* Scenario 1: Upload the TextToJsonJob in the flink cluster and submit a test task to it. The test task should succeed and the generated JSON should be valid.
-
-
-@Test
-public void testUploadTextToJsonJob() throws Exception {
-
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Submit a test task to the job
-    TestTask task = new TestTask();
-    task.setInput("Hello, world!");
-    task.setOutput("{\"text\":\"Hello, world!\"}");
-    job.submit(task);
-
-    // Verify that the task succeeded
-    assertTrue(task.isSuccess());
-
-    // Verify that the generated JSON is valid
-    JSONObject json = task.getOutput();
-    assertEquals("Hello, world!", json.get("text"));
-}
-
-
-* Scenario 2: Upload the TextToJsonJob in the flink cluster and submit a task with an invalid input. The task should fail and the generated JSON should be empty.
-
-
-@Test
-public void testUploadTextToJsonJobWithInvalidInput() throws Exception {
-
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Submit a task with an invalid input
-    TestTask task = new TestTask();
-    task.setInput("");
-    task.setOutput("");
-    job.submit(task);
-
-    // Verify that the task failed
-    assertFalse(task.isSuccess());
-
-    // Verify that the generated JSON is empty
-    JSONObject json = task.getOutput();
-    assertEquals(0, json.length());
-}
-
-
-Negative Scenarios
-
-* Scenario 1: Try to upload a TextToJsonJob that already exists in the flink cluster. The upload should fail.
-
-
-@Test
-public void testUploadTextToJsonJobThatAlreadyExists() throws Exception {
-
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Try to upload the job again
-    try {
-        job.upload();
-        fail("Expected an exception");
-    } catch (Exception e) {
-        // Expected
-    }
-}
-
-
-* Scenario 2: Try to submit a task to a TextToJsonJob that does not exist in the flink cluster. The submission should fail.
-
-``
-@Test
-public void testSubmitTaskToTextToJsonJobThatDoesNotExist() throws Exception {
-
-    // Create a TextToJsonJob
-    TextToJsonJob job = new TextToJsonJob();
-
-    // Upload the job to the flink cluster
-    job.upload();
-
-    // Try to submit a task to the job
-    TestTask task = new TestTask();
-    task.setInput("Hello, world!");
-    task.setOutput("{\"text\":\"Hello, world!\"}");
-    job.submit(task);
-
-    // Verify that the task failed
-    assertFalse(task.isSuccess());
-
-    // Verify that the generated JSON is empty
-    JSONObject json = task.getOutput();
-    assertEquals(0, json.length());
-}
-`
+Note: In the test scenarios, certain dependencies are mocked using Mockito framework to simulate certain behaviors and verify method invocations. In order for the tests to work, you must have the Mockito framework added as a test dependency in your project.

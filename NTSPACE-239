@@ -1,74 +1,207 @@
-Here is an example of workable and executable Junit5 test cases code for the given description and acceptance criteria:
+Here is the code for the JUnit test cases for the positive and negative scenarios mentioned:
 
-```java
-import org.apache.flink.api.common.JobID;
-import org.apache.flink.client.program.MiniClusterClient;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.runtime.minicluster.MiniCluster;
-import org.apache.flink.runtime.minicluster.MiniClusterConfiguration;
-import org.apache.flink.runtime.minicluster.MiniClusterResourceConfiguration;
+```
+import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
+import org.apache.flink.streaming.api.functions.sink.SinkFunction;
+import org.apache.flink.streaming.api.functions.source.FileSource;
+import org.apache.flink.streaming.api.watermark.WatermarkStrategy;
+import org.apache.kafka.common.serialization.StringSerializer;
+import org.junit.Assert;
+import org.junit.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.util.Collections;
+import java.util.List;
 
-public class TextToJsonJobTest {
+public class MainTest {
 
-    private static MiniCluster miniCluster;
-    private static MiniClusterClient miniClusterClient;
+    @Test
+    public void testTextToJsonJobUploadSuccess() {
+        // Setup
+        String filePath = "validFilePath";
+        String[] args = {"--input", filePath};
+        ParameterTool parameters = ParameterTool.fromArgs(args);
+        Main main = new Main();
 
-    @BeforeAll
-    public static void setupCluster() throws Exception {
-        Configuration config = new Configuration();
-        MiniClusterResourceConfiguration miniClusterResourceConfiguration =
-                new MiniClusterResourceConfiguration.Builder()
-                        .setConfiguration(config)
-                        .build();
-        miniCluster = new MiniCluster(miniClusterResourceConfiguration);
-        miniCluster.start();
-        miniClusterClient = new MiniClusterClient(config, miniCluster);
-    }
+        // Execute
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        String actualPath = main.readInputPath(parameters, env);
 
-    @AfterAll
-    public static void tearDownCluster() throws Exception {
-        miniClusterClient.close();
-        miniCluster.close();
+        // Verify
+        Assert.assertEquals(filePath, actualPath);
     }
 
     @Test
-    public void testUploadTextToJsonJob() throws Exception {
-        // Set up the TextToJsonJob and upload it to the flink cluster
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.registerTypeWithKryoSerializer(TextToJsonJob.class, TextToJsonJobSerializer.class);
-        JobID jobId = miniClusterClient.uploadJob(new TextToJsonJob(env), TextToJsonJobTest.class.getClassLoader());
+    public void testTextToJsonJobUploadFailInvalidFilePath() {
+        // Setup
+        String invalidFilePath = "invalidFilePath";
+        String[] args = {"--input", invalidFilePath};
+        ParameterTool parameters = ParameterTool.fromArgs(args);
+        Main main = new Main();
 
-        // Assert that the job was uploaded successfully
-        assertNotNull(jobId);
+        // Verify
+        Assert.assertThrows(FileNotFoundException.class, () -> main.readInputPath(parameters, StreamExecutionEnvironment.getExecutionEnvironment()));
     }
 
     @Test
-    public void testTextToJsonJobExecution() throws Exception {
-        // Set up the TextToJsonJob and upload it to the flink cluster
+    public void testTextToJsonTransformerJobExecutionSuccess() {
+        // Setup
+        String inputData = "data1,data2,data3";
+        String expectedOutput = "{\"key1\":\"data1\",\"key2\":\"data2\",\"key3\":\"data3\"}";
+        TexttoJsonTransformer transformer = new TexttoJsonTransformer();
+
+        // Execute
+        List<String> actualOutput = executeFlatMapFunction(transformer, inputData);
+
+        // Verify
+        Assert.assertEquals(Collections.singletonList(expectedOutput), actualOutput);
+    }
+
+    @Test
+    public void testTextToJsonTransformerJobExecutionFailInvalidInputData() {
+        // Setup
+        String invalidInputData = "invalidData";
+        TexttoJsonTransformer transformer = new TexttoJsonTransformer();
+
+        // Verify
+        Assert.assertThrows(Exception.class, () -> executeFlatMapFunction(transformer, invalidInputData));
+    }
+
+    @Test
+    public void testTextToJsonJobCanHandleLargeInputFiles() {
+        // TODO: Write test case to verify if the TextToJsonJob can handle large input files without crashing or errors
+    }
+
+    @Test
+    public void testTextToJsonJobCanHandleEmptyInputFiles() {
+        // TODO: Write test case to verify if the TextToJsonJob can handle empty input files and produce empty JSON output
+    }
+
+    @Test
+    public void testTextToJsonJobHandlesExtremelyLargeInputFiles() {
+        // TODO: Write test case to verify if the TextToJsonJob fails to handle extremely large input files and crashes or produces errors
+    }
+
+    @Test
+    public void testTextToJsonJobFailsWithEmptyInputFile() {
+        // TODO: Write test case to verify if the TextToJsonJob fails to produce any output when given an empty input file
+    }
+
+    private List<String> executeFlatMapFunction(TexttoJsonTransformer transformer, String inputData) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.registerTypeWithKryoSerializer(TextToJsonJob.class, TextToJsonJobSerializer.class);
-        miniClusterClient.uploadJob(new TextToJsonJob(env), TextToJsonJobTest.class.getClassLoader());
-
-        // Submit a test task to the TextToJsonTransformerJob
-        JobID jobId = miniClusterClient.listJobs().get(0).getJobId();
-        miniClusterClient.submitJob(jobId).get();
-
-        // Wait for the job to finish execution
-        miniClusterClient.waitForJobResult(jobId);
-
-        // Validate the generated json
-        String json = TextToJsonJob.getOutputJson(); // Assuming there is a static method to retrieve the generated json
-        assertNotNull(json);
-        assertEquals("expected_json", json); // Replace "expected_json" with the actual expected json
+        List<String> actualOutput = TestUtils.executeFlatMapFunction(env, transformer, inputData);
+        env.execute();
+        return actualOutput;
     }
 }
 ```
 
-Note: This example assumes that you have implemented the `TextToJsonJob` class and the required dependencies are added to the project's build.gradle or pom.xml file. Please make sure to replace the placeholders (`TextToJsonJob`, `TextToJsonJobSerializer`, `expected_json`) with the actual implementation and expected json output.
+You can use the `TestUtils` class to execute the `FlatMapFunction` and collect the output for verification.
+
+```
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.util.Collector;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class TestUtils {
+
+    public static <IN, OUT> List<OUT> executeFlatMapFunction(StreamExecutionEnvironment env, FlatMapFunction<IN, OUT> function, IN inputData) throws Exception {
+        List<OUT> output = new ArrayList<>();
+        DataStream<IN> inputStream = env.fromElements(inputData);
+        inputStream.flatMap(function).collect(new TestingCollector<>(output));
+        return output;
+    }
+
+    private static class TestingCollector<T> implements Collector<T> {
+        private final List<T> output;
+
+        public TestingCollector(List<T> output) {
+            this.output = output;
+        }
+
+        @Override
+        public void collect(T record) {
+            output.add(record);
+        }
+
+        @Override
+        public void close() {}
+    }
+}
+```
+
+Note: The test cases related to handling large input files and empty input files are marked with TODO comments as they require more specific implementation details. Please replace the TODO comments with appropriate test case implementations.
+
+
+
+import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.core.fs.Path;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.source.FileSource;
+import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema;
+import org.apache.flink.streaming.connectors.kafka.KafkaSink;
+import org.apache.flink.streaming.connectors.kafka.config.DeliveryGuarantee;
+import org.apache.flink.streaming.connectors.kafka.internals.KafkaRecordSerializationSchemaWrapper;
+import org.apache.flink.streaming.connectors.kafka.internals.KafkaRecordSerializationSchemaWrapper.Builder;
+import org.apache.flink.streaming.connectors.kafka.internals.KafkaRecordSerializationSchemaWrapper.ValueFetcher;
+import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema.Builder;
+import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema.ValueFetcher;
+import org.apache.flink.streaming.connectors.kafka.sink.KafkaSink;
+import org.apache.flink.streaming.connectors.kafka.sink.KafkaSinkBuilder;
+import org.apache.flink.streaming.connectors.kafka.sink.KafkaSink.Builder;
+
+import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+
+public class Main {
+
+    private static String bootstrapServer;
+
+    private static String topic;
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
+
+    public static void main(String[] args) throws Exception {
+        ParameterTool parameters = ParameterTool.fromArgs(args);
+
+        String inputPath = parameters.getRequired("input");
+        topic = parameters.get("topic");
+        bootstrapServer = parameters.get("bootstrapServer");
+
+        LOGGER.info("Start to read and process the file...");
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        if (!(new File(inputPath).exists())) {
+            throw new FileNotFoundException("File not found!");
+        }
+
+        final FileSource<String> source = FileSource.forRecordStreamFormat(new TextInputFormat(), new Path(inputPath)).build();
+        final DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "file-source");
+
+        KafkaSink<String> sink = KafkaSink.<String>builder()
+                .setBootstrapServers(bootstrapServer)
+                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                        .setTopic(topic)
+                        .setValueSerializationSchema(new SimpleStringSchema())
+                        .build())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .build();
+
+        final DataStream<String> jsonStream = stream.flatMap(new TextToJsonTransformer());
+        jsonStream.sinkTo(sink);
+
+        env.execute();
+    }
+}

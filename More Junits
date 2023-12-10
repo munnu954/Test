@@ -1,218 +1,51 @@
-Here are some JUnit5 test cases for the CollectorInitializer class:
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.client.program.ProgramInvocationException;
+import org.apache.flink.client.program.rest.RestClusterClient;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.RestOptions;
+import org.apache.flink.core.execution.JobClient;
+import org.apache.flink.runtime.jobgraph.JobGraph;
+import org.apache.flink.runtime.jobgraph.JobStatus;
+import org.junit.Assert;
+import org.junit.Test;
 
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.test.context.EmbeddedKafka;
-import org.springframework.kafka.test.context.EmbeddedKafkaExtension;
-
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.when;
-
-@ExtendWith(MockitoExtension.class)
-@EmbeddedKafka(topics = "3459-DEV-COLLECTION-REQUEST-QUEUE")
-public class CollectorInitializerTest {
-
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Test
-    public void testSuccessfulInitialization() {
-        // Arrange
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setId("123456789");
-        spaceCollector.setUrl("http://localhost:8080");
-        spaceCollector.setPort(8080);
-        spaceCollector.setConnectionType("API");
-        spaceCollector.setUsername("username");
-        spaceCollector.setPassword("password");
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("id", spaceCollector.getId());
-        data.put("url", spaceCollector.getUrl());
-        data.put("port", spaceCollector.getPort());
-        data.put("connection_type", spaceCollector.getConnectionType());
-        data.put("username", spaceCollector.getUsername());
-        data.put("password", spaceCollector.getPassword());
-
-        // Act
-        CollectorInitializer collectorInitializer = new CollectorInitializer(kafkaTemplate);
-        collectorInitializer.initialize(data);
-
-        // Assert
-        assertEquals(spaceCollector, collectorInitializer.getCollector());
-    }
-
-    @Test
-    public void testFailureToInitializeWhenNoDataInQueue() {
-        // Arrange
-        when(kafkaTemplate.send("3459-DEV-COLLECTION-REQUEST-QUEUE", "{}")).thenReturn(null);
-
-        // Act
-        CollectorInitializer collectorInitializer = new CollectorInitializer(kafkaTemplate);
-        collectorInitializer.initialize("{}");
-
-        // Assert
-        assertThrows(IllegalStateException.class, collectorInitializer::getCollector);
-    }
-
-    @Test
-    public void testFailureToInitializeWhenJsonDataIsInvalid() {
-        // Arrange
-        when(kafkaTemplate.send("3459-DEV-COLLECTION-REQUEST-QUEUE", "{}")).thenReturn(null);
-
-        // Act
-        CollectorInitializer collectorInitializer = new CollectorInitializer(kafkaTemplate);
-        collectorInitializer.initialize("{\"id\": \"123456789\", \"url\": \"http://localhost:8080\", \"port\": 8080, \"connection_type\": \"API\", \"username\": \"username\", \"password\": \"password\"}");
-
-        // Assert
-        assertThrows(IllegalStateException.class, collectorInitializer::getCollector);
-    }
-}
-
-
-Here are the JUnit5 test cases for the below scenarios:
-
-1. Test that the CollectorInitializer successfully retrieves Space_Collector json from the kafka topic 3459-DEV-COLLECTION-REQUEST-QUEUE.
-    - Mock the kafkaTemplate and verify that the kafkaTemplate.send method is called with the correct topic name.
-    - Use a TestKafkaConsumer to produce and consume a test SpaceCollector message, and assert that the message is successfully retrieved and processed.
-
+public class FlinkJobTest {
 
 @Test
-public void testCollectorInitializer() {
-    // Mock the kafkaTemplate
-    MockedStatic<KafkaTemplate<String, SpaceCollector>> kafkaTemplateMock =
-            Mockito.mockStatic(KafkaTemplate.class);
-    kafkaTemplateMock.when(KafkaTemplate::send).thenReturn(null);
+public void testFlinkJobExecution() {
+String jarID = "myJob.jar";
+String requestURL = "http://localhost:8081/jars/" + jarID + "/run";
+String[] programArgs = {"--input", "inputFile.txt", "--bootstrapServer", "localhost:9092", "--topic", "myTopic"};
 
-    // Use a TestKafkaConsumer to produce and consume a test SpaceCollector message
-    TestKafkaConsumer<String, SpaceCollector> consumer = new TestKafkaConsumer<>(
-            "3459-DEV-COLLECTION-REQUEST-QUEUE",
-            String.class,
-            SpaceCollector.class);
-    consumer.subscribe(Collections.singleton("3459-DEV-COLLECTION-REQUEST-QUEUE"));
+try {
+// create a REST cluster client to connect to the Flink cluster
+Configuration config = new Configuration();
+config.setInteger(RestOptions.PORT, 8081);
+RestClusterClient client = new RestClusterClient
+// create a JobGraph from the uploaded job jar
+JobGraph jobGraph = client.getJobGraph(jarID);
 
-    // Produce a test SpaceCollector message
-    SpaceCollector message = new SpaceCollector();
-    message.setId("123456789");
-    message.setUrl("http://localhost:8080");
-    consumer.send(new ProducerRecord<>("3459-DEV-COLLECTION-REQUEST-QUEUE", message));
+// set the program arguments as job parameters
+ParameterTool params = ParameterTool.fromArgs(programArgs);
+jobGraph.getJobConfiguration().setGlobalJobParameters(params);
 
-    // Assert that the message is successfully retrieved and processed
-    ConsumerRecord<String, SpaceCollector> record = consumer.poll(0);
-    assertEquals(message, record.value());
+// submit the job to the Flink cluster
+JobClient jobClient = client.submitJob(jobGraph);
+
+// wait for the job to complete
+CompletableFuture jobStatusFuture = jobClient.getJobStatus();
+JobStatus jobStatus = jobStatusFuture.get();
+Assert.assertEquals(JobStatus.FINISHED, jobStatus);
+
+// clean up by canceling the job and closing the client
+jobClient.cancel();
+client.close();
+} catch (ProgramInvocationException | InterruptedException | ExecutionException e) {
+e.printStackTrace();
+Assert.fail("Failed to execute Flink job: " + e.getMessage());
 }
-
-
-2. Test that the Space_Collector json has a valid ID field and it is not null.
-    - Create a SpaceCollector object with a valid ID field and assert that the ID field is set correctly.
-
-
-@Test
-public void testSpaceCollectorId() {
-    SpaceCollector collector = new SpaceCollector();
-    collector.setId("123456789");
-    assertEquals("123456789", collector.getId());
 }
-
-
-3. Test that the Space_Collector json has a valid IP address in the URL field and it is not null.
-    - Create a SpaceCollector object with a valid IP address in the URL field and assert that the URL field is set correctly.
-
-``
-@Test
-public void testSpaceCollectorUrl() {
-    SpaceCollector collector = new SpaceCollector();
-    collector.setUrl("http://localhost:8080");
-    assertEquals("http://localhost:8080", collector.getUrl());
 }
-`
-
-
-
-Sure, here are the JUnit5 test cases for the Space_Collector json:
-
-
-import org.junit.jupiter.api.Test;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-
-public class SpaceCollectorTest {
-
-    @Test
-    public void testUrl() {
-        SpaceCollector spaceCollector = new SpaceCollector("192.168.1.1");
-        assertEquals("192.168.1.1", spaceCollector.getUrl());
-    }
-
-    @Test
-    public void testPort() {
-        SpaceCollector spaceCollector = new SpaceCollector("192.168.1.1", 8080);
-        assertEquals(8080, spaceCollector.getPort());
-    }
-
-    @Test
-    public void testConnectionType() {
-        SpaceCollector spaceCollector = new SpaceCollector("192.168.1.1", 8080, "API");
-        assertEquals("API", spaceCollector.getConnectionType());
-    }
-
-    @Test
-    public void testUsername() {
-        SpaceCollector spaceCollector = new SpaceCollector("192.168.1.1", 8080, "API", "username");
-        assertEquals("username", spaceCollector.getUsername());
-    }
-
-    @Test
-    public void testPassword() {
-        SpaceCollector spaceCollector = new SpaceCollector("192.168.1.1", 8080, "API", "username", "password");
-        assertEquals("password", spaceCollector.getPassword());
-    }
-}
-
-
-Here are the Junit5 test cases for the given scenarios:
-
-``
-import org.junit.jupiter.api.Test;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
-public class SpaceCollectorTest {
-
-    @Test
-    public void testInvalidId() {
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setId(null);
-        assertThrows(IllegalArgumentException.class, spaceCollector::sendJsonMessage);
-    }
-
-    @Test
-    public void testInvalidUrl() {
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setUrl("");
-        assertThrows(IllegalArgumentException.class, spaceCollector::sendJsonMessage);
-    }
-
-    @Test
-    public void testInvalidPort() {
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setPort(0);
-        assertThrows(IllegalArgumentException.class, spaceCollector::sendJsonMessage);
-    }
-
-    @Test
-    public void testInvalidConnectionType() {
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setConnectionType("");
-        assertThrows(IllegalArgumentException.class, spaceCollector::sendJsonMessage);
-    }
-}
-`

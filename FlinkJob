@@ -1,23 +1,181 @@
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
-import org.json.JSONObject;
 
-public class TexttoJsonTransformer implements FlatMapFunction<String, String> {
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
 
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] arr = s.split(",");
-        JSONObject obj = new JSONObject();
+import java.io.File;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
 
-        for (int i = 0; i < arr.length; i++) {
-            String jsonKey = "key" + (i + 1);
-            // Remove leading and trailing whitespace from the input values
-            String value = arr[i].trim();
-            // Remove any existing double quotes from the input values
-            value = value.replace("\"", "");
-            obj.put(jsonKey, value);
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestTemplate;
+
+@SpringBootTest
+public class FlinkConnectTest {
+
+    private static final String jarFile = "src/main/resources/WordCount.jar";
+    private static final String inputFile = "src/main/resources/input.txt";
+    private static final String outputFile = "src/main/resources/output.txt";
+    private static final String bootstrapServer = "localhost:9092";
+
+    public ResponseEntity<FlinkRunResponse> runFlinkJob(String jarID) {
+
+        RestTemplate restTemplate = new RestTemplate();
+        ResponseEntity<FlinkRunResponse> response = null;
+        String requestURL = "";
+
+        requestURL = "http://localhost:8081/jars/" + jarID + "/run";
+
+        List<String> programList = new ArrayList<>();
+        programList.add("–input");
+        programList.add(inputFile);
+        programList.add("–topic");
+        programList.add(bootstrapServer);
+        programList.add("–output");
+        programList.add(outputFile);
+
+        String[] programListArray = programList.toArray(new String[0]);
+        FlinkRunRequest reqPayload = new FlinkRunRequest(programListArray);
+
+        try {
+
+            response = restTemplate.postForEntity(requestURL, reqPayload, FlinkRunResponse.class);
+
+         catch (Exception e) {
+
+            e.printStackTrace();
+
+        }
+        return response;
+
+    }
+
+    public void deleteLocalFile(String relativePath) {
+
+        Path absolutePath = Paths.get(relativePath).toAbsolutePath();
+        File fileToDelete = absolutePath.toFile();
+
+        if (fileToDelete.exists()) {
+            fileToDelete.delete();
+        }
+    }
+
+    public ResponseEntity<FlinkUploadResponse> uploadJarFile(String jarPath) {
+
+        RestTemplate restTemplate = new RestTemplate();
+
+        ResponseEntity<FlinkUploadResponse> response = null;
+
+        String requestURL = "";
+
+        requestURL = "http://localhost:8081/jars/upload";
+
+        HttpHeaders headers = new HttpHeaders();
+
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("jarfile", new FileSystemResource(new File(jarPath)));
+
+        HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+
+        try {
+
+            response = restTemplate.postForEntity(requestURL, requestEntity, FlinkUploadResponse.class);
+
+         catch (Exception e) {
+
+            e.printStackTrace();
+
+        }
+        return response;
+    }
+
+    @Test
+    void checkFlinkConnectivity() throws ExecutionException, InterruptedException {
+
+        deleteLocalFile(outputFile);
+        ResponseEntity<FlinkUploadResponse> response = uploadJarFile(jarFile);
+
+        String filePath = response.getBody().getFilename();
+
+        String pathSeparator = "
+";
+
+        String jarID = "";
+
+        int lastSeparatorIndex = filePath.lastIndexOf(pathSeparator);
+
+        if (lastSeparatorIndex != -1) {
+
+            jarID = filePath.substring(lastSeparatorIndex + 1);
+
         }
 
-        collector.collect(obj.toString());
+        ResponseEntity<FlinkRunResponse> runResponse = runFlinkJob(jarID);
+
+        if (!runResponse.getStatusCode().is2xxSuccessful()) {
+            fail("Flink Run Failed");
+        }
+
+        deleteLocalFile(outputFile);
+
+        // Verify the output file
+        File outputFi
+
+leObj = new File(outputFile);
+        if (outputFileObj.exists()) {
+            long count = java.nio.file.Files.lines(outputFileObj.toPath()).count();
+            assertEquals(count, 3);
+         else {
+            fail("Output file not generated");
+        }
+
     }
-}
+
+    @Test
+    void testFlinkJobExecution() throws ExecutionException, InterruptedException {
+
+        ResponseEntity<FlinkUploadResponse> response = uploadJarFile(jarFile);
+
+        String filePath = response.getBody().getFilename();
+
+        String pathSeparator = "
+";
+
+        String jarID = "";
+
+        int lastSeparatorIndex = filePath.lastIndexOf(pathSeparator);
+
+        if (lastSeparatorIndex != -1) {
+
+            jarID = filePath.substring(lastSeparatorIndex + 1);
+
+        }
+
+        ResponseEntity<FlinkRunResponse> runResponse = runFlinkJob(jarID);
+
+        if (!runResponse.getStatusCode().is2xxSuccessful()) {
+            fail("Flink Run Failed");
+        }
+
+        // Verify the output file
+        File outputFileObj = new File(outputFile);
+        if (outputFileObj.exists()) {
+            long count = java.nio.file.Files.lines(outputFileObj.toPath()).count();
+            assertEquals(count, 3);
+         else {
+            fail("Output file not generated");
+        }
+
+    }

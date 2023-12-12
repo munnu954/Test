@@ -1,283 +1,57 @@
-The error message is telling you that the expected value, "Topic 3459-DEV-COLLECTION-JSON-DATA-QUEUE does not exist", is not equal to the actual value, which is null. This means that the test case is not passing.
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.ListTopicsResult;
+import org.apache.kafka.common.KafkaFuture;
+import org.junit.Before;
+import org.junit.Test;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import java.util.Properties;
+import java.util.Set;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
-To fix this, you need to make sure that the test case is actually testing what you think it is testing. In this case, you are trying to test that the Kafka topic "3459-DEV-COLLECTION-JSON-DATA-QUEUE" does not exist. However, the test case is currently only checking that the exception message contains the text "Topic 3459-DEV-COLLECTION-JSON-DATA-QUEUE does not exist". This is not a reliable test, because it is possible for the exception message to contain this text even if the topic does exist.
+public class MainUnitTest {
 
-To fix this, you need to change the test case so that it actually checks whether the topic exists. You can do this by using the KafkaAdminClient to list the topics in the cluster. If the topic does not exist, then the KafkaAdminClient will throw an exception. You can then catch this exception and assert that it is the correct exception.
+    @Mock
+    private AdminClient adminClient;
 
-Here is an example of how you could change the test case:
-
-
-@Test
-public void testKafkaTopicNotPresent() throws Exception {
-
-// Arrange
-
-String bootstarpServer = "localhost:9092";
-
-String topic = "3459-DEV-COLLECTION-JSON-DATA-QUEUE";
-
-String input = "C://Temp/Device.csv";
-
-// Act
-
-try {
-
-KafkaAdminClient adminClient = KafkaAdminClient.create(bootstrapServers);
-To fix the error, we need to add a check for the existence of the Kafka topic before creating the KafkaSink in the Main class. We can use the KafkaAdminClient to check if the topic exists or not. If it does not exist, we can throw an exception with the appropriate message.
-
-Here is the updated Main class code:
-
-public class Main {
-
-    private static String bootstrapServer;
-    private static String topic;
-    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
-
-    public static void main(String[] args) throws Exception {
-
-        ParameterTool parameters = ParameterTool.fromArgs(args);
-        bootstrapServer = parameters.getRequired("bootstrapServer");
-        topic = parameters.get("topic");
-
-        LOGGER.info("Starting to read and pick the path");
-
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
-        String path = parameters.getRequired("input");
-
-        if (!(new File(path).exists())) {
-            throw new FileNotFoundException("File not found!");
-        }
-
-        FileSource<String> source = FileSource.forRecordStreamFormat(new TextLineInputFormat(), new Path(path)).build();
-
-        DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "file-source");
-
-        if (!isTopicExists(bootstrapServer, topic)) {
-            throw new Exception("Topic " + topic + " does not exist");
-        }
-
-        KafkaSink<String> sink = KafkaSink.<String>builder()
-                .setBootstrapServers(bootstrapServer)
-                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
-                        .setTopic(topic)
-                        .setValueSerializationSchema(new SimpleStringSchema())
-                        .build())
-                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-                .build();
-
-        DataStream<String> jsonStream = stream.flatMap(new CsvtoJsonConversion());
-        jsonStream.sinkTo(sink);
-
-        env.execute();
+    @Before
+    public void setup() {
+        adminClient = Mockito.mock(AdminClient.class);
     }
 
-    private static boolean isTopicExists(String bootstrapServer, String topic) throws Exception {
-        Properties props = new Properties();
-        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServer);
-        try (AdminClient admin = KafkaAdminClient.create(props)) {
-            ListTopicsOptions options = new ListTopicsOptions();
-            options.timeoutMs(5000);
-            return admin.listTopics(options).names().get().contains(topic);
-        }
+    @Test
+    public void testKafkaTopicAccessibility() throws Exception {
+        // Set up the required Kafka topic name
+        String topicName = "3459-DEV-COLLECTION-JSON-DATA-QUEUE";
+
+        // Mock the listTopicsResult
+        ListTopicsResult listTopicsResult = Mockito.mock(ListTopicsResult.class);
+
+        // Mock the set of topics
+        Set<String> topics = Set.of("<other-accessible-topic>");
+
+        // Create properties for the AdminClient
+        Properties properties = new Properties();
+        properties.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+
+        // Mock the KafkaFuture for the topic list
+        KafkaFuture<Set<String>> kafkaFuture = Mockito.mock(KafkaFuture.class);
+        Mockito.when(kafkaFuture.get()).thenReturn(topics);
+
+        // Mock the adminClient listTopics method
+        Mockito.when(adminClient.listTopics()).thenReturn(listTopicsResult);
+        Mockito.when(listTopicsResult.names()).thenReturn(kafkaFuture);
+
+        // Set up the Main class
+        Main main = new Main();
+        main.setAdminClient(adminClient);
+
+        // Check the accessibility of the Kafka topic
+        boolean isTopicAccessible = main.isKafkaTopicAccessible(topicName, properties);
+    
+        // Ensure that the topic is not accessible
+        assertFalse(isTopicAccessible);
     }
-
-
-And here is the updated test case code:
-
-@Test
-public void testKafkaTopicNotPresent() throws Exception {
-
-    // Arrange
-    String bootstrapServer = "localhost:9092";
-    String topic = "3459-DEV-COLLECTION-JSON-DATA-QUEUE";
-    String input = "C://Temp/Device.csv";
-
-    // Act
-    try {
-        Main.main(new String[]"–bootstrapServer", bootstrapServer, "–topic", topic, "–input", input);
-     catch (Exception e) {
-        // Assert
-        assertEquals("Topic 3459-DEV-COLLECTION-JSON-DATA-QUEUE does not exist", e.getMessage());
-        return;
-    }
-    fail("Expected exception was not thrown");
-
-
-This test case is now more reliable, because it is actually checking whether the topic exists
-
-
-
-Here are some testing code for the negative scenarios mentioned above:
-
-1. The Kafka topic 3459-DEV-COLLECTION-JSON-DATA-QUEUE is not present:
-
-
-public void testKafkaTopicNotPresent() throws Exception {
-
-// Arrange
-
-String bootstarpServer = "localhost:9092";
-
-String topic = "3459-DEV-COLLECTION-JSON-DATA-QUEUE";
-
-// Act
-
-try {
-
-Main.main(new String[] {"--bootstarpServer", bootstarpServer, "--topic", topic});
-
-} catch (Exception e) {
-
-// Assert
-
-assertEquals("Topic 3459-DEV-COLLECTION-JSON-DATA-QUEUE does not exist", e.getMessage());
-
 }
-
-}
-
-
-2. The Kafka topic 3459-DEV-COLLECTION-JSON-DATA-QUEUE is not accessible:
-
-
-public void testKafkaTopicNotAccessible() throws Exception {
-
-// Arrange
-
-String bootstarpServer = "localhost:9092";
-
-String topic = "3459-DEV-COLLECTION-JSON-DATA-QUEUE";
-
-// Act
-
-try {
-
-Main.main(new String[] {"--bootstarpServer", bootstarpServer, "--topic", topic});
-
-} catch (Exception e) {
-
-// Assert
-
-assertEquals("Could not connect to Kafka topic 3459-DEV-COLLECTION-JSON-DATA-QUEUE", e.getMessage());
-
-}
-
-}
-
-
-3. The Kafka topic 3459-DEV-COLLECTION-AUDIT-QUEUE is not present:
-
-
-public void testKafkaTopicAuditQueueNotPresent() throws Exception {
-
-// Arrange
-
-String bootstarpServer = "localhost:9092";
-
-String topic = "3459-DEV-COLLECTION-AUDIT-QUEUE";
-
-// Act
-
-try {
-
-Main.main(new String[] {"--bootstarpServer", bootstarpServer, "--topic", topic});
-
-} catch (Exception e) {
-
-// Assert
-
-assertEquals("Topic 3459-DEV-COLLECTION-AUDIT-QUEUE does not exist", e.getMessage());
-
-}
-
-}
-
-
-4. The Kafka topic 3459-DEV-COLLECTION-AUDIT-QUEUE is not accessible:
-
-
-public void testKafkaTopicAuditQueueNotAccessible() throws Exception {
-
-// Arrange
-
-String bootstarpServer = "localhost:9092";
-
-String topic = "3459-DEV-COLLECTION-AUDIT-QUEUE";
-
-// Act
-
-try {
-
-Main.main(new String[] {"--bootstarpServer", bootstarpServer, "--topic", topic});
-
-} catch (Exception e) {
-
-// Assert
-
-assertEquals("Could not connect to Kafka topic 3459-DEV-COLLECTION-AUDIT-QUEUE", e.getMessage());
-
-}
-
-}
-
-
-5. The data read for ProgramArgsList does not contain valid params:
-
-
-public void testProgramArgsListDoesNotContainValidParams() throws Exception {
-
-// Arrange
-
-String bootstarpServer = "localhost:9092";
-
-String topic = "3459-DEV-COLLECTION-JSON-DATA-QUEUE";
-
-String[] args = {"--bootstarpServer", bootstarpServer};
-
-// Act
-
-try {
-
-Main.main(args);
-
-} catch (Exception e) {
-
-// Assert
-
-assertEquals("Invalid program arguments: --topic must be specified", e.getMessage());
-
-}
-
-}
-
-
-6. The data read for ProgramArgsList contain valid params with invalid values:
-
-``
-public void testProgramArgsListContainsValidParamsWithInvalidValues() throws Exception {
-
-// Arrange
-
-String bootstarpServer = "localhost:9092";
-
-String topic = "3459-DEV-COLLECTION-JSON-DATA-QUEUE";
-
-String[] args = {"--bootstarpServer", bootstarpServer, "--topic", "invalid-topic"};
-
-// Act
-
-try {
-
-Main.main(args);
-
-} catch (Exception e) {
-
-// Assert
-
-assertEquals("Invalid program arguments: Topic invalid-topic does not exist", e.getMessage());
-
-}
-
-}
-`

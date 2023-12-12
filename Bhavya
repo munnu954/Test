@@ -23,19 +23,85 @@ String input = "C://Temp/Device.csv";
 try {
 
 KafkaAdminClient adminClient = KafkaAdminClient.create(bootstrapServers);
+To fix the error, we need to add a check for the existence of the Kafka topic before creating the KafkaSink in the Main class. We can use the KafkaAdminClient to check if the topic exists or not. If it does not exist, we can throw an exception with the appropriate message.
 
-List<String> topics = adminClient.listTopics().names().get();
+Here is the updated Main class code:
 
-assertFalse(topics.contains(topic));
+public class Main {
 
-} catch (KafkaException e) {
+    private static String bootstrapServer;
+    private static String topic;
+    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
 
-// Assert
+    public static void main(String[] args) throws Exception {
 
-assertEquals("Topic 3459-DEV-COLLECTION-JSON-DATA-QUEUE does not exist", e.getMessage());
+        ParameterTool parameters = ParameterTool.fromArgs(args);
+        bootstrapServer = parameters.getRequired("bootstrapServer");
+        topic = parameters.get("topic");
 
-}
-}
+        LOGGER.info("Starting to read and pick the path");
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        String path = parameters.getRequired("input");
+
+        if (!(new File(path).exists())) {
+            throw new FileNotFoundException("File not found!");
+        }
+
+        FileSource<String> source = FileSource.forRecordStreamFormat(new TextLineInputFormat(), new Path(path)).build();
+
+        DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "file-source");
+
+        if (!isTopicExists(bootstrapServer, topic)) {
+            throw new Exception("Topic " + topic + " does not exist");
+        }
+
+        KafkaSink<String> sink = KafkaSink.<String>builder()
+                .setBootstrapServers(bootstrapServer)
+                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                        .setTopic(topic)
+                        .setValueSerializationSchema(new SimpleStringSchema())
+                        .build())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .build();
+
+        DataStream<String> jsonStream = stream.flatMap(new CsvtoJsonConversion());
+        jsonStream.sinkTo(sink);
+
+        env.execute();
+    }
+
+    private static boolean isTopicExists(String bootstrapServer, String topic) throws Exception {
+        Properties props = new Properties();
+        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServer);
+        try (AdminClient admin = KafkaAdminClient.create(props)) {
+            ListTopicsOptions options = new ListTopicsOptions();
+            options.timeoutMs(5000);
+            return admin.listTopics(options).names().get().contains(topic);
+        }
+    }
+
+
+And here is the updated test case code:
+
+@Test
+public void testKafkaTopicNotPresent() throws Exception {
+
+    // Arrange
+    String bootstrapServer = "localhost:9092";
+    String topic = "3459-DEV-COLLECTION-JSON-DATA-QUEUE";
+    String input = "C://Temp/Device.csv";
+
+    // Act
+    try {
+        Main.main(new String[]"–bootstrapServer", bootstrapServer, "–topic", topic, "–input", input);
+     catch (Exception e) {
+        // Assert
+        assertEquals("Topic 3459-DEV-COLLECTION-JSON-DATA-QUEUE does not exist", e.getMessage());
+        return;
+    }
+    fail("Expected exception was not thrown");
 
 
 This test case is now more reliable, because it is actually checking whether the topic exists

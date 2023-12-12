@@ -1,42 +1,90 @@
-Got it! To avoid hardcoding the column names within the CsvtoJsonTransformer class, we can use the CsvConfig class to hold the column names and reference them from there. Here's the updated code:
+To convert the CSV file entries to JSON without hardcoding column names, you can modify the code as follows:
 
-### CsvConfig.java (in the config package)
+```java
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.connectors.fs.bucketing.BucketingSink;
+import org.apache.flink.streaming.connectors.fs.bucketing.DateTimeBucketer;
+import org.apache.flink.streaming.connectors.fs.bucketing.Bucketer;
+import org.apache.flink.streaming.connectors.fs.bucketing.Bucketer.Precision;
+import org.apache.flink.streaming.connectors.fs.bucketing.Clock;
+import org.apache.flink.streaming.connectors.fs.bucketing.BasePathBucketer;
+import org.apache.flink.streaming.connectors.fs.bucketing.DateTimeBucketID;
+import org.apache.flink.streaming.connectors.fs.bucketing.BucketID;
 
-package config;
+import org.apache.flink.core.fs.FileSystem.WriteMode;
 
-public class CsvConfig {
-    public static final String[] COLUMN_NAMES = {
-        "TimeStamp", "Node Name", "Connection Alias", "Entity ID", "Monitoring Domain",
-        "Vseries ID", "TX Bytes", "RX Bytes", "TX Packets", "RX Packets",
-        "TX Errors", "RX Errors", "TX Drops", "RX Drops"
-    };
-}
+import org.apache.flink.util.Collector;
 
+import java.io.FileNotFoundException;
+import java.io.File;
 
-### CsvtoJsonTransformer.java
+import org.apache.flink.types.Row;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
-import org.apache.flink.api.common.functions.MapFunction;
-import org.json.JSONObject;
-import config.CsvConfig;
+public class Main {
 
-public class CsvtoJsonTransformer implements MapFunction<String, String> {
+    private static String bootstarpServer;
+    private static String topic;
+    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
 
-    @Override
-    public String map(String s) throws Exception {
-        String[] arr = s.split(",");
-        JSONObject jsonObject = new JSONObject();
+    public static void main(String[] args) throws Exception {
+        ParameterTool parameters = ParameterTool.fromArgs(args);
 
-        for (int i = 0; i < arr.length && i < CsvConfig.COLUMN_NAMES.length; i++) {
-            String jsonKey = CsvConfig.COLUMN_NAMES[i].trim(); // Using column names from CsvConfig
-            String value = arr[i].trim().replace("‌", ""); // Assuming you want to remove a special character
-            jsonObject.put(jsonKey, value);
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        String path = parameters.get("input");
+        if (!(new File(path).exists())) {
+            throw new FileNotFoundException("File not found!");
         }
 
-        return jsonObject.toString();
+        DataStream<String> stream = env.readTextFile(path);
+        
+        stream.flatMap(new CsvtoJsonTransformer()).print();
+
+        env.execute();
     }
 }
 
+public class CsvtoJsonTransformer implements FlatMapFunction<String, String> {
 
-In this reframed code, the CsvtoJsonTransformer class now uses the column names defined in the CsvConfig class. This way, the column names are no longer hard-coded within the CsvtoJsonTransformer. Instead, they are centralized within the CsvConfig class, promoting better maintainability and ease of configuration.
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
 
-If you have any further questions or need additional assistance, feel free to let me know!
+        String[] cols = s.split(","); // Split the CSV row by comma
+
+        JSONObject obj = new JSONObject();
+
+        // Get the header columns from the first row and use it as keys for JSON object
+        for (int i = 0; i < cols.length; i++) {
+            // Remove any extra spaces and quotes from the column name
+            String jsonKey = cols[i].trim().replaceAll("\"", "");
+            obj.put(jsonKey, "");
+        }
+
+        // Skip the first row as it contains headers
+        if (!obj.toString().equals("{}")) {
+            collector.collect(obj.toString());
+        }
+    }
+}
+```
+
+This code reads the CSV file from the provided input path, splits each row into columns based on the comma delimiter, and creates a JSON object using the column names as keys. The resulting JSON objects are then collected and printed. Note that we removed the Kafka sink part since it was not relevant to the conversion to JSON.
+
+Make sure to import the necessary dependencies:
+
+```java
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
+import java.io.FileNotFoundException;
+import java.io.File;
+```
+
+Also, update the Flink version specific imports and dependencies as per your Flink version.

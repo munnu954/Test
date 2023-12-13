@@ -1,45 +1,69 @@
-Sure, here is the reframed code:
+The CsvtoJsonTransformer class should be updated to handle the header and row values and transform them into JSON key-value pairs. Here's the updated CsvtoJsonTransformer class:
 
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
+
+public class CsvtoJsonTransformer implements FlatMapFunction<Tuple2<String, String>, String> {
+
+    @Override
+    public void flatMap(Tuple2<String, String> t, Collector<String> collector) throws Exception {
+        String[] headers = t.f0.split(",");
+        String[] values = t.f1.split(",");
+
+        JSONObject obj = new JSONObject();
+
+        for (int i = 0; i < headers.length; i++) {
+            String jsonKey = headers[i].trim().replace(""‌, "");
+            String jsonValue = values[i].trim().replace(""‌, "");
+            obj.put(jsonKey, jsonValue);
+        }
+
+        collector.collect(obj.toString());
+    }
+}
+
+
+In the Main class, the input data should be read as a Tuple2<String, String> where the first element represents the header and the second element represents the row values. The CsvtoJsonTransformer should be applied to this input format to transform the data into JSON key-value pairs. Here's the updated Main class:
 
 public class Main {
 
-    private static String bootstrapServer;
-
+    private static String bootstarpServer;
     private static String topic;
-
     private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
 
     public static void main(String[] args) throws Exception {
         ParameterTool parameters = ParameterTool.fromArgs(args);
 
-        //System.out.println("input path will be parameters.getRequired("input"));
-        //LOGGER.info("input path will be:" parameters.getRequired("input"));
+        topic = parameters.get("topic");
+        bootstarpServer = parameters.get("bootstarpServer");
 
-        parameters.getRequired("input");
-        topic = parameters.get("Topic");
+        LOGGER.info(String.format("Start to read and pick the path"));
 
-        bootstrapServer = parameters.get("bootstarpServer");
-
-        LOGGER.info(String.format("start to read and pick the path"));
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
         String path = parameters.getRequired("input");
-        if(!(new File(path).exists())) {
-
+        if (!(new File(path).exists())) {
             throw new FileNotFoundException("File not found!");
         }
 
         final FileSource<String> source = FileSource.forRecordStreamFormat(new TextlineInputFormat(), new Path(path)).build();
-        final DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "file-source");
+        final DataStream<Tuple2<String, String>> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "file-source")
+                .map(line -> {
+                    String[] parts = line.split(",");
+                    return new Tuple2<>(parts[0], parts[1]);
+                });
 
         KafkaSink<String> sink = KafkaSink.<String>builder()
-            .setBootstrapServers(bootstrapServer)
-            .setRecordSerializer(KafkaRecordSerializationSchema.builder()
-                .setTopic(topic)
-                .setValueSerializationSchema(new SimpleStringSchema())
-                .build())
-            .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-            .build();
+                .setBootstrapServers(bootstarpServer)
+                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                        .setTopic(topic)
+                        .setValueSerializationSchema(new SimpleStringSchema())
+                        .build()
+                )
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .build();
 
         final DataStream<String> jsonStream = stream.flatMap(new CsvtoJsonTransformer());
         jsonStream.sinkTo(sink);
@@ -48,47 +72,4 @@ public class Main {
 }
 
 
-I have made the following changes to the code:
-
-* I have added a comment to explain the purpose of the code.
-* I have added a check to ensure that the input file exists.
-* I have added a call to the CsvtoJsonTransformer to convert the CSV data to JSON.
-* I have added a call to the KafkaSink to sink the JSON data to Kafka.
-* I have added a call to the env.execute() method to execute the pipeline
-
-
-
-
-
-
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.util.Collector;
-
-import java.util.ArrayList;
-import java.util.List;
-
-public class CsvtoJsonTransformer implements FlatMapFunction<Tuple2<String, String>, String> {
-
-    @Override
-    public void flatMap(Tuple2<String, String> t, Collector<String> collector) throws Exception {
-        String[] arr = t.f1.split(",");
-        List<String> keys = new ArrayList<>();
-        List<String> values = new ArrayList<>();
-
-        for (int i = 0; i < arr.length; i++) {
-            if (i % 2 == 0) {
-                keys.add(arr[i].trim().replace(""‌, ""));
-            } else {
-                values.add(arr[i].trim().replace(""‌, ""));
-            }
-        }
-
-        JSONObject obj = new JSONObject();
-        for (String key : keys) {
-            obj.put(key, values.get(keys.indexOf(key)));
-        }
-
-        collector.collect(obj.toString());
-    }
-}
+With these updates, the Main class reads the input data as a Tuple2<String, String> and applies the CsvtoJsonTransformer to transform the data into JSON key-value pairs. The CsvtoJsonTransformer class handles the transformation of header and row values into JSON format.

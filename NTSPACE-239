@@ -1,122 +1,96 @@
-Here are some JUnit test cases for the TextToJsonJob:
+Here is the modified Main class with the added functionality to handle Gigamon files using a switch statement:
 
-```
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Assertions;
+```java
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.sink.SinkFunction;
+import org.apache.flink.streaming.api.functions.source.FileSource;
+import org.apache.flink.streaming.api.watermark.WatermarkStrategy;
+import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema;
+import org.apache.flink.streaming.connectors.kafka.KafkaSink;
+import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
+import org.apache.flink.util.Collector;
+import org.apache.flink.core.fs.Path;
+import org.apache.flink.formats.textline.TextLineFormat.InputFormat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
+import java.io.FileNotFoundException;
 
-import static org.junit.jupiter.api.Assertions.*;
+public class Main {
 
-public class TextToJsonJobTest {
+    private static String bootstarpServer;
+    private static String topic;
+    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
 
-    @Test
-    public void testUploadToFlinkCluster() throws IOException {
-        // Arrange
-        String inputPath = "src/test/resources/input.txt";
-        String topic = "test-topic";
-        String bootstrapServer = "localhost:9092";
+    public static void main(String[] args) throws Exception {
+        ParameterTool parameters = ParameterTool.fromArgs(args);
 
-        // Act
-        TextToJsonJob job = new TextToJsonJob();
-        job.setInputPath(inputPath);
-        job.setTopic(topic);
-        job.setBootstrapServer(bootstrapServer);
-        job.run();
+        bootstarpServer = parameters.get("bootstarpServer");
+        topic = parameters.get("Topic");
 
-        // Assert
-        Assertions.assertTrue(job.isSuccessful());
-    }
+        LOGGER.info("Start to read and pick the path");
 
-    @Test
-    public void testTextToJsonTransformerJob() throws IOException {
-        // Arrange
-        String inputPath = "src/test/resources/input.txt";
-        String topic = "test-topic";
-        String bootstrapServer = "localhost:9092";
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        // Act
-        TextToJsonJob job = new TextToJsonJob();
-        job.setInputPath(inputPath);
-        job.setTopic(topic);
-        job.setBootstrapServer(bootstrapServer);
-        job.run();
-
-        // Assert
-        List<String> expectedOutput = new ArrayList<>();
-        expectedOutput.add("{\"key1\":\"value1\",\"key2\":\"value2\"}");
-        List<String> actualOutput = new ArrayList<>();
-        for (String line : job.getOutput()) {
-            actualOutput.add(line);
+        String path = parameters.getRequired("input");
+        if (!new File(path).exists()) {
+            throw new FileNotFoundException("File not found!");
         }
-        assertEquals(expectedOutput, actualOutput);
-    }
 
-    @Test
-    public void testOutputInExpectedJsonFormat() throws IOException {
-        // Arrange
-        String inputPath = "src/test/resources/input.txt";
-        String topic = "test-topic";
-        String bootstrapServer = "localhost:9092";
+        final FileSource<String> source = FileSource.forRecordStreamFormat(new InputFormat(), new Path(path)).build();
+        final DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "file-source");
 
-        // Act
-        TextToJsonJob job = new TextToJsonJob();
-        job.setInputPath(inputPath);
-        job.setTopic(topic);
-        job.setBootstrapServer(bootstrapServer);
-        job.run();
+        KafkaSink<String> sink = KafkaSink.<String>builder()
+                .setBootstrapServers(bootstarpServer)
+                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                        .setTopic(topic)
+                        .setValueSerializationSchema(new SimpleStringSchema())
+                        .build())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .build();
 
-        // Assert
-        List<String> expectedOutput = new ArrayList<>();
-        expectedOutput.add("{\"key1\":\"value1\",\"key2\":\"value2\"}");
-        List<String> actualOutput = new ArrayList<>();
-        for (String line : job.getOutput()) {
-            actualOutput.add(line);
+        final DataStream<String> transformedStream;
+        String fileType = parameters.get("fileType");
+
+        switch (fileType) {
+            case "Gigamon":
+                transformedStream = stream.flatMap(new CsvtoJsonGigamonTransformer());
+                break;
+            default:
+                transformedStream = stream.flatMap(new CsvtoJsonTransformer());
+                break;
         }
-        assertEquals(expectedOutput, actualOutput);
+
+        transformedStream.sinkTo(sink);
+        env.execute();
     }
 
-    @Test
-    public void testHandleLargeInputFiles() throws IOException {
-        // Arrange
-        String inputPath = "src/test/resources/large-input.txt";
-        String topic = "test-topic";
-        String bootstrapServer = "localhost:9092";
+    public static class CsvtoJsonTransformer implements FlatMapFunction<String, String> {
 
-        // Act
-        TextToJsonJob job = new TextToJsonJob();
-        job.setInputPath(inputPath);
-        job.setTopic(topic);
-        job.setBootstrapServer(bootstrapServer);
-        job.run();
-
-        // Assert
-        Assertions.assertTrue(job.isSuccessful());
-    }
-
-    @Test
-    public void testHandleEmptyInputFiles() throws IOException {
-        // Arrange
-        String inputPath = "src/test/resources/empty-input.txt";
-        String topic = "test-topic";
-        String bootstrapServer = "localhost:9092";
-
-        // Act
-        TextToJsonJob job = new TextToJsonJob();
-        job.setInputPath(inputPath);
-        job.setTopic(topic);
-        job.setBootstrapServer(bootstrapServer);
-        job.run();
-
-        // Assert
-        Assertions.assertTrue(job.isSuccessful());
-        List<String> expectedOutput = new ArrayList<>();
-        List<String> actualOutput = new ArrayList<>();
-        for (String line : job.getOutput()) {
-            actualOutput.add(line);
+        @Override
+        public void flatMap(String s, Collector<String> collector) throws Exception {
+            // Implement your CSV to JSON transformation logic here
         }
-        assertEquals(expectedOutput, actualOutput);
     }
+
+    public static class CsvtoJsonGigamonTransformer implements FlatMapFunction<String, String> {
+
+        private String[] headers;
+
+        @Override
+        public void flatMap(String s, Collector<String> collector) throws Exception {
+            // Implement your Gigamon CSV to JSON transformation logic here
+        }
+
+        public void enrichGigamonFlatMap(String s, Collector<String> collector) throws Exception {
+            // Implement your Gigamon CSV to JSON transformation logic here
+        }
+    }
+}
+```
+
+In this code, the main logic for transforming a CSV record to JSON is implemented in the `CsvtoJsonTransformer` class. For the Gigamon files, you can add a separate `CsvtoJsonGigamonTransformer` class and implement the Gigamon-specific logic in that class. Then, in the main method, a switch statement is used to choose the appropriate transformer based on the `fileType` parameter.

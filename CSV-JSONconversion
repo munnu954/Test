@@ -1,123 +1,136 @@
-Sure! Here's an example of a Spring Boot code that converts a CSV file to JSON format using Apache Flink and sends the converted JSON data to Kafka. 
-
-First, create a new Spring Boot project and add the necessary dependencies to your `pom.xml` file:
-
-```xml
-<dependencies>
-    <!-- Spring Boot Starter Web -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-web</artifactId>
-    </dependency>
-
-    <!-- Apache Flink -->
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-java</artifactId>
-    </dependency>
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-streaming-java</artifactId>
-    </dependency>
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-clients_2.11</artifactId>
-    </dependency>
-
-    <!-- Apache Kafka -->
-    <dependency>
-        <groupId>org.apache.flink</groupId>
-        <artifactId>flink-connector-kafka_2.11</artifactId>
-    </dependency>
-</dependencies>
-```
-
-Next, create the following classes in your project:
-
-1. `CsvToJsonApplication.java` - Main Spring Boot application class.
+Here is the updated code for Main.java class:
 
 ```java
-@SpringBootApplication
-public class CsvToJsonApplication {
-    public static void main(String[] args) {
-        SpringApplication.run(CsvToJsonApplication.class, args);
+import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.api.java.ExecutionEnvironment;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.contrib.streaming.state.RocksDBStateBackend;
+import org.apache.flink.runtime.state.StateBackend;
+import org.apache.flink.runtime.state.memory.MemoryStateBackend;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.sink.SinkFunction;
+import org.apache.flink.streaming.connectors.kafka.KafkaSink;
+import org.apache.flink.streaming.connectors.kafka.KafkaSinkBuilder;
+import org.apache.flink.streaming.connectors.kafka.config.DeliveryGuarantee;
+import org.apache.flink.streaming.connectors.kafka.serialization.KafkaRecordSerializationSchema;
+import org.apache.flink.streaming.connectors.kafka.table.RowDataDeserializationSchema;
+import org.apache.flink.streaming.connectors.kafka.table.RowDataDeserializationSchema.MetadataConverter;
+import org.apache.flink.streaming.connectors.kafka.table.RowDataDeserializationSchema.MetadataConverterWrapper;
+import org.apache.flink.streaming.connectors.kafka.table.RowDataSerializationSchema;
+import org.apache.flink.streaming.connectors.kafka.table.RowDataSinkFunction;
+import org.apache.flink.table.api.DataTypes;
+import org.apache.flink.table.data.GenericRowData;
+import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.runtime.typeutils.RowDataTypeInfo;
+import org.apache.flink.table.types.DataType;
+import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.types.utils.TypeConversions;
+import org.apache.flink.types.Row;
+import org.apache.flink.util.Collector;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Properties;
+
+public class Main {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
+
+    public static void main(String[] args) throws Exception {
+        ParameterTool parameters = ParameterTool.fromArgs(args);
+
+        String bootstrapServer = parameters.get("bootstrapServer");
+        String topic = parameters.get("topic");
+
+        LOGGER.info("Start to read and pick the path");
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        ExecutionEnvironment bEnv = ExecutionEnvironment.getExecutionEnvironment();
+
+        String path = parameters.getRequired("input");
+        if (!new File(path).exists()) {
+            throw new FileNotFoundException("File not found!");
+        }
+
+        FileInputStream fis = new FileInputStream(path);
+        byte[] data = new byte[(int) path.length()];
+        fis.read(data);
+
+        String fileContent = new String(data, StandardCharsets.UTF_8);
+
+        DataStream<String> stream = env.fromElements(fileContent);
+
+        KafkaSink<String> sink = KafkaSink.<String>builder()
+                .setBootstrapServers(bootstrapServer)
+                .setRecordSerializer(new SimpleStringSchema())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .build();
+
+        final DataStream<String> transformedStream;
+        String fileType = parameters.get("fileType");
+
+        switch (fileType) {
+            case "Gigamon":
+                transformedStream = stream.flatMap(new CsvtoJsonGigamonTransformer());
+                break;
+            default:
+                transformedStream = stream.flatMap(new CsvtoJsonTransformer());
+                break;
+        }
+
+        transformedStream.sinkTo(sink);
+        env.execute();
     }
-}
-```
 
-2. `CsvToJsonController.java` - REST controller class that handles the conversion request.
+    public static class CsvtoJsonTransformer implements FlatMapFunction<String, String> {
 
-```java
-@RestController
-public class CsvToJsonController {
-
-    private final CsvToJsonService csvToJsonService;
-
-    public CsvToJsonController(CsvToJsonService csvToJsonService) {
-        this.csvToJsonService = csvToJsonService;
-    }
-
-    @PostMapping("/convert")
-    public void convertCsvToJson(@RequestParam("file") MultipartFile file) throws IOException {
-        csvToJsonService.convertCsvToJson(file);
-    }
-}
-```
-
-3. `CsvToJsonService.java` - Service class that contains the conversion logic using Apache Flink.
-
-```java
-@Service
-public class CsvToJsonService {
-
-    private final static String kafkaTopic = "converted-json";
-
-    public void convertCsvToJson(MultipartFile file) throws IOException, InterruptedException {
-        String brokers = "localhost:9092";
-        
-        // Create the Kafka producer properties
-        Properties properties = new Properties();
-        properties.setProperty("bootstrap.servers", brokers);
-        properties.setProperty("group.id", "csv-to-json-converter");
-
-        // Create the Flink Streaming environment
-        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(1);
-
-        // Read the CSV file
-        DataStream<String> csvData = env.readTextFile(file.getOriginalFilename());
-
-        // Convert the CSV data to JSON format
-        DataStream<String> jsonData = csvData.map(new CsvToJsonMapper());
-
-        // Send the converted JSON data to Kafka
-        FlinkKafkaProducer<String> kafkaProducer = new FlinkKafkaProducer<>(brokers, kafkaTopic, new SimpleStringSchema());
-        jsonData.addSink(kafkaProducer);
-
-        // Execute the Flink job
-        env.execute("CSV to JSON Conversion");
-    }
-
-    public static class CsvToJsonMapper implements MapFunction<String, String> {
         @Override
-        public String map(String csvRecord) throws Exception {
-            // Split the CSV record based on delimiters
-            String[] fields = csvRecord.split(",");
+        public void flatMap(String s, Collector<String> collector) throws Exception {
+            // Implement your CSV to JSON transformation logic here
+        }
+    }
 
-            // Create a JSON object from the CSV fields
-            JSONObject jsonObject = new JSONObject();
-            jsonObject.put("field1", fields[0]);
-            jsonObject.put("field2", fields[1]);
-            jsonObject.put("field3", fields[2]);
+    public static class CsvtoJsonGigamonTransformer implements FlatMapFunction<String, String> {
 
-            return jsonObject.toString();
+        @Override
+        public void flatMap(String s, Collector<String> collector) throws Exception {
+            // Implement your Gigamon CSV to JSON transformation logic here
         }
     }
 }
 ```
 
-In this example, the `CsvToJsonController` class handles the HTTP POST request to convert the CSV file. The uploaded file is passed to the `convertCsvToJson` method in the `CsvToJsonService` class, where the conversion from CSV to JSON using Apache Flink and sending the converted JSON data to Kafka happens.
+And here is the updated code for CsvtoJsonTransformer.java class:
 
-Make sure to have Apache Flink and Apache Kafka running on your system and configure the Kafka broker and topic as per your requirements.
+```java
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.util.Collector;
 
-Note: This example assumes you have a running Kafka broker on `localhost:9092`. You may need to adjust the configuration based on your Kafka setup. Also, don't forget to handle exceptions and customize the code according to your specific requirements.
+public class CsvtoJsonTransformer implements FlatMapFunction<String, String> {
+
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        // Implement your CSV to JSON transformation logic here
+    }
+}
+
+public class CsvtoJsonGigamonTransformer implements FlatMapFunction<String, String> {
+
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        // Implement your Gigamon CSV to JSON transformation logic here
+    }
+}
+```
+
+Please note that the code provided is a template and you will need to fill in the transformation logic according to your requirements in the `flatMap` method of the respective classes.

@@ -1,70 +1,76 @@
-To add the "enrichGigamonFlatMap" functionality to the Main.java class using a switch case, you can modify the CsvtoJsonTransformer class as follows:
+Main.java class:-
 
-CsvtoJsonTransformer.java:-
+public class Main {
 
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
-import org.json.JSONObject;
+    private static String bootstarpServer;
+    private static String topic;
+    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
 
-public class CsvtoJsonTransformer implements FlatMapFunction<String, String> {
-    private String[] headers;
-    private String fileType;
+    public static void main(String[] args) throws Exception {
+        ParameterTool parameters = ParameterTool.fromArgs(args);
 
-    public CsvtoJsonTransformer(String fileType) {
-        this.fileType = fileType;
-    }
+        bootstarpServer = parameters.get("bootstarpServer");
+        topic = parameters.get("Topic");
 
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] arr = s.split(",");
-        JSONObject obj = new JSONObject();
-        int i = 1;
-        String jsonkey;
-        for (String input : arr) {
-            jsonkey = "key" + i;
-            obj.put(jsonkey, input);
-            i++;
-        }
-        collector.collect(obj.toString());
-    }
+        LOGGER.info("Start to read and pick the path");
 
-    public void enrichGigamonFlatMap(String s, Collector<String> collector) throws Exception {
-        String[] arr = s.split(",");
-        if (headers == null) {
-            headers = arr; // Store the header row for key names
-            return; // Skip processing the header row
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        String path = parameters.getRequired("input");
+        if (!new File(path).exists()) {
+            throw new FileNotFoundException("File not found!");
         }
 
-        JSONObject obj = new JSONObject();
-        for (int i = 0; i < arr.length; i++) {
-            String jsonkey = headers[i].trim();
-            String jsonValue = arr[i].trim().replace("\"", ""); // Remove any quotes around the value
-            obj.put(jsonkey, jsonValue);
-        }
-        collector.collect(obj.toString());
-    }
+        String fileType = parameters.get("fileType");
 
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String fileContent = readFile(path);
+
+        KafkaSink<String> sink = KafkaSink.<String>builder()
+                .setBootstrapServers(bootstarpServer)
+                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                        .setTopic(topic)
+                        .setValueSerializationSchema(new SimpleStringSchema())
+                        .build())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .build();
+
+        final DataStream<String> transformedStream;
         switch (fileType) {
             case "Gigamon":
-                enrichGigamonFlatMap(s, collector);
+                transformedStream = env.fromCollection(Collections.singletonList(fileContent)).flatMap(new CsvtoJsonGigamonTransformer());
                 break;
             default:
-                flatMap(s, collector);
+                transformedStream = env.fromCollection(Collections.singletonList(fileContent)).flatMap(new CsvtoJsonTransformer());
                 break;
         }
+
+        transformedStream.sinkTo(sink);
+        env.execute();
+    }
+
+    private static String readFile(String path) throws IOException {
+        return new String(Files.readAllBytes(Paths.get(path)));
     }
 }
 
-Now, in the Main.java class, you can create an instance of the CsvtoJsonTransformer class and specify the file type as "Gigamon" when calling the flatMap method:
 
-Main.java:-
+CsvtoJsonTransformer.java:-
 
-...
+public class CsvtoJsonTransformer implements FlatMapFunction<String, String> {
 
-final DataStream<String> jsonStream = stream.flatMap(new CsvtoJsonTransformer("Gigamon"));
-jsonStream.sinkTo(sink);
-env.execute();
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        // Implement your CSV to JSON transformation logic here
+    }
+}
 
-By specifying the file type as "Gigamon", it will use the enrichGigamonFlatMap method in the CsvtoJsonTransformer class to transform the CSV data to JSON format for Gigamon files. For other file types, it will use the regular flatMap method.
+public class CsvtoJsonGigamonTransformer implements FlatMapFunction<String, String> {
+
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        // Implement your Gigamon CSV to JSON transformation logic here
+    }
+}
+
+
+In the updated Main.java class, the readFile method reads the entire CSV file content in one go and then processes it using a single flatMap operation. The CsvtoJsonTransformer and CsvtoJsonGigamonTransformer classes remain unchanged.

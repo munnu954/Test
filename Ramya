@@ -1,0 +1,113 @@
+Here is the updated code for Main.java:
+
+```java
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+
+public class Main {
+
+    private static String bootstarpServer;
+    private static String topic;
+    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
+
+    public static void main(String[] args) throws Exception {
+        ParameterTool parameters = ParameterTool.fromArgs(args);
+
+        bootstarpServer = parameters.get("bootstarpServer");
+        topic = parameters.get("Topic");
+
+        LOGGER.info("Start to read and pick the path");
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        String path = parameters.getRequired("input");
+        if (!new File(path).exists()) {
+            throw new FileNotFoundException("File not found!");
+        }
+        
+        final DataStream<String> stream = env.fromElements(readCSVFile(path));
+
+        KafkaSink<String> sink = KafkaSink.<String>builder()
+                .setBootstrapServers(bootstarpServer)
+                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                        .setTopic(topic)
+                        .setValueSerializationSchema(new SimpleStringSchema())
+                        .build())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .build();
+
+        final DataStream<String> jsonStream;
+        String fileType = parameters.get("fileType");
+
+        switch (fileType) {
+            case "Gigamon":
+                jsonStream = stream.flatMap(new CsvtoJsonGigamonTransformer());
+                break;
+            case "Tones":
+                jsonStream = stream.flatMap(new CsvtoJsonTonesTransformer());
+                break;
+            default:
+                jsonStream = stream.flatMap(new CsvtoJsonTransformer());
+                break;
+        }
+
+        jsonStream.sinkTo(sink);
+        env.execute();
+    }
+
+    public static String readCSVFile(String filePath) {
+        StringBuilder content = new StringBuilder();
+        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                content.append(line);
+                content.append(System.lineSeparator());
+            }
+        } catch (Exception e) {
+            LOGGER.error("Error in readCSVFile: ", e);
+        }
+        return content.toString();
+    }
+}
+```
+
+And here is the updated code for CsvtoJsonConversion.java for the Tones file:
+
+```java
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
+
+public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
+
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
+
+        JSONObject obj = new JSONObject();
+        for (String line : lines) {
+            String[] arr = line.split(",");
+            if (arr.length >= 2) {
+                String jsonKey = arr[0].trim();
+                String jsonValue = arr[1].trim();
+                obj.put(jsonKey, jsonValue);
+            }
+        }
+
+        collector.collect(obj.toString());
+    }
+}
+```
+
+Please note that the provided JSON format for the Tones file is invalid and missing several commas. I have made some assumptions to fix the format in the `flatMap()` method of the `CsvtoJsonConversion` class. Feel free to modify it according to your requirements.

@@ -1,24 +1,226 @@
-To configure H2-db in the application.yml file, you can add the following configuration:
+SpaceCollector.java (updated):
 
-```yaml
-spring:
-  datasource:
-    url: jdbc:h2:mem:testdb
-    driver-class-name: org.h2.Driver
-    username: sa
-    password: 
-  h2:
-    console:
-      enabled: true
-```
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@ToString
+public class SpaceCollector {
+    private Integer id;
+    private String url;
+    
+    @Max(value = 9999, message = "Only 4 digit port number allowed")
+    private Integer port;
+    
+    private String inputFilePath;
+    private String outputFilePath;
+    private String delimiters;
+    private String fileType;
 
-This configuration sets up the H2 database with an in-memory database named "testdb" and enables the H2 console.
+    public String toProgramArgs() {
+        // Convert the values to program args format
+        // Implement your logic here
+        return "";
+    }
+}
 
-By default, the H2 console starts on port 8082. However, you can change the port by adding the following configuration to the application.yml file:
+JsonUtils.java (updated):
 
-```yaml
-server:
-  port: 8082
-```
+public class JsonUtils {
+    private static final ObjectMapper mapper = new ObjectMapper();
 
-In this example, the H2 console will start on port 8082 instead of the default port 8082.
+    public static String convertSpaceCollectorToJson(SpaceCollector sp) throws JsonProcessingException {
+        return mapper.writeValueAsString(sp);
+    }
+
+    public static SpaceCollector convertJsonToSpaceCollector(String data) throws JsonProcessingException {
+        return mapper.readValue(data, SpaceCollector.class);
+    }
+}
+
+KafkaProducer.java (updated):
+
+@Service
+public class KafkaProducer {
+
+    @Value("${spring.kafka.producer.topic-name}")
+    private String topicName;
+
+    private static final Logger Logger = LoggerFactory.getLogger(KafkaProducer.class);
+
+    private final KafkaTemplate<String, String> kafkaTemplate;
+
+    @Autowired
+    public KafkaProducer(KafkaTemplate<String, String> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate;
+    }
+
+    public String sendMessage(SpaceCollector message) {
+        try {
+            String jsonMessage = JsonUtils.convertSpaceCollectorToJson(message);
+            Logger.info(String.format("Message sent %s", jsonMessage));
+            kafkaTemplate.send(topicName, jsonMessage);
+            return "Message sent successfully";
+        } catch (JsonProcessingException e) {
+            Logger.error("Error converting message to JSON", e);
+            return "Failed to send message";
+        }
+    }
+}
+
+KafkaController.java (updated):
+
+@RestController
+public class KafkaController {
+    @Autowired
+    private KafkaProducer kafkaProducer;
+
+    @PostMapping("/kafkaPush")
+    public ResponseEntity<Boolean> sendMessage(@RequestBody SpaceCollector message) {
+        String result = kafkaProducer.sendMessage(message);
+        if (result.equals("Message sent successfully")) {
+            return ResponseEntity.ok(true);
+        } else {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(false);
+        }
+    }
+}
+
+FlinkApiController.java (updated):
+
+@Service
+public class FlinkApiController {
+
+    @Value("${flink.api.url}")
+    private String flinkApiUrl;
+
+    @Value("${flink.job.csv.jarid}")
+    private String flinkJobJarid;
+
+    @Value("${flink.job.csv.program-args)")
+    private String programArgs;
+
+    @Value("${flink.job.txt.jarid}")
+    private String flinkJobtxtJarid;
+
+    @Value("${flink.job.xml.program-args)")
+    private String programXmlArgs;
+
+    @Value("${flink.job.xml.jarid}")
+    private String flinkJobXmlJarid;
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(FlinkApiController.class);
+
+    public String triggerJob(SpaceCollector collector) {
+        RestTemplate restTemplate = new RestTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        String jobSubmitUrl = null;
+        
+        if (collector.getFileType().equalsIgnoreCase(".csv")) {
+            LOGGER.info("Triggering CSV job");
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            JSONObject requestBody = new JSONObject();
+            requestBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+            jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
+
+            HttpEntity<String> request = new HttpEntity<>(requestBody.toString(), headers);
+            
+            try {
+                ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
+                if (response.getStatusCode() != HttpStatus.OK) {
+                    throw new RuntimeException("Failed to submit job to Flink cluster");
+                }
+                return "Job triggered: " + response.getBody();
+            } catch (ResourceAccessException e) {
+                throw new RuntimeException("Failed to connect to Flink cluster");
+            }
+        } else if (collector.getFileType().equalsIgnoreCase(".xml")) {
+            LOGGER.info("Triggering XML job");
+            // Implement XML job triggering logic here
+            return "XML job triggered";
+        } else if (collector.getFileType().equalsIgnoreCase(".txt")) {
+            LOGGER.info("Triggering TXT job");
+            // Implement TXT job triggering logic here
+            return "TXT job triggered";
+        } else {
+            return "Invalid file type";
+        }
+    }
+}
+
+KafkaConsumer.java (updated):
+
+@Service
+public class KafkaConsumer {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
+
+    @Value("${file.txtsource}") 
+    private String sourceFilePath;
+
+    @Value("${file.destination}") 
+    private String destinationFolderPath;
+
+    @Autowired
+    FlinkApiController flinkApi;
+
+    @Autowired
+    KafkaProducer kafkaProducer;
+
+    @KafkaListener(topics = "${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}")
+    public void consume(String jsonMessage) {
+        try {
+            SpaceCollector message = JsonUtils.convertJsonToSpaceCollector(jsonMessage);
+            LOGGER.info(String.format("Message received -> %s", message));
+            
+            if (!validateFile(message.getInputFilePath())) {
+                kafkaProducer.sendErrorMessage("File does not exist");
+                return;
+            }
+            
+            writeFile(message.getInputFilePath(), destinationFolderPath);
+            String fileType = getExtension(message.getInputFilePath());
+            String response = flinkApi.triggerJob(message);
+            
+            if (response.startsWith("Failed")) {
+                String failureMessage = createFailureMessage(message, fileType, response);
+                kafkaProducer.sendMessage(failureMessage);
+                LOGGER.info("Failure message published to audit queue");
+            }
+        } catch (JsonProcessingException e) {
+            LOGGER.error("Error converting message from JSON", e);
+            kafkaProducer.sendErrorMessage("Failed to process message");
+        }
+    }
+    
+    private String createFailureMessage(SpaceCollector message, String fileType, String errorMessage) {
+        JSONObject failureMessage = new JSONObject();
+        failureMessage.put("file_name", message.getInputFilePath());
+        // Add other fields to the failure message JSON
+        
+        JSONArray exceptions = new JSONArray();
+        exceptions.put(errorMessage);
+        failureMessage.put("exceptions", exceptions);
+        
+        return failureMessage.toString();
+    }
+
+    public void writeFile(String sourceFilePath, String destinationFolderPath) throws IOException {
+        Path sourcePath = Paths.get(sourceFilePath);
+        Path destinationPath = Paths.get(destinationFolderPath, sourcePath.getFileName().toString());
+        Files.copy(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    public boolean validateFile(String sourceFilePath) {
+        File file = new File(sourceFilePath);
+        return file.exists();
+    }
+
+    public String getExtension(String sourceFilePath) {
+        String extension = null;
+        if (sourceFilePath.contains(".")) {
+            extension = sourceFilePath.substring(sourceFilePath.lastIndexOf("."));
+        }
+        return extension;
+    }
+}

@@ -1,27 +1,35 @@
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
-import org.json.JSONObject;
+private String createJson(String mainHeader, CSVRecord csvRecord) {
+    JSONObject jsonObject = new JSONObject();
 
-public class CsvtoJsonController implements FlatMapFunction<String, String> {
-    private String[] headers;
+    // Split main header to handle the main object name
+    String[] mainHeaderParts = mainHeader.split(":");
+    jsonObject.put(mainHeaderParts[0].trim(), mainHeaderParts[1].trim());
 
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] lines = s.split(System.lineSeparator());
-        for (String str : lines) {
-            String[] arr = str.split(",");
-            if (headers == null) {
-                headers = arr;
-                continue; // Skip processing the header row
+    // Assuming headers are comma-separated sub-headers
+    String[] subHeaders = mainHeaderParts[1].split(",");
+    int columnCount = csvRecord.size();
+
+    // Iterate over the sub-headers and columns
+    for (int i = 0; i < subHeaders.length && i < columnCount; i++) {
+        String subHeader = subHeaders[i].trim();
+        String columnValue = csvRecord.get(i).trim();
+
+        // Handle the special case where subHeader is a key with nested values
+        if (subHeader.equals("Max concurrent calls") || subHeader.equals("Incoming attempt")) {
+            JSONObject subJsonObject = new JSONObject();
+            String[] values = columnValue.split(",");
+            for (int j = 0; j < values.length; j++) {
+                String[] keyValue = values[j].split(":");
+                String nestedKey = keyValue[0].trim();
+                String nestedValue = keyValue[1].trim();
+                subJsonObject.put(nestedKey, nestedValue);
             }
-
-            JSONObject obj = new JSONObject();
-            for (int i = 0; i < arr.length; i++) {
-                String jsonKey = headers[i].trim();
-                String jsonValue = arr[i].trim().replace("\"", ""); // Remove any quotes around the value
-                obj.put(jsonKey, jsonValue);
-            }
-            collector.collect(obj.toString());
+            jsonObject.put(subHeader, subJsonObject);
+        } else {
+            // For regular headers, add key-value pairs directly
+            jsonObject.put(subHeader, columnValue);
         }
     }
+
+    return jsonObject.toString();
 }

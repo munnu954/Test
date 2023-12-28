@@ -1,44 +1,48 @@
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
+import java.util.HashMap;
+import java.util.Map;
+
 public static class CsvtoJsonTonesTransformer implements FlatMapFunction<String, String> {
+    private Map<String, String> headersMap = new HashMap<>();
+
     @Override
     public void flatMap(String s, Collector<String> collector) throws Exception {
-        // Assuming s represents a line from the CSV file
-        String[] headers = null;
         String[] values = s.split(",");  // Assuming the CSV is comma-separated
 
-        if (headers == null) {
-            headers = values;  // Store the header row for key names
-            
-            // Skip processing the header row
-            return;
-        }
-
-        JSONObject jsonObject = new JSONObject();
-        for (int i = 0; i < headers.length; i++) {
-            String fieldName = headers[i].trim().replace("\"", "");  // Assuming the headers are wrapped in quotes
-            if (i > 0) {  // Exclude the first header (ObjectName)
-                String[] nestedKeys = fieldName.split("\\.");  // Assuming nested fields are separated by dots
-
-                // Building the nested JSON structure dynamically
-                JSONObject currentContext = jsonObject;
-                
-                for (int j = 0; j < nestedKeys.length - 1; j++) {
-                    if (!currentContext.has(nestedKeys[j])) {
-                        currentContext.put(nestedKeys[j], new JSONObject());
-                    }
-                    currentContext = currentContext.getJSONObject(nestedKeys[j]);
-                }
-                currentContext.put(nestedKeys[nestedKeys.length - 1], values[i].trim().replace("\"", ""));  // Assuming the values are wrapped in quotes
-            } else {
-                // Assuming the top-level header contains the ObjectName
-                jsonObject.put("ObjectName", fieldName);
+        if(headersMap.isEmpty()){
+            for(int i=0; i<values.length; i++){
+                headersMap.put(String.valueOf(i),values[i].trim().replace("\"",""));
             }
+        }else{
+            JSONObject jsonObject = new JSONObject();
+            for(int i=0; i<values.length; i++){
+                String header = headersMap.get(String.valueOf(i));
+                String[] nestedKeys = header.split("\\.");  // Assuming nested fields are separated by dots
+                addNestedJSONValue(jsonObject, nestedKeys, values[i].trim().replace("\"",""));
+                if(i == 0){
+                    jsonObject.put("ObjectName", nestedKeys[0]);
+                }
+            }
+            collector.collect(jsonObject.toString());
         }
-
-        // Emit the JSON string representing the transformed object
-        collector.collect(jsonObject.toString());
     }
-}
 
+    private void addNestedJSONValue(JSONObject obj, String[] keys, String value) {
+        int currentKeyIndex = 0;
+        while(currentKeyIndex < keys.length - 1){
+            String key = keys[currentKeyIndex];
+            if (!obj.has(key)) {
+                obj.put(key, new JSONObject());
+            }
+            obj = obj.getJSONObject(key);
+            currentKeyIndex++;
+        }
+        obj.put(keys[keys.length - 1], value);
+    }
+
+}
 
 
 

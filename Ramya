@@ -1,41 +1,51 @@
 import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.types.Row;
 import org.apache.flink.util.Collector;
-import org.json.JSONObject;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
-public class CsvToJsonTransformer implements FlatMapFunction<Row, String> {
-    
+public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
+
     @Override
-    public void flatMap(Row row, Collector<String> collector) {
-        JSONObject jsonObject = new JSONObject();
+    public void flatMap(String input, Collector<String> collector) throws Exception {
+        String[] lines = input.split(System.lineSeparator());
+        String[] headers = lines[0].split(",");
 
-        // Assuming headers are known, modify accordingly
-        String[] headers = {"ObjectName", "Begin date", "End date", "Ticket number", "Max concurrent calls", "Incoming attempt", /* Add other headers here */};
+        for (int row = 1; row < lines.length; row++) {
+            String[] values = lines[row].split(",");
+            JsonNode jsonNode = convertToJson(headers, values);
+            collector.collect(jsonNode.toString());
+        }
+    }
 
-        for (int i = 0; i < headers.length && i < row.getArity(); i++) {
-            String header = headers[i].trim();
-            String columnValue = row.getField(i).toString().trim();
+    public static JsonNode convertToJson(String[] headers, String[] values) {
+        ObjectNode result = JsonNodeFactory.instance.objectNode();
+        String objectName = values[2].trim(); // Assuming the object name is in column C
 
-            // Handle special cases with nested values
-            if (header.equals("Max concurrent calls") || header.equals("Incoming attempt")) {
-                JSONObject subJsonObject = new JSONObject();
-                String[] values = columnValue.split(",");
-                for (String value : values) {
-                    String[] keyValue = value.split(":");
-                    String nestedKey = keyValue[0].trim();
-                    String nestedValue = keyValue[1].trim();
-                    subJsonObject.put(nestedKey, nestedValue);
+        for (int i = 3; i < headers.length; i++) {
+            String key = headers[i].trim();
+            String value = values[i].trim();
+
+            // Check if the value is a nested object
+            if (value.startsWith("{") && value.endsWith("}")) {
+                try {
+                    ObjectNode nestedObject = (ObjectNode) new ObjectMapper().readTree(value);
+                    result.set(key, nestedObject);
+                } catch (IOException e) {
+                    e.printStackTrace(); // Handle the exception as needed
                 }
-                jsonObject.put(header, subJsonObject);
             } else {
-                // For regular headers, add key-value pairs directly
-                jsonObject.put(header, columnValue);
+                result.put(key, value);
             }
         }
 
-        collector.collect(jsonObject.toString());
+        // Add the object name
+        result.put("ObjectName", objectName);
+
+        return result;
     }
 }
+
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.util.Collector;
 import org.json.JSONObject;

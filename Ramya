@@ -1,72 +1,12 @@
-public class CsvtoJsonTonesTransformer implements FlatMapFunction<String, String> {
-
-    private List<String> headers;
-    private int currentIndex;
-
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] lines = s.split(System.lineSeparator());
-
-        for (String str : lines) {
-            String[] arr = str.split(",");
-
-            // Check for the header row
-            if (headers == null) {
-                headers = Arrays.asList(arr);
-                currentIndex = 0;
-                continue;
-            }
-
-            JsonObject obj = new JsonObject();
-            currentIndex = 0;
-
-            convertToJsonObject(arr, obj);
-
-            collector.collect(obj.toString());
-        }
-    }
-
-    private void convertToJsonObject(String[] values, JsonObject obj) {
-        if (currentIndex >= headers.size() || currentIndex >= values.length) {
-            return;
-        }
-
-        String header = headers.get(currentIndex).trim();
-        String value = values[currentIndex].trim().replace("\"", "");
-
-        // Handle nested structures
-        if (header.equals("Max concurrent calls") || header.equals("Incoming attempt")) {
-            JsonObject subJsonObject = new JsonObject();
-            String[] subValues = value.split(",");
-            currentIndex++;
-
-            for (String subValue : subValues) {
-                String[] keyValue = subValue.split(":");
-                String nestedKey = keyValue[0].trim();
-                String nestedValue = keyValue[1].trim();
-                subJsonObject.addProperty(nestedKey, nestedValue);
-            }
-
-            obj.add(header, subJsonObject);
-        } else {
-            obj.addProperty(header, value);
-            currentIndex++;
-        }
-
-        // Recursively process the rest of the headers and values
-        convertToJsonObject(values, obj);
-    }
-}
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.util.Collector;
 import org.json.JSONObject;
 
-public class CsvtoJsonTonesTransformer implements FlatMapFunction<String, String> {
-    private String[] headers;
-
+public static class CsvtoJsonTonesTransformer implements FlatMapFunction<String, String> {
     @Override
     public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] values = s.split(",");
+        String[] headers = null;
+        String[] values = s.split(",");  // Assuming the CSV is comma-separated
 
         if (headers == null) {
             headers = values;  // Store the header row for key names
@@ -74,11 +14,12 @@ public class CsvtoJsonTonesTransformer implements FlatMapFunction<String, String
         }
 
         JSONObject jsonObject = new JSONObject();
-        for (int i = 0; i < values.length; i++) {
-            String fieldName = headers[i].trim().replace("\"", "");
+        for (int i = 0; i < headers.length; i++) {
+            String fieldName = headers[i].trim().replace("\"", "");  // Assuming the headers are wrapped in quotes
 
-            String[] nestedKeys = fieldName.split("\\.");
+            String[] nestedKeys = fieldName.split("\\.");  // Assuming nested fields are separated by dots
 
+            // Building the nested JSON structure dynamically
             JSONObject currentContext = jsonObject;
             for (int j = 0; j < nestedKeys.length - 1; j++) {
                 if (!currentContext.has(nestedKeys[j])) {
@@ -86,22 +27,20 @@ public class CsvtoJsonTonesTransformer implements FlatMapFunction<String, String
                 }
                 currentContext = currentContext.getJSONObject(nestedKeys[j]);
             }
-            currentContext.put(nestedKeys[nestedKeys.length - 1], values[i].trim().replace("\"", ""));
+            if (i < values.length) {  // Check if i is within bounds
+                currentContext.put(nestedKeys[nestedKeys.length - 1], values[i].trim().replace("\"", ""));  // Assuming the values are wrapped in quotes
+            }
 
+            // Assuming the top-level header contains the ObjectName
             if (i == 0) {
                 jsonObject.put("ObjectName", fieldName);
             }
         }
 
+        // Emit the JSON string representing the transformed object
         collector.collect(jsonObject.toString());
     }
 }
-
-
-
-
-
-
 
 
 

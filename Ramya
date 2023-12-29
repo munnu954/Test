@@ -1,53 +1,76 @@
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.util.Collector;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonArray;
 
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
+
+    private String currentObjectName;
+    private JsonObject jsonObject;
+    private JsonObject currentSection;
+    private JsonArray currentArray;
 
     @Override
     public void flatMap(String input, Collector<String> collector) throws Exception {
         String[] arr = input.split(",");
 
-        // Check if the row contains an object name in the third column
-        if (!arr[2].trim().isEmpty()) {
-            // Handle the beginning of a new object
-            JsonObject jsonObject = new JsonObject();
-            jsonObject.addProperty("ObjectName", arr[2].trim());
-
-            // Handle Begin date, End date, and Ticket number
-            jsonObject.addProperty("Begin date", arr[0].trim() + " " + arr[1].trim());
-            jsonObject.addProperty("End date", arr[3].trim() + " " + arr[4].trim());
-            jsonObject.addProperty("Ticket number", arr[5].trim());
-
-            // Create a sub-object for Max concurrent calls
-            JsonObject maxConcurrentCalls = new JsonObject();
-            maxConcurrentCalls.addProperty("Min", arr[6].trim());
-            maxConcurrentCalls.addProperty("Average", arr[7].trim());
-            maxConcurrentCalls.addProperty("Max", arr[8].trim());
-            maxConcurrentCalls.addProperty("Cumulative counter value", arr[9].trim());
-
-            // Add Max concurrent calls to the main object
-            jsonObject.add("Max concurrent calls", maxConcurrentCalls);
-
-            // Iterate over the rest of the headers to create sub-objects
-            int index = 10; // Starting index for headers related to calls (e.g., Incoming attempt, ...)
-            while (index < arr.length) {
-                // Create a sub-object for the current header
-                JsonObject subObject = new JsonObject();
-                subObject.addProperty("Min", arr[index].trim());
-                subObject.addProperty("Average", arr[index + 1].trim());
-                subObject.addProperty("Max", arr[index + 2].trim());
-                subObject.addProperty("Cumulative counter value", arr[index + 3].trim());
-
-                // Add the sub-object to the main object
-                jsonObject.add(arr[index - 1].trim(), subObject);
-
-                // Move to the next set of headers
-                index += 4;
-            }
-
-            // Collect the JSON representation of the object
-            collector.collect(jsonObject.toString());
+        if (arr.length > 2 && arr[2] != null && !arr[2].isEmpty()) {
+            // New Object Name
+            handleNewObject(arr);
+        } else if (arr.length > 6 && arr[3] != null && !arr[3].isEmpty()) {
+            // Min, Average, Max, CumulativeCounterValue section
+            handleMinMaxSection(arr);
+        } else if (arr.length > 1 && arr[0] != null && !arr[0].isEmpty()) {
+            // Caller Data section
+            handleCallerData(arr);
         }
+
+        collector.collect(jsonObject.toString());
+    }
+
+    private void handleNewObject(String[] arr) {
+        if (jsonObject != null) {
+            // Save the completed object
+            jsonObject.addProperty("ObjectName", currentObjectName);
+            currentObjectName = null;
+        }
+
+        // Start a new JSON object
+        currentObjectName = arr[2].trim();
+        jsonObject = new JsonObject();
+        currentArray = new JsonArray();
+        jsonObject.add("data", currentArray);
+    }
+
+    private void handleMinMaxSection(String[] arr) {
+        if (currentSection != null) {
+            // Save the completed Min, Average, Max, CumulativeCounterValue section
+            currentArray.add(currentSection);
+        }
+
+        // Start a new section
+        currentSection = new JsonObject();
+        currentSection.addProperty("Min", arr[3].trim());
+        currentSection.addProperty("Average", arr[4].trim());
+        currentSection.addProperty("Max", arr[5].trim());
+        currentSection.addProperty("CumulativeCounterValue", arr[6].trim());
+    }
+
+    private void handleCallerData(String[] arr) {
+        if (currentSection != null) {
+            // Save the last Min, Average, Max, CumulativeCounterValue section
+            currentArray.add(currentSection);
+            currentSection = null;
+        }
+
+        // Start a new section for Caller Data
+        JsonObject callerData = new JsonObject();
+        callerData.addProperty(arr[0].trim(), arr[1].trim());
+        callerData.addProperty("Min", arr[2].trim());
+        callerData.addProperty("Average", arr[3].trim());
+        callerData.addProperty("Max", arr[4].trim());
+        callerData.addProperty("CumulativeCounterValue", arr[5].trim());
+
+        currentArray.add(callerData);
     }
 }

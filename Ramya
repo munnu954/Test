@@ -5,6 +5,7 @@ import org.json.JSONObject;
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
     private JSONObject currentObject;
+    private String currentObjectName;
     private Collector<String> collector;
 
     @Override
@@ -14,27 +15,55 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
         if (arr.length > 2 && arr[2] != null && !arr[2].isEmpty()) {
             // New main object
-            if (currentObject != null) {
-                // Save the completed object
-                collector.collect(currentObject.toString());
-            }
-            currentObject = new JSONObject();
-            currentObject.put("ObjectName", arr[2].trim());
-        } else if (currentObject != null) {
+            handleNewObject(arr);
+        } else if (currentObjectName != null) {
             processObjectDetails(arr);
         }
+    }
+
+    private void handleNewObject(String[] arr) {
+        if (currentObject != null) {
+            // Save the completed object
+            collector.collect(currentObject.toString());
+        }
+
+        // Start a new JSON object
+        currentObjectName = arr[2].trim();
+        currentObject = new JSONObject();
+        currentObject.put("ObjectName", currentObjectName);
     }
 
     private void processObjectDetails(String[] arr) {
         // Dynamic handling of columns and values
         for (int i = 0; i < arr.length; i++) {
-            if (i % 2 == 0 && i + 1 < arr.length && arr[i] != null && arr[i + 1] != null && !arr[i].isEmpty()) {
-                // Even index contains column names, odd index contains values
+            if (i + 1 < arr.length && arr[i] != null && arr[i + 1] != null && !arr[i].isEmpty()) {
+                // Odd index contains column names, even index contains values
                 String columnName = arr[i].trim();
                 String value = arr[i + 1].trim();
-                currentObject.put(columnName, value);
+                if (columnName.equalsIgnoreCase("Begin date") ||
+                        columnName.equalsIgnoreCase("End date") ||
+                        columnName.equalsIgnoreCase("Ticket number")) {
+                    // Handle special cases for Begin date, End date, Ticket number
+                    currentObject.put(columnName, value);
+                } else {
+                    // Handle sub-objects dynamically
+                    handleSubObject(columnName, value);
+                }
             }
         }
+    }
+
+    private void handleSubObject(String columnName, String value) {
+        // Assuming sub-objects are separated by spaces
+        String[] subObjectKeys = columnName.split("\\s+");
+        JSONObject subObject = currentObject;
+        for (String key : subObjectKeys) {
+            if (!subObject.has(key)) {
+                subObject.put(key, new JSONObject());
+            }
+            subObject = subObject.getJSONObject(key);
+        }
+        subObject.put("Min", value);
     }
 
     @Override

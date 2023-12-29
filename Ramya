@@ -1,48 +1,66 @@
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.util.Collector;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonArray;
+import org.json.JSONObject;
 
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
-    private JsonObject currentObject;
     private String currentObjectName;
-    private Collector<String> collector;
+    private JSONObject jsonObject;
 
     @Override
-    public void flatMap(String input, Collector<String> collector) {
-        this.collector = collector;
-        String[] columns = input.split("\\s+");
+    public void flatMap(String input, Collector<String> collector) throws Exception {
+        String[] arr = input.split(",");
 
-        if (columns.length > 1 && !columns[1].isEmpty()) {
-            // New object found
-            collectCurrentObject();
-            currentObjectName = columns[1];
-            currentObject = new JsonObject();
-            currentObject.addProperty("ObjectName", currentObjectName);
-        } else if (columns.length > 2 && !columns[2].isEmpty()) {
-            // Metrics row found
-            JsonObject metricsObject = new JsonObject();
-            metricsObject.addProperty("Min", columns[3]);
-            metricsObject.addProperty("Average", columns[4]);
-            metricsObject.addProperty("Max", columns[5]);
-            metricsObject.addProperty("CumulativeCounterValue", columns[6]);
-
-            String metricName = columns[2].replaceAll("\\s+", "");
-            currentObject.add(metricName, metricsObject);
+        if (arr.length > 2 && arr[2] != null && !arr[2].isEmpty()) {
+            // New Object Name
+            handleNewObject(arr);
+        } else if (arr.length > 6 && arr[3] != null && !arr[3].isEmpty()) {
+            // Min, Average, Max, CumulativeCounterValue section
+            handleMinMaxSection(arr);
+        } else if (arr.length > 1 && arr[0] != null && !arr[0].isEmpty()) {
+            // Caller Data section
+            handleCallerData(arr);
         }
+
+        collector.collect(jsonObject.toString());
     }
 
-    @Override
-    public void close() {
-        collectCurrentObject();
+    private void handleNewObject(String[] arr) {
+        if (jsonObject != null) {
+            // Save the completed object
+            collector.collect(jsonObject.toString());
+        }
+
+        // Start a new JSON object
+        currentObjectName = arr[2].trim();
+        jsonObject = new JSONObject();
+        jsonObject.put("ObjectName", currentObjectName);
     }
 
-    private void collectCurrentObject() {
-        if (currentObject != null) {
-            collector.collect(currentObject.toString());
-            currentObject = null;
+    private void handleMinMaxSection(String[] arr) {
+        // Min, Average, Max, CumulativeCounterValue section
+        jsonObject.put(arr[0].trim(), handleSection(arr));
+    }
+
+    private void handleCallerData(String[] arr) {
+        // Caller Data section
+        jsonObject.put(arr[0].trim(), handleSection(arr));
+    }
+
+    private JSONObject handleSection(String[] arr) {
+        JSONObject section = new JSONObject();
+        section.put("Min", arr[3].trim());
+        section.put("Average", arr[4].trim());
+        section.put("Max", arr[5].trim());
+        section.put("CumulativeCounterValue", arr[6].trim());
+
+        // Additional rows and columns handling
+        for (int i = 7; i < arr.length; i++) {
+            // Assuming additional columns are present, add logic to handle them accordingly
+            String columnName = "AdditionalColumn" + (i - 6); // Adjust as needed
+            section.put(columnName, arr[i].trim());
         }
+
+        return section;
     }
 }
-

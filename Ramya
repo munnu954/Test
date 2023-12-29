@@ -1,43 +1,47 @@
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.util.Collector;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonArray;
+
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
+    private JsonObject currentObject;
     private String currentObjectName;
-    private JsonObject jsonObject;
     private Collector<String> collector;
 
     @Override
-    public void flatMap(String input, Collector<String> collector) throws Exception {
+    public void flatMap(String input, Collector<String> collector) {
         this.collector = collector;
-        String[] arr = input.split("\\s+"); // Use spaces as separators
+        String[] columns = input.split("\\s+");
 
-        // Check if it's a new object
-        if (arr.length > 1 && !arr[1].isEmpty()) {
-            // Save the current object
-            if (jsonObject != null) {
-                collector.collect(jsonObject.toString());
-            }
+        if (columns.length > 1 && !columns[1].isEmpty()) {
+            // New object found
+            collectCurrentObject();
+            currentObjectName = columns[1];
+            currentObject = new JsonObject();
+            currentObject.addProperty("ObjectName", currentObjectName);
+        } else if (columns.length > 2 && !columns[2].isEmpty()) {
+            // Metrics row found
+            JsonObject metricsObject = new JsonObject();
+            metricsObject.addProperty("Min", columns[3]);
+            metricsObject.addProperty("Average", columns[4]);
+            metricsObject.addProperty("Max", columns[5]);
+            metricsObject.addProperty("CumulativeCounterValue", columns[6]);
 
-            // Initialize a new object
-            currentObjectName = arr[1];
-            jsonObject = new JsonObject();
-            jsonObject.addProperty("ObjectName", currentObjectName);
-        } else if (arr.length > 2 && !arr[2].isEmpty()) {
-            // Handle the row with Min, Average, Max, Cumulative Counter Value
-            String metricName = arr[2].replaceAll("\\s+", "");
-            JsonObject metricObject = new JsonObject();
-            metricObject.addProperty("Min", arr[3]);
-            metricObject.addProperty("Average", arr[4]);
-            metricObject.addProperty("Max", arr[5]);
-            metricObject.addProperty("CumulativeCounterValue", arr[6]);
-
-            // Add the metric to the current object
-            jsonObject.add(metricName, metricObject);
+            String metricName = columns[2].replaceAll("\\s+", "");
+            currentObject.add(metricName, metricsObject);
         }
     }
 
-    public void collectLastObject() {
-        // Collect the last object
-        if (jsonObject != null) {
-            collector.collect(jsonObject.toString());
+    @Override
+    public void close() {
+        collectCurrentObject();
+    }
+
+    private void collectCurrentObject() {
+        if (currentObject != null) {
+            collector.collect(currentObject.toString());
+            currentObject = null;
         }
     }
 }

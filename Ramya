@@ -1,76 +1,140 @@
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.util.Collector;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
     private JSONObject currentObject;
-    private String currentObjectName;
     private Collector<String> collector;
 
     @Override
-    public void flatMap(String input, Collector<String> collector) throws Exception {
+    public void flatMap(String input, Collector<String> collector) {
         this.collector = collector;
-        String[] arr = input.split(",");
+        String[] columns = input.split("\t"); // Assuming tab-separated values
 
-        if (arr.length > 2 && arr[2] != null && !arr[2].isEmpty()) {
-            // New main object
-            handleNewObject(arr);
-        } else if (currentObjectName != null) {
-            processObjectDetails(arr);
+        if (columns.length > 1 && !columns[1].isEmpty()) {
+            handleMainObject(columns);
+        } else if (columns.length > 3 && !columns[3].isEmpty()) {
+            handleSubObject(columns);
         }
     }
 
-    private void handleNewObject(String[] arr) {
+    private void handleMainObject(String[] columns) {
         if (currentObject != null) {
-            // Save the completed object
             collector.collect(currentObject.toString());
         }
 
-        // Start a new JSON object
-        currentObjectName = arr[2].trim();
         currentObject = new JSONObject();
-        currentObject.put("ObjectName", currentObjectName);
+        currentObject.put("ObjectName", columns[0].trim());
     }
 
-    private void processObjectDetails(String[] arr) {
-        // Dynamic handling of columns and values
-        for (int i = 0; i < arr.length; i++) {
-            if (i + 1 < arr.length && arr[i] != null && arr[i + 1] != null && !arr[i].isEmpty()) {
-                // Odd index contains column names, even index contains values
-                String columnName = arr[i].trim();
-                String value = arr[i + 1].trim();
-                if (columnName.equalsIgnoreCase("Begin date") ||
-                        columnName.equalsIgnoreCase("End date") ||
-                        columnName.equalsIgnoreCase("Ticket number")) {
-                    // Handle special cases for Begin date, End date, Ticket number
-                    currentObject.put(columnName, value);
+    private void handleSubObject(String[] columns) {
+        if (currentObject == null) {
+            return; // Skip sub-objects if there's no current main object
+        }
+
+        String[] keys = columns[0].split("\\s+");
+        String[] values = columns[1].split("\\s+");
+
+        JSONObject subObject = currentObject;
+
+        for (int i = 0; i < keys.length; i++) {
+            String key = keys[i].trim();
+            String value = values[i].trim();
+
+            if (subObject.has(key)) {
+                subObject = subObject.getJSONObject(key);
+            } else {
+                if (i == keys.length - 1) {
+                    // Last key, add value
+                    subObject.put(key, value);
                 } else {
-                    // Handle sub-objects dynamically
-                    handleSubObject(columnName, value);
+                    // Create nested JSONObject
+                    JSONObject nestedObject = new JSONObject();
+                    subObject.put(key, nestedObject);
+                    subObject = nestedObject;
                 }
             }
         }
     }
 
-    private void handleSubObject(String columnName, String value) {
-        // Assuming sub-objects are separated by spaces
-        String[] subObjectKeys = columnName.split("\\s+");
-        JSONObject subObject = currentObject;
-        for (String key : subObjectKeys) {
-            if (!subObject.has(key)) {
-                subObject.put(key, new JSONObject());
-            }
-            subObject = subObject.getJSONObject(key);
+    @Override
+    public void close() {
+        if (currentObject != null) {
+            collector.collect(currentObject.toString());
+            currentObject = null;
         }
-        subObject.put("Min", value);
+    }
+}
+
+
+
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
+
+public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
+
+    private JSONObject jsonObject;
+    private Collector<String> collector;
+
+    @Override
+    public void flatMap(String input, Collector<String> collector) {
+        this.collector = collector;
+        String[] columns = input.split("\t"); // Assuming tab-separated values
+
+        if (columns.length > 1 && !columns[1].isEmpty()) {
+            handleMainObject(columns);
+        } else if (columns.length > 3 && !columns[3].isEmpty()) {
+            handleSubObject(columns);
+        }
+    }
+
+    private void handleMainObject(String[] columns) {
+        if (jsonObject != null) {
+            collector.collect(jsonObject.toString());
+        }
+
+        jsonObject = new JSONObject();
+        jsonObject.put("ObjectName", columns[0].trim());
+    }
+
+    private void handleSubObject(String[] columns) {
+        if (jsonObject == null) {
+            return; // Skip sub-objects if there's no current main object
+        }
+
+        String[] keys = columns[0].split("\\s+");
+        String[] values = columns[1].split("\\s+");
+
+        JSONObject subObject = jsonObject;
+
+        for (int i = 0; i < keys.length; i++) {
+            String key = keys[i].trim();
+            String value = values[i].trim();
+
+            if (subObject.has(key)) {
+                subObject = subObject.getJSONObject(key);
+            } else {
+                if (i == keys.length - 1) {
+                    // Last key, add value
+                    subObject.put(key, value);
+                } else {
+                    // Create nested JSONObject
+                    JSONObject nestedObject = new JSONObject();
+                    subObject.put(key, nestedObject);
+                    subObject = nestedObject;
+                }
+            }
+        }
     }
 
     @Override
     public void close() {
-        if (currentObject != null) {
-            // Save the completed object
-            collector.collect(currentObject.toString());
+        if (jsonObject != null) {
+            collector.collect(jsonObject.toString());
+            jsonObject = null;
         }
     }
 }

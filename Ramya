@@ -5,55 +5,51 @@ import org.json.JSONObject;
 
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
-    private String currentObjectName;
     private JSONObject jsonObject;
+    private JSONArray jsonArray;
+    private String currentObjectName;
 
     @Override
-    public void flatMap(String input, Collector<String> collector) throws Exception {
+    public void flatMap(String input, Collector<String> collector) {
         String[] arr = input.split(",");
+        String firstCell = arr[0].trim();
 
-        if (arr.length > 2 && arr[2] != null && !arr[2].isEmpty()) {
-            // New Object Name
-            handleNewObject(arr);
-        } else if (arr.length > 6 && arr[3] != null && !arr[3].isEmpty()) {
-            // Min, Average, Max, CumulativeCounterValue section
-            handleMinMaxSection(arr);
-        } else if (arr.length > 1 && arr[0] != null && !arr[0].isEmpty()) {
-            // Caller Data section
-            handleCallerData(arr);
+        if (firstCell.equals("Begin Date")) {
+            // New object starts, save the current one and start a new one
+            if (jsonObject != null) {
+                jsonArray.put(jsonObject);
+            }
+            currentObjectName = arr[1].trim();
+            jsonObject = new JSONObject();
+            jsonObject.put("ObjectName", currentObjectName);
+        } else if (firstCell.equals("Min")) {
+            // Process Min, Average, Max, Cumulative counter value row
+            for (int i = 1; i < arr.length; i += 4) {
+                JSONObject subObject = new JSONObject();
+                subObject.put("Min", arr[i].trim());
+                subObject.put("Average", arr[i + 1].trim());
+                subObject.put("Max", arr[i + 2].trim());
+                subObject.put("Cumulative counter value", arr[i + 3].trim());
+
+                String key = arr[i - 1].trim().toLowerCase().replace(" ", "_");
+                jsonObject.put(key, subObject);
+            }
+        } else {
+            // Process other rows
+            for (int i = 1; i < arr.length; i++) {
+                String key = arr[i - 1].trim().toLowerCase().replace(" ", "_");
+                String value = arr[i].trim();
+                jsonObject.put(key, value);
+            }
         }
-
-        collector.collect(jsonObject.toString());
     }
 
-    private void handleNewObject(String[] arr) {
+    @Override
+    public void close() {
+        // Collect the last object
         if (jsonObject != null) {
-            // Save the completed object
-            collector.collect(jsonObject.toString());
+            jsonArray.put(jsonObject);
         }
-
-        // Start a new JSON object
-        currentObjectName = arr[2].trim();
-        jsonObject = new JSONObject();
-        jsonObject.put("ObjectName", currentObjectName);
-    }
-
-    private void handleMinMaxSection(String[] arr) {
-        // Min, Average, Max, CumulativeCounterValue section
-        jsonObject.put(arr[0].trim(), handleSection(arr));
-    }
-
-    private void handleCallerData(String[] arr) {
-        // Caller Data section
-        jsonObject.put(arr[0].trim(), handleSection(arr));
-    }
-
-    private JSONObject handleSection(String[] arr) {
-        JSONObject section = new JSONObject();
-        section.put("Min", arr[3].trim());
-        section.put("Average", arr[4].trim());
-        section.put("Max", arr[5].trim());
-        section.put("CumulativeCounterValue", arr[6].trim());
-        return section;
+        collector.collect(jsonArray.toString());
     }
 }

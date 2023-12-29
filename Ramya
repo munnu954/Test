@@ -12,46 +12,37 @@ public class CsvToJsonConversion implements FlatMapFunction<String, String> {
     @Override
     public void flatMap(String input, Collector<String> collector) {
         try {
-            String[] headers = input.split("\t"); // Assuming tab-separated values
+            String[] rows = input.split("\n");
 
-            // Split the current line
-            String[] values = input.split("\t");
+            ObjectNode jsonObject = objectMapper.createObjectNode();
+            String currentKey = "";
 
-            // Assuming the header and value lengths are the same
-            if (headers.length == values.length) {
-                ObjectNode jsonObject = objectMapper.createObjectNode();
+            for (String row : rows) {
+                String[] columns = row.split("\"");
 
-                String currentKey = "";
-                for (int i = 0; i < headers.length; i++) {
-                    String jsonKey = headers[i].trim();
-                    String jsonValue = values[i].trim().replace("\"", "");
-
-                    if (!jsonKey.isEmpty()) {
-                        // Skip empty headers
-                        if (jsonKey.startsWith("\"")) {
-                            // Nested object
-                            currentKey = jsonKey.substring(1, jsonKey.length() - 1);
+                for (String col : columns) {
+                    if (!col.trim().isEmpty() && !col.equals(",")) {
+                        if (col.startsWith(",") && currentKey.isEmpty()) {
+                            currentKey = col.substring(1, col.length() - 1);
                         } else {
-                            // Top-level key
-                            if (currentKey.isEmpty()) {
-                                jsonObject.set(jsonKey, objectMapper.valueToTree(jsonValue));
+                            String jsonKey = (currentKey.isEmpty()) ? col : currentKey;
+                            String jsonValue = (currentKey.isEmpty()) ? "" : columns[columns.length - 1].trim();
+
+                            if (jsonObject.has(jsonKey)) {
+                                ObjectNode nestedObject = (ObjectNode) jsonObject.get(jsonKey);
+                                nestedObject.set(col, objectMapper.valueToTree(jsonValue));
                             } else {
-                                jsonObject = addNestedField(jsonObject, currentKey, jsonKey, jsonValue);
+                                jsonObject.set(jsonKey, objectMapper.valueToTree(jsonValue));
                             }
                         }
                     }
                 }
-
-                collector.collect(jsonObject.toString());
+                currentKey = "";
             }
+
+            collector.collect(jsonObject.toString());
         } catch (IOException e) {
             e.printStackTrace();
         }
-    }
-
-    private ObjectNode addNestedField(ObjectNode parent, String currentKey, String jsonKey, String jsonValue) {
-        ObjectNode nestedObject = parent.putObject(currentKey);
-        nestedObject.set(jsonKey, objectMapper.valueToTree(jsonValue));
-        return parent;
     }
 }

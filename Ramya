@@ -6,52 +6,77 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
     private String currentObjectName;
     private JSONObject currentObject;
+    private Collector<String> collector;
+    private boolean inMainObject;
+    private boolean inSubObject;
+    private String currentSubObjectName;
 
     @Override
     public void flatMap(String input, Collector<String> collector) throws Exception {
+        this.collector = collector;
         String[] arr = input.split(",");
 
         if (arr.length > 2 && arr[2] != null && !arr[2].isEmpty()) {
             // New main object
-            handleMainObject();
+            if (inMainObject) {
+                // Save the current main object if we were inside one
+                collector.collect(currentObject.toString());
+                currentObject = null;
+            }
             currentObjectName = arr[2].trim();
+            currentObject = new JSONObject();
             currentObject.put("ObjectName", currentObjectName);
+            inMainObject = true;
+            inSubObject = false;
+        } else if (inMainObject) {
+            // If we are inside a main object, process the details
+            processMainObjectDetails(arr);
+        }
+    }
+
+    private void processMainObjectDetails(String[] arr) {
+        if (arr.length > 1 && arr[0] != null && !arr[0].isEmpty()) {
+            // BeginDate, EndDate, or TicketNumber
             setCurrentObjectDetails(arr);
-        } else if (arr.length > 1 && arr[0] != null && !arr[0].isEmpty()) {
+        } else if (arr.length > 5 && arr[3] != null && !arr[3].isEmpty()) {
             // Sub-object
             handleSubObject(arr);
         }
     }
 
-    private void handleMainObject() {
-        if (currentObject != null) {
-            collector.collect(currentObject.toString());
-        }
-        currentObject = new JSONObject();
-    }
-
     private void setCurrentObjectDetails(String[] arr) {
-        // Assuming column A contains begin date, column B contains end date, and column C contains ticket number.
-        currentObject.put("Begin date", arr[0].trim());
-        currentObject.put("End date", arr[1].trim());
-        currentObject.put("Ticket number", arr[3].trim());
+        // Assuming column A contains BeginDate, column C contains EndDate, and column D contains TicketNumber.
+        if (arr[0].contains("Begin Date")) {
+            currentObject.put("Begin date", arr[1].trim());
+        } else if (arr[0].contains("End Date")) {
+            currentObject.put("End date", arr[1].trim());
+        } else if (arr[0].contains("Ticket Number")) {
+            currentObject.put("Ticket number", arr[1].trim());
+        }
     }
 
     private void handleSubObject(String[] arr) {
-        // Assuming column A is the sub-object name, and columns B, D, E, F, G contain the corresponding values.
-        String subObjectName = arr[0].trim();
-        JSONObject subObject = new JSONObject();
-        subObject.put("Min", arr[4].trim());
-        subObject.put("Average", arr[5].trim());
-        subObject.put("Max", arr[6].trim());
-        subObject.put("Cumulative counter value", arr[7].trim());
+        // Assuming column A is the sub-object name, and columns B, C, D, E contain the corresponding values.
+        if (arr.length > 4 && arr[0] != null && !arr[0].isEmpty()) {
+            if (inSubObject && !currentSubObjectName.equals(arr[0].trim())) {
+                // Save the current sub-object if we were inside one and a new one is found
+                currentObject.put(currentSubObjectName, currentObject.get(currentSubObjectName));
+            }
+            currentSubObjectName = arr[0].trim();
+            JSONObject subObject = new JSONObject();
+            subObject.put("Min", arr[1].trim());
+            subObject.put("Average", arr[2].trim());
+            subObject.put("Max", arr[3].trim());
+            subObject.put("Cumulative counter value", arr[4].trim());
 
-        currentObject.put(subObjectName, subObject);
+            currentObject.put(currentSubObjectName, subObject);
+            inSubObject = true;
+        }
     }
 
     @Override
     public void close() {
-        if (currentObject != null) {
+        if (inMainObject && currentObject != null) {
             collector.collect(currentObject.toString());
         }
     }

@@ -1,152 +1,223 @@
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.api.functions.source.FromElementsFunction;
-import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema;
-import org.apache.flink.streaming.connectors.kafka.KafkaSink;
-import org.apache.flink.test.util.AbstractTestBase;
-import org.junit.jupiter.api.Test;
+SpaceCollector.java model class:
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Arrays;
-import java.util.List;
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@ToString
+public class SpaceCollector {
+    private String fileName;
+    private LocalDateTime dateReceived;
+    private LocalDateTime dateProcessed;
+    private int numOfRecordsInFile;
+    private int numOfRecordsProcessed;
+    private int numOfRecordsFailed;
+    private String jobStatus;
+    private String jobId;
+    private String jarId;
+    private List<String> exceptions;
+}
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.*;
+JsonUtils.java class:
 
-public class MainTest extends AbstractTestBase {
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-    @Test
-    public void testMainWithValidCsvFile() throws Exception {
-        // Arrange
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        DataStream<String> stream = mock(DataStream.class);
-        KafkaSink<String> sink = mock(KafkaSink.class);
-        DataStream<String> jsonStream = mock(DataStream.class);
-        ParameterTool parameters = mock(ParameterTool.class);
-        
-        when(parameters.get("bootstarpServer")).thenReturn("localhost:9092");
-        when(parameters.get("Topic")).thenReturn("test-topic");
-        when(parameters.getRequired("input")).thenReturn("test.csv");
-        when(parameters.get("fileType")).thenReturn("Gigamon");
-
-        when(stream.flatMap(any())).thenReturn(jsonStream);
-        when(jsonStream.sinkTo(any())).thenReturn(null);
-
-        Path tempFile = createTempCsvFile("TimeStamp, Node Name, Connection Alias, Entity ID, Monitoring Domain, Vseries ID, TX Bytes, RX Bytes, TX Packets, RX Packets, TX Errors, RX Errors, TX Drops, RX Drops", "1,Node1,Alias1,Entity1,Domain1,Vseries1,100,200,10,20,0,0,0,0",
-                "2,Node2,Alias2,Entity2,Domain2,Vseries2,150,250,15,25,1,1,1,1");
-
-        String[] args = { "--bootstarpServer", "localhost:9092", "--Topic", "test-topic", "--input", tempFile.toString(), "--fileType", "Gigamon" };
-
-        // Act
-        Main.main(args);
-
-        // Assert
-        verify(parameters, times(1)).get("bootstarpServer");
-        verify(parameters, times(1)).get("Topic");
-        verify(parameters, times(1)).getRequired("input");
-        verify(stream, times(1)).flatMap(any());
-        verify(jsonStream, times(1)).sinkTo(any());
-        verify(env, times(1)).execute();
+public class JsonUtils {
+    private static final ObjectMapper mapper = new ObjectMapper();
+    
+    public static String convertSpaceCollectorToJson(SpaceCollector spaceCollector) throws JsonProcessingException {
+        return mapper.writeValueAsString(spaceCollector);
     }
 
-    @Test
-    public void testMainWithMissingFile() throws Exception {
-        // Arrange
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        ParameterTool parameters = mock(ParameterTool.class);
-        
-        when(parameters.get("bootstarpServer")).thenReturn("localhost:9092");
-        when(parameters.get("Topic")).thenReturn("test-topic");
-        when(parameters.getRequired("input")).thenReturn("nonexistent.csv");
-        when(parameters.get("fileType")).thenReturn("Gigamon");
+    public static SpaceCollector convertJsonToSpaceCollector(String json) throws JsonProcessingException {
+        return mapper.readValue(json, SpaceCollector.class);
+    }
+}
 
-        // Act & Assert
-        assertThrows(FileNotFoundException.class, () -> Main.main(new String[0]));
+KafkaProducer.java:
 
-        verify(parameters, times(1)).get("bootstarpServer");
-        verify(parameters, times(1)).get("Topic");
-        verify(parameters, times(1)).getRequired("input");
+@Service
+public class KafkaProducer {
+    private static final Logger Logger = LoggerFactory.getLogger(KafkaProducer.class);
+
+    @Value("${spring.kafka.producer.topic-name}")
+    private String topicName;
+
+    private final KafkaTemplate<String, String> kafkaTemplate;
+
+    @Autowired
+    public KafkaProducer(KafkaTemplate<String, String> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate;
     }
 
-    @Test
-    public void testReadCSVFileWithValidFile() {
-        // Arrange
-        String expectedContent = "1,Node1,Alias1,Entity1,Domain1,Vseries1,100,200,10,20,0,0,0,0\n2,Node2,Alias2,Entity2,Domain2,Vseries2,150,250,15,25,1,1,1,1";
-        Path tempFile = createTempCsvFile(expectedContent);
+    public void sendMessage(SpaceCollector spaceCollector) {
+        try {
+            String json = JsonUtils.convertSpaceCollectorToJson(spaceCollector);
+            Logger.info(String.format("Message sent: %s", json));
+            kafkaTemplate.send(topicName, json);
+        } catch (JsonProcessingException e) {
+            Logger.error("Error serializing SpaceCollector object to JSON", e);
+        }
+    }
+}
 
-        // Act
-        String actualContent = Main.readCSVFile(tempFile.toString());
+KafkaController.java:
 
-        // Assert
-        assertEquals(expectedContent, actualContent);
+@RestController
+public class KafkaController {
+    private final KafkaProducer kafkaProducer;
+
+    @Autowired
+    public KafkaController(KafkaProducer kafkaProducer) {
+        this.kafkaProducer = kafkaProducer;
     }
 
-    @Test
-    public void testReadCSVFileWithMissingFile() {
-        // Arrange
-        String filePath = "nonexistent.csv";
-
-        // Act & Assert
-        assertThrows(FileNotFoundException.class, () -> Main.readCSVFile(filePath));
+    @PostMapping("/kafkaPush")
+    public ResponseEntity<String> sendMessage(@RequestBody SpaceCollector spaceCollector) {
+        kafkaProducer.sendMessage(spaceCollector);
+        return ResponseEntity.ok("Message sent successfully");
     }
+}
 
-    @Test
-    public void testCsvtoJsonConversionWithValidCsvRow() throws Exception {
-        // Arrange
-        CsvtoJsonConversion conversion = new CsvtoJsonConversion();
-        Tuple2<String, String> tuple = new Tuple2<>("1,Node1,Alias1,Entity1,Domain1,Vseries1,100,200,10,20,0,0,0,0", "{\"key1\":\"1\",\"key2\":\"Node1\",\"key3\":\"Alias1\",\"key4\":\"Entity1\",\"key5\":\"Domain1\",\"key6\":\"Vseries1\",\"key7\":\"100\",\"key8\":\"200\",\"key9\":\"10\",\"key10\":\"20\",\"key11\":\"0\",\"key12\":\"0\",\"key13\":\"0\",\"key14\":\"0\"}");
+FlinkApiController.java:
 
-        CollectorMock<String> collector = new CollectorMock<>();
+@Service
+public class FlinkApiController {
+    private final RestTemplate restTemplate;
+    private final HttpHeaders headers;
+    private static final Logger LOGGER = LoggerFactory.getLogger(FlinkApiController.class);
 
-        // Act
-        conversion.flatMap(tuple, collector);
+    @Value("${flink.api.url}")
+    private String flinkApiUrl;
 
-        // Assert
-        List<String> expectedOutput = Arrays.asList(tuple.f1);
-        assertEquals(expectedOutput, collector.getCollected());
+    @Value("${flink.job.csv.jarid}")
+    private String flinkJobCsvJarid;
+
+    @Value("${flink.job.csv.program-args}")
+    private String flinkJobCsvProgramArgs;
+
+    @Value("${flink.job.txt.jarid}")
+    private String flinkJobTxtJarid;
+
+    @Value("${flink.job.txt.program-args}")
+    private String flinkJobTxtProgramArgs;
+
+    @Value("${flink.job.xml.jarid}")
+    private String flinkJobXmlJarid;
+
+    @Value("${flink.job.xml.program-args}")
+    private String flinkJobXmlProgramArgs;
+
+    @Autowired
+    public FlinkApiController(RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+        this.headers = new HttpHeaders();
+        this.headers.setContentType(MediaType.APPLICATION_JSON);
     }
+    
+    public void triggerJob(SpaceCollector spaceCollector, String fileType) {
+        LOGGER.info("Triggering job...");
+        String jobSubmitUrl = null;
+        JSONObject requestBody = new JSONObject();
 
-    @Test
-    public void testCsvtoJsonConversionWithInvalidCsvRow() throws Exception {
-        // Arrange
-        CsvtoJsonConversion conversion = new CsvtoJsonConversion();
-        Tuple2<String, String> tuple = new Tuple2<>("1,Node1,", "{\"key1\":\"1\",\"key2\":\"Node1\",\"key3\":\"\",\"key4\":null,\"key5\":null,\"key6\":null,\"key7\":null,\"key8\":null,\"key9\":null,\"key10\":null,\"key11\":null,\"key12\":null,\"key13\":null,\"key14\":null}");
-
-        CollectorMock<String> collector = new CollectorMock<>();
-
-        // Act
-        conversion.flatMap(tuple, collector);
-
-        // Assert
-        List<String> expectedOutput = Arrays.asList(tuple.f1);
-        assertEquals(expectedOutput, collector.getCollected());
-    }
-
-    private static Path createTempCsvFile(String... lines) throws IOException {
-        Path tempFile = Files.createTempFile(null, ".csv");
-        Files.write(tempFile, Arrays.asList(lines));
-        return tempFile;
-    }
-
-    private static class CollectorMock<T> implements SinkFunction<T> {
-        private final List<T> collected;
-
-        public CollectorMock() {
-            this.collected = new ArrayList<>();
+        if(fileType.equalsIgnoreCase(".csv")) {
+            requestBody.put("programArgs", flinkJobCsvProgramArgs.replace("input", spaceCollector.getFileName()));
+            jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobCsvJarid + "/run";
+        }
+        else if(fileType.equalsIgnoreCase(".txt")) {
+            requestBody.put("programArgs", flinkJobTxtProgramArgs.replace("|input|", spaceCollector.getFileName()));
+            jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobTxtJarid + "/run";
+        }
+        else if(fileType.equalsIgnoreCase(".xml")) {
+            requestBody.put("programArgs", flinkJobXmlProgramArgs.replace("|filePath|", spaceCollector.getFileName()));
+            requestBody.put("primaryKey", "");
+            jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobXmlJarid + "/run";
         }
 
-        public List<T> getCollected() {
-            return collected;
-        }
+        HttpEntity<String> request = new HttpEntity<>(requestBody.toString(), headers);
+        ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
 
-        @Override
-        public void invoke(T value, Context context) {
-            collected.add(value);
+        if (response.getStatusCode() != HttpStatus.OK) {
+            publishFailureMessage(spaceCollector, response.getBody());
         }
+    }
+
+    public void publishFailureMessage(SpaceCollector spaceCollector, String errorMessage) {
+        LOGGER.error("Job submission failed");
+        LOGGER.error("Error Message: {}", errorMessage);
+
+        spaceCollector.setDateProcessed(LocalDateTime.now());
+        spaceCollector.setNumOfRecordsProcessed(0);
+        spaceCollector.setNumOfRecordsFailed(spaceCollector.getNumOfRecordsInFile());
+        spaceCollector.setJobStatus("Failure");
+        spaceCollector.setExceptions(Arrays.asList(errorMessage.split("\n")));
+
+        KafkaProducer.sendMessage(spaceCollector);
+    }
+}
+
+KafkaConsumer.java class:
+
+@Service
+public class KafkaConsumer {
+    private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
+
+    private final FlinkApiController flinkApiController;
+    private final KafkaProducer kafkaProducer;
+
+    @Value("${file.destination}")
+    private String destinationFolderPath;
+
+    @Value("${file.txtsource}")
+    private String txtSourceFilePath;
+
+    @Autowired
+    public KafkaConsumer(FlinkApiController flinkApiController, KafkaProducer kafkaProducer) {
+        this.flinkApiController = flinkApiController;
+        this.kafkaProducer = kafkaProducer;
+    }
+
+    @KafkaListener(topics = "${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}")
+    public void consume(String jsonData) {
+        try {
+            SpaceCollector spaceCollector = JsonUtils.convertJsonToSpaceCollector(jsonData);
+            LOGGER.info(String.format("Message received -> %s", spaceCollector));
+
+            if (!validateInputTopic()) {
+                String errorMessage = "Input topic not accessible";
+                LOGGER.error(errorMessage);
+                spaceCollector.setExceptions(Arrays.asList(errorMessage));
+                kafkaProducer.sendMessage(spaceCollector);
+                writeToLogFile(errorMessage);
+                return;
+            }
+
+            String fileType = getExtension(spaceCollector.getFileName());
+            flinkApiController.triggerJob(spaceCollector, fileType);
+        } catch (Exception e) {
+            String errorMessage = "Error processing message";
+            LOGGER.error(errorMessage, e);
+
+            SpaceCollector spaceCollector = new SpaceCollector();
+            spaceCollector.setExceptions(Arrays.asList(errorMessage, e.toString()));
+            kafkaProducer.sendMessage(spaceCollector);
+            writeToLogFile(e.getMessage());
+        }
+    }
+
+    private boolean validateInputTopic() {
+        // Check accessibility of input topic
+        return true;
+    }
+
+    private void writeToLogFile(String message) {
+        // Write message to log file in shared location
+    }
+
+    private String getExtension(String filename) {
+        if (filename != null && filename.contains(".")) {
+            return filename.substring(filename.lastIndexOf("."));
+        }
+        return null;
     }
 }

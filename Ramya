@@ -1,4 +1,5 @@
 import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.util.Collector;
@@ -14,22 +15,44 @@ public class CsvToJsonConversion implements FlatMapFunction<String, String> {
         try {
             String[] headers = input.split("\t"); // Assuming tab-separated values
 
-            // Read the next line
-            String nextLine = collector.next();
-            String[] values = nextLine.split("\t");
+            // Split the current line
+            String[] values = input.split("\t");
 
             // Assuming the header and value lengths are the same
             if (headers.length == values.length) {
-                ObjectNode jsonNode = objectMapper.createObjectNode();
+                ObjectNode jsonObject = objectMapper.createObjectNode();
+                ObjectNode innerObject = null;
 
                 for (int i = 0; i < headers.length; i++) {
                     String jsonKey = headers[i].trim();
                     String jsonValue = values[i].trim().replace("\"", "");
 
-                    jsonNode.put(jsonKey, jsonValue);
+                    if (jsonKey.isEmpty()) {
+                        // Skip empty headers
+                        continue;
+                    }
+
+                    if (!jsonKey.startsWith(" ") && innerObject != null) {
+                        // End of inner object, add it to the main object
+                        jsonObject.set(jsonKey, innerObject);
+                        innerObject = null;
+                    }
+
+                    if (jsonKey.startsWith(" ")) {
+                        // Nested object
+                        String nestedKey = jsonKey.substring(1).trim();
+                        if (innerObject == null) {
+                            innerObject = jsonObject.putObject(nestedKey);
+                        } else {
+                            innerObject.set(nestedKey, objectMapper.valueToTree(jsonValue));
+                        }
+                    } else {
+                        // Top-level key
+                        jsonObject.set(jsonKey, objectMapper.valueToTree(jsonValue));
+                    }
                 }
 
-                collector.collect(jsonNode.toString());
+                collector.collect(jsonObject.toString());
             }
         } catch (IOException e) {
             e.printStackTrace();

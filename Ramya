@@ -1,6 +1,6 @@
 import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.util.Collector;
 
@@ -21,34 +21,21 @@ public class CsvToJsonConversion implements FlatMapFunction<String, String> {
             // Assuming the header and value lengths are the same
             if (headers.length == values.length) {
                 ObjectNode jsonObject = objectMapper.createObjectNode();
-                ObjectNode innerObject = null;
 
                 for (int i = 0; i < headers.length; i++) {
                     String jsonKey = headers[i].trim();
                     String jsonValue = values[i].trim().replace("\"", "");
 
-                    if (jsonKey.isEmpty()) {
+                    if (!jsonKey.isEmpty()) {
                         // Skip empty headers
-                        continue;
-                    }
-
-                    if (!jsonKey.startsWith(" ") && innerObject != null) {
-                        // End of inner object, add it to the main object
-                        jsonObject.set(jsonKey, innerObject);
-                        innerObject = null;
-                    }
-
-                    if (jsonKey.startsWith(" ")) {
-                        // Nested object
-                        String nestedKey = jsonKey.substring(1).trim();
-                        if (innerObject == null) {
-                            innerObject = jsonObject.putObject(nestedKey);
+                        if (jsonKey.startsWith(" ")) {
+                            // Nested object
+                            String nestedKey = jsonKey.substring(1).trim();
+                            jsonObject = getOrCreateNestedObject(jsonObject, nestedKey);
                         } else {
-                            innerObject.set(nestedKey, objectMapper.valueToTree(jsonValue));
+                            // Top-level key
+                            jsonObject.set(jsonKey, objectMapper.valueToTree(jsonValue));
                         }
-                    } else {
-                        // Top-level key
-                        jsonObject.set(jsonKey, objectMapper.valueToTree(jsonValue));
                     }
                 }
 
@@ -57,5 +44,18 @@ public class CsvToJsonConversion implements FlatMapFunction<String, String> {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    private ObjectNode getOrCreateNestedObject(ObjectNode parentObject, String nestedKey) {
+        JsonNode nestedNode = parentObject.get(nestedKey);
+
+        if (nestedNode == null || !nestedNode.isObject()) {
+            // Create a new nested object if it doesn't exist
+            ObjectNode newObject = JsonNodeFactory.instance.objectNode();
+            parentObject.set(nestedKey, newObject);
+            return newObject;
+        }
+
+        return (ObjectNode) nestedNode;
     }
 }

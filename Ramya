@@ -1,55 +1,42 @@
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
-    private JSONObject jsonObject;
-    private JSONArray jsonArray;
     private String currentObjectName;
+    private JsonObject jsonObject;
 
     @Override
-    public void flatMap(String input, Collector<String> collector) {
-        String[] arr = input.split(",");
-        String firstCell = arr[0].trim();
+    public void flatMap(String input, Collector<String> collector) throws Exception {
+        String[] arr = input.split("\t"); // Assuming tab-separated values
 
-        if (firstCell.equals("Begin Date")) {
-            // New object starts, save the current one and start a new one
+        // Check if it's a new object
+        if (arr.length > 1 && !arr[1].isEmpty()) {
+            // Save the current object
             if (jsonObject != null) {
-                jsonArray.put(jsonObject);
+                collector.collect(jsonObject.toString());
             }
-            currentObjectName = arr[1].trim();
-            jsonObject = new JSONObject();
-            jsonObject.put("ObjectName", currentObjectName);
-        } else if (firstCell.equals("Min")) {
-            // Process Min, Average, Max, Cumulative counter value row
-            for (int i = 1; i < arr.length; i += 4) {
-                JSONObject subObject = new JSONObject();
-                subObject.put("Min", arr[i].trim());
-                subObject.put("Average", arr[i + 1].trim());
-                subObject.put("Max", arr[i + 2].trim());
-                subObject.put("Cumulative counter value", arr[i + 3].trim());
 
-                String key = arr[i - 1].trim().toLowerCase().replace(" ", "_");
-                jsonObject.put(key, subObject);
-            }
-        } else {
-            // Process other rows
-            for (int i = 1; i < arr.length; i++) {
-                String key = arr[i - 1].trim().toLowerCase().replace(" ", "_");
-                String value = arr[i].trim();
-                jsonObject.put(key, value);
-            }
+            // Initialize a new object
+            currentObjectName = arr[1];
+            jsonObject = new JsonObject();
+            jsonObject.addProperty("ObjectName", currentObjectName);
+        } else if (arr.length > 2 && !arr[2].isEmpty()) {
+            // Handle the row with Min, Average, Max, Cumulative Counter Value
+            String metricName = arr[2].replaceAll("\\s+", "");
+            JsonObject metricObject = new JsonObject();
+            metricObject.addProperty("Min", arr[3]);
+            metricObject.addProperty("Average", arr[4]);
+            metricObject.addProperty("Max", arr[5]);
+            metricObject.addProperty("CumulativeCounterValue", arr[6]);
+
+            // Add the metric to the current object
+            jsonObject.add(metricName, metricObject);
         }
     }
 
     @Override
-    public void close() {
+    public void close() throws Exception {
         // Collect the last object
         if (jsonObject != null) {
-            jsonArray.put(jsonObject);
+            collector.collect(jsonObject.toString());
         }
-        collector.collect(jsonArray.toString());
     }
 }

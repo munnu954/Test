@@ -1,47 +1,46 @@
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.node.ObjectNode;
-import org.apache.flink.util.Collector;
-
-import java.io.IOException;
-
-public class CsvToJsonConversion implements FlatMapFunction<String, String> {
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
+public class CsvtoJsonConferenceCallTransformer implements FlatMapFunction<String, String> {
 
     @Override
-    public void flatMap(String input, Collector<String> collector) {
-        try {
-            String[] lines = input.split("\n");
+    public void flatMap(String input, Collector<String> collector) throws Exception {
+        String[] arr = input.split(",");
 
-            if (lines.length >= 6) {
-                String[] headers = lines[0].split(",");
-                ObjectNode jsonObject = objectMapper.createObjectNode();
+        // Assuming the CSV structure is fixed for the Conference-CallControl object
+        JsonObject obj = new JsonObject();
+        int currentIndex = 0;
 
-                for (int i = 1; i < lines.length; i++) {
-                    String[] values = lines[i].split(",");
-                    ObjectNode innerObject = objectMapper.createObjectNode();
+        // Identify the main object name from column C
+        String mainObjectName = arr[currentIndex++];
+        obj.addProperty("ObjectName", mainObjectName);
 
-                    for (int j = 0; j < Math.min(headers.length, values.length); j++) {
-                        String header = headers[j].replace("\"", "").trim();
-                        String value = values[j].replace("\"", "").trim();
-
-                        if (!header.isEmpty() && !value.isEmpty()) {
-                            innerObject.put(header, value);
-                        }
-                    }
-
-                    if (!innerObject.isEmpty()) {
-                        jsonObject.set("Row" + i, innerObject);
-                    }
-                }
-
-                if (!jsonObject.isEmpty()) {
-                    collector.collect(jsonObject.toString());
-                }
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
+        // Skip rows until you find the data rows
+        while (!arr[currentIndex].equals("BEGIN DATE")) {
+            currentIndex++;
         }
+
+        // Process data rows dynamically
+        while (currentIndex < arr.length) {
+            String subObjectName = arr[currentIndex].toLowerCase().replaceAll("\\s", "_");
+            JsonObject subObject = new JsonObject();
+
+            // Skip unnecessary rows
+            currentIndex += 2;
+
+            // Process Min, Average, Max, Cumulative counter value rows
+            while (!arr[currentIndex].isEmpty()) {
+                String metricName = arr[currentIndex].toLowerCase().replaceAll("\\s", "_");
+                subObject.addProperty(metricName, arr[currentIndex + 1]);
+                currentIndex += 2;
+            }
+
+            // Add the subObject to the main object
+            obj.add(subObjectName, subObject);
+
+            // Move to the next subObject or exit if end of data
+            while (currentIndex < arr.length && arr[currentIndex].isEmpty()) {
+                currentIndex++;
+            }
+        }
+
+        collector.collect(obj.toString());
     }
 }

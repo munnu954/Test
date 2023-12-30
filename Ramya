@@ -1,46 +1,48 @@
-import com.google.gson.JsonObject;
+import java.util.Stack;
 
-import java.util.*;
-import java.util.stream.Collectors;
+public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
-public class CsvToJsonConverter {
+    @Override
+    public void flatMap(String input, Collector<String> collector) throws Exception {
+        String[] lines = input.split(System.lineSeparator());
+        Stack<JsonObject> objectStack = new Stack<>();
 
-    public static List<JsonObject> convertCsvToJson(List<String> csvData) {
-        List<JsonObject> jsonObjects = new ArrayList<>();
-        Stack<JsonObject> stack = new Stack<>();
-        JsonObject currentObject = null;
+        for (String line : lines) {
+            String[] arr = line.split(",");
 
-        for (String line : csvData) {
-            String[] values = line.split(",");
-            List<String> nonEmptyValues = Arrays.stream(values).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toList());
+            if (arr.length > 0 && arr[0].equals("ObjectName")) {
+                // New object begins
+                JsonObject currentObject = new JsonObject();
+                currentObject.addProperty("ObjectName", arr[1]);
+                objectStack.push(currentObject);
+            } else if (!objectStack.isEmpty()) {
+                // Sub-object details
+                JsonObject currentObject = objectStack.peek();
+                String fieldName = arr[0];
+                JsonObject subObject = new JsonObject();
 
-            if (!nonEmptyValues.isEmpty()) {
-                int level = nonEmptyValues.size();
-                if (stack.size() < level) {
-                    currentObject = new JsonObject();
-                    stack.push(currentObject);
-                } else if (stack.size() > level) {
-                    while (stack.size() > level) {
-                        stack.pop();
-                    }
-                    currentObject = stack.peek();
+                for (int i = 1; i < arr.length; i += 4) {
+                    String min = arr[i + 2].equals("-") ? "" : arr[i + 2];
+                    String avg = arr[i + 1].equals("-") ? "" : arr[i + 1];
+                    String max = arr[i].equals("-") ? "" : arr[i];
+                    String cumulativeCounterValue = arr[i + 3];
+
+                    JsonObject subObjectDetails = new JsonObject();
+                    subObjectDetails.addProperty("Min", min);
+                    subObjectDetails.addProperty("Average", avg);
+                    subObjectDetails.addProperty("Max", max);
+                    subObjectDetails.addProperty("Cumulative counter value", cumulativeCounterValue);
+
+                    subObject.add(arr[i + 4], subObjectDetails);
                 }
 
-                for (int i = 0; i < nonEmptyValues.size(); i++) {
-                    String key = nonEmptyValues.get(i);
-                    if (i == 0) {
-                        currentObject.addProperty("ObjectName", key);
-                    } else {
-                        currentObject.addProperty(key, nonEmptyValues.get(++i));
-                    }
-                }
-            }
-
-            if (currentObject != null) {
-                jsonObjects.add(currentObject.deepCopy());
+                currentObject.add(fieldName, subObject);
             }
         }
 
-        return jsonObjects;
+        // Collect the top-level objects
+        while (!objectStack.isEmpty()) {
+            collector.collect(objectStack.pop().toString());
+        }
     }
 }

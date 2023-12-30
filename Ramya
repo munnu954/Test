@@ -1,43 +1,46 @@
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
-
 import com.google.gson.JsonObject;
 
-public class CsvtoJsonTonesTransformer implements FlatMapFunction<String, String> {
+import java.util.*;
+import java.util.stream.Collectors;
 
-    @Override
-    public void flatMap(String input, Collector<String> collector) throws Exception {
-        String[] rows = input.split(";");
+public class CsvToJsonConverter {
 
-        if (rows.length < 5 || (rows.length - 5) % 5 != 0) {
-            // Invalid row, skip processing
-            System.out.println("Invalid row: " + input);
-            return;
+    public static List<JsonObject> convertCsvToJson(List<String> csvData) {
+        List<JsonObject> jsonObjects = new ArrayList<>();
+        Stack<JsonObject> stack = new Stack<>();
+        JsonObject currentObject = null;
+
+        for (String line : csvData) {
+            String[] values = line.split(",");
+            List<String> nonEmptyValues = Arrays.stream(values).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toList());
+
+            if (!nonEmptyValues.isEmpty()) {
+                int level = nonEmptyValues.size();
+                if (stack.size() < level) {
+                    currentObject = new JsonObject();
+                    stack.push(currentObject);
+                } else if (stack.size() > level) {
+                    while (stack.size() > level) {
+                        stack.pop();
+                    }
+                    currentObject = stack.peek();
+                }
+
+                for (int i = 0; i < nonEmptyValues.size(); i++) {
+                    String key = nonEmptyValues.get(i);
+                    if (i == 0) {
+                        currentObject.addProperty("ObjectName", key);
+                    } else {
+                        currentObject.addProperty(key, nonEmptyValues.get(++i));
+                    }
+                }
+            }
+
+            if (currentObject != null) {
+                jsonObjects.add(currentObject.deepCopy());
+            }
         }
 
-        JsonObject json = new JsonObject();
-        String objectName = rows[4].trim();
-
-        json.addProperty("ObjectName", objectName);
-
-        for (int i = 5; i < rows.length; i += 5) {
-            String key = rows[i].trim();
-            String min = rows[i + 1].trim();
-            String avg = rows[i + 2].trim();
-            String max = rows[i + 3].trim();
-            String cumulative = rows[i + 4].trim();
-
-            JsonObject subObject = new JsonObject();
-            subObject.addProperty("Min", min);
-            subObject.addProperty("Average", avg);
-            subObject.addProperty("Max", max);
-            subObject.addProperty("Cumulative counter value", cumulative);
-
-            json.add(key, subObject);
-        }
-
-        String result = json.toString();
-        System.out.println("Transformed JSON: " + result);
-        collector.collect(result);
+        return jsonObjects;
     }
 }

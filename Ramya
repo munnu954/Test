@@ -2,7 +2,13 @@ import com.google.gson.JsonObject;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.util.Collector;
 
+import java.util.HashMap;
+import java.util.Map;
+
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
+
+    private String currentSection = null;
+    private Map<String, JsonObject> sections = new HashMap<>();
 
     @Override
     public void flatMap(String input, Collector<String> collector) throws Exception {
@@ -10,33 +16,50 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
         String title = findTitle(columns);
 
         if (title != null) {
-            // Process the row based on the identified title
-            String jsonResult = processSection(columns, title);
-            collector.collect(jsonResult);
+            currentSection = title;
+            sections.put(currentSection, new JsonObject());
+        }
+
+        if (currentSection != null) {
+            processRow(columns);
         }
     }
 
     private String findTitle(String[] columns) {
         for (String column : columns) {
             if (!column.trim().isEmpty()) {
-                // Found the first non-empty column, use it as the title
                 return column.trim();
             }
         }
-        return null;  // No non-empty column found
+        return null;
     }
 
-    private String processSection(String[] columns, String title) {
-        JsonObject jsonObject = new JsonObject();
-        jsonObject.addProperty("ObjectName", title);
+    private void processRow(String[] columns) {
+        JsonObject sectionObject = sections.get(currentSection);
+        if (sectionObject != null) {
+            if (columns.length > 1) {
+                String attribute = columns[1].trim();
+                String value = columns.length > 2 ? columns[2].trim() : "";
 
-        // Extract and add relevant attributes to the JSON object
-        // Customize this part based on your CSV structure
-        for (int i = 1; i < columns.length; i++) {
-            String jsonKey = "key" + i;
-            jsonObject.addProperty(jsonKey, columns[i].trim());
+                if (!attribute.isEmpty()) {
+                    sectionObject.addProperty(attribute, value);
+                }
+            }
         }
+    }
 
-        return jsonObject.toString();
+    // Convert sections Map to JSON array
+    private String convertToJson() {
+        JsonObject result = new JsonObject();
+        for (Map.Entry<String, JsonObject> entry : sections.entrySet()) {
+            result.add(entry.getKey(), entry.getValue());
+        }
+        return result.toString();
+    }
+
+    @Override
+    public void close() throws Exception {
+        super.close();
+        collector.collect(convertToJson());
     }
 }

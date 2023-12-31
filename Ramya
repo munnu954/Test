@@ -1,48 +1,44 @@
-public class CsvToJsonFlinkJob extends RichFlatMapFunction<String, String> {
+import com.google.gson.JsonObject;
+import org.apache.flink.api.common.functions.FlatMapFunction;
+import org.apache.flink.util.Collector;
+
+public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
     @Override
     public void flatMap(String input, Collector<String> collector) throws Exception {
-        String[] values = input.split(",");
-        String objectName = values[2];
-        String beginDate = getColumnValue("BEGIN DATE", values);
-        String endDate = getColumnValue("END DATE", values);
-        String ticketNumber = getColumnValue("TICKET NUMBER", values);
+        String[] lines = input.split(System.lineSeparator());
+        JsonObject result = new JsonObject();
+        String objectName = "";
+        JsonObject sectionObject = null;
 
-        JsonObject json = new JsonObject();
-        json.addProperty("ObjectName", objectName);
-        json.addProperty("Begin Date", beginDate);
-        json.addProperty("End Date", endDate);
-        json.addProperty("Ticket Number", ticketNumber);
+        for (String line : lines) {
+            String[] arr = line.split(",");
 
-        // Handle different sections and details dynamically
-        handleSection(objectName, values, json);
+            if (arr.length > 2 && !arr[2].isEmpty()) {
+                // New object name found
+                objectName = arr[2].trim();
+                sectionObject = new JsonObject();
+            } else if (arr.length > 3 && !arr[3].isEmpty()) {
+                // Section name found
+                String sectionName = arr[3].trim();
 
-        collector.collect(json.toString());
-    }
-
-    private String getColumnValue(String columnHeader, String[] values) {
-        for (int i = 0; i < values.length; i++) {
-            if (values[i].trim().equals(columnHeader)) {
-                return values[i + 1].trim(); // Assuming the value is in the next column
+                // Check if sectionObject is not null (handles sections without metrics)
+                if (sectionObject != null) {
+                    JsonObject metricObject = new JsonObject();
+                    metricObject.addProperty("Min", arr[4].trim());
+                    metricObject.addProperty("Average", arr[5].trim());
+                    metricObject.addProperty("Max", arr[6].trim());
+                    metricObject.addProperty("Cumulative Counter Value", arr[7].trim());
+                    sectionObject.add(sectionName, metricObject);
+                }
             }
         }
-        return "";
-    }
 
-    private void handleSection(String objectName, String[] values, JsonObject json) {
-        JsonObject sectionJson = new JsonObject();
-
-        // Assuming section headers are in the row with "MAX AVERAGE MIN CUMULATIVE COUNTER VALUE"
-        String[] headers = values[values.length - 1].split(",");
-        
-        // Assuming details start from the row after section headers
-        String[] details = values[values.length - 2].split(",");
-        
-        for (int i = 0; i < details.length; i++) {
-            sectionJson.addProperty(headers[i].trim(), details[i].trim());
+        // Check if objectName is not empty (handles cases where the file ends without a section)
+        if (!objectName.isEmpty()) {
+            result.add(objectName, sectionObject);
         }
 
-        // Add section to the main JSON
-        json.add(objectName, sectionJson);
+        collector.collect(result.toString());
     }
 }

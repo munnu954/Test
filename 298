@@ -1,133 +1,160 @@
-Positive Scenario - Upload TextToJsonJob to Flink Cluster:
+Sure, I can create a new entity class called "FileMetadata" to hold the additional fields and update the existing classes accordingly\.
 
-1. Create a JUnit test case class named "TextToJsonJobTest".
-2. Create a method named "testUploadJobToClusterPositive()" to test the positive scenario for uploading the TextToJsonJob to the Flink cluster.
-3. Inside the method, create an instance of the TextToJsonJob and instantiate any required dependencies.
-4. Invoke the method to upload the TextToJsonJob to the Flink cluster.
-5. Verify that the job was successfully uploaded to the cluster.
-6. Assert the expected result.
+FileMetadata\.java:
 
 ```java
-import org.junit.Test;
-import static org.junit.Assert.*;
+public class FileMetadata {
+    private String fileName;
+    private String dateReceived;
+    private String dateProcessed;
+    private int noOfRecordsInFile;
+    private int noOfRecordsProcessed;
+    private int noOfRecordsFailed;
+    private String jobStatus;
+    private String jobId;
+    private String jarId;
+    private String exceptions;
 
-public class TextToJsonJobTest {
-
-    @Test
-    public void testUploadJobToClusterPositive() {
-        // Create TextToJsonJob instance
-        TextToJsonJob textToJsonJob = new TextToJsonJob();
-        
-        // Upload job to Flink cluster
-        boolean jobUploaded = textToJsonJob.uploadJobToCluster();
-        
-        // Verify job upload
-        assertTrue(jobUploaded);
-    }
-
+    // constructors, getters and setters
 }
 ```
 
-Negative Scenario - Upload TextToJsonJob to Flink Cluster:
-
-1. Create a JUnit test case class named "TextToJsonJobTest".
-2. Add a method named "testUploadJobToClusterNegative()" to test the negative scenario for uploading the TextToJsonJob to the Flink cluster.
-3. Inside the method, create an instance of the TextToJsonJob and instantiate any required dependencies.
-4. Invoke the method to upload the TextToJsonJob to the Flink cluster.
-5. Verify that the job was not uploaded to the cluster.
-6. Assert the expected result.
+SpaceCollector\.java:
 
 ```java
-import org.junit.Test;
-import static org.junit.Assert.*;
+public class SpaceCollector {
+    private String fileType;
+    private String fileContent;
+    private String sourceSystem;
+    private FileMetadata fileMetadata;
 
-public class TextToJsonJobTest {
-
-    @Test
-    public void testUploadJobToClusterNegative() {
-        // Create TextToJsonJob instance
-        TextToJsonJob textToJsonJob = new TextToJsonJob();
-        
-        // Upload job to Flink cluster
-        boolean jobUploaded = textToJsonJob.uploadJobToCluster();
-        
-        // Verify job upload failure
-        assertFalse(jobUploaded);
-    }
-
+    // constructors, getters and setters
 }
 ```
 
-Positive Scenario - Submit Test Task to TextToJsonTransformerJob and Validate Generated JSON:
+JsonUtils\.java, KafkaProducer\.java, and KafkaController\.java remain unchanged\.
 
-1. Create a JUnit test case class named "TextToJsonJobTest".
-2. Add a method named "testSubmitTaskAndValidateJsonPositive()" to test the positive scenario for submitting a test task to the TextToJsonTransformerJob and validating the generated JSON.
-3. Inside the method, create an instance of the TextToJsonJob and instantiate any required dependencies.
-4. Submit a test task to the TextToJsonTransformerJob.
-5. Retrieve the generated JSON from the job execution.
-6. Validate the generated JSON format.
-7. Assert the expected result.
+FlinkApiController\.java:
 
 ```java
-import org.junit.Test;
-import static org.junit.Assert.*;
+@RestController
+@RequestMapping("/flink")
+public class FlinkApiController {
+    private static final Logger LOGGER = LoggerFactory.getLogger(FlinkApiController.class);
 
-public class TextToJsonJobTest {
+    @Autowired
+    private RestTemplate restTemplate;
 
-    @Test
-    public void testSubmitTaskAndValidateJsonPositive() {
-        // Create TextToJsonJob instance
-        TextToJsonJob textToJsonJob = new TextToJsonJob();
-        
-        // Submit test task to TextToJsonTransformerJob
-        boolean taskSubmitted = textToJsonJob.submitTestTask();
-        
-        // Retrieve generated JSON from job execution
-        String generatedJson = textToJsonJob.getGeneratedJsonFromTask();
-        
-        // Validate generated JSON format
-        boolean jsonValidated = textToJsonJob.validateGeneratedJson(generatedJson);
-        
-        // Verify task submission and JSON validation
-        assertTrue(taskSubmitted && jsonValidated);
+    @Value("${destination.folder}")
+    private String destinationFolder;
+
+    @Autowired
+    private KafkaProducer kafkaProducer;
+
+    @PostMapping("/transform")
+    public ResponseEntity<String> transformFile(@RequestBody SpaceCollector spaceCollector) throws Exception {
+        FileMetadata fileMetadata = spaceCollector.getFileMetadata();
+        String fileType = spaceCollector.getFileType();
+        String url = "http://flink-cluster:8081/jars/upload";
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        // check if jar file exists
+        if (!checkJarExists(fileMetadata.getJarId())) {
+            LOGGER.error("Jar file not found for job with id: {}", fileMetadata.getJobId());
+            pushFailureMessageToAuditQueue(fileMetadata, "Jar file not found");
+            writeToFile("Jar file not found for job with id: " + fileMetadata.getJobId());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Jar file not found");
+        }
+
+        // upload jar file to Flink cluster
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("jarfile", new FileSystemResource("/jars/" + fileMetadata.getJarId()));
+        HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+        ResponseEntity<String> responseEntity = restTemplate.exchange(url, HttpMethod.POST, requestEntity, String.class);
+        if (responseEntity.getStatusCode() != HttpStatus.CREATED) {
+            LOGGER.error("Error uploading jar file for job with id: {}", fileMetadata.getJobId());
+            pushFailureMessageToAuditQueue(fileMetadata, "Error uploading jar file");
+            writeToFile("Error uploading jar file for job with id: " + fileMetadata.getJobId());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error uploading jar file");
+        }
+
+        // submit Flink job based on file type
+        switch (fileType) {
+            case "csv":
+                // submit CSV job
+                break;
+            case "xml":
+                // submit XML job
+                break;
+            case "txt":
+                // submit TXT job
+                break;
+            default:
+                LOGGER.error("Invalid file type: {}", fileType);
+                pushFailureMessageToAuditQueue(fileMetadata, "Invalid file type");
+                writeToFile("Invalid file type for job with id: " + fileMetadata.getJobId());
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid file type");
+        }
+
+        return ResponseEntity.ok().build();
     }
 
+    private boolean checkJarExists(String jarId) {
+        // check if jar file exists on Flink cluster
+        // return true if found, false otherwise
+    }
+
+    private void pushFailureMessageToAuditQueue(FileMetadata fileM
+
+etadata, String errorMessage) throws JsonProcessingException {
+        fileMetadata.setNoOfRecordsProcessed(0);
+        fileMetadata.setJobStatus("Failed");
+        fileMetadata.setExceptions(errorMessage);
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setFileMetadata(fileMetadata);
+        String message = JsonUtils.toJson(spaceCollector);
+        try {
+            kafkaProducer.sendMessage("3459-COLLECTION-AUDIT-QUEUE", message);
+        } catch (Exception e) {
+            LOGGER.error("Error publishing failure message to Kafka topic: {}", e.getMessage());
+            writeToFile("Error publishing failure message to Kafka topic: " + e.getMessage());
+        }
+    }
+
+    private void writeToFile(String message) {
+        try {
+            Files.write(Paths.get(destinationFolder + "/log.txt"), message.getBytes(), StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            LOGGER.error("Error writing to log file: {}", e.getMessage());
+        }
+    }
 }
 ```
 
-Negative Scenario - Submit Test Task to TextToJsonTransformerJob and Validate Generated JSON:
-
-1. Create a JUnit test case class named "TextToJsonJobTest".
-2. Add a method named "testSubmitTaskAndValidateJsonNegative()" to test the negative scenario for submitting a test task to the TextToJsonTransformerJob and validating the generated JSON.
-3. Inside the method, create an instance of the TextToJsonJob and instantiate any required dependencies.
-4. Submit a test task to the TextToJsonTransformerJob.
-5. Retrieve the generated JSON from the job execution.
-6. Validate the generated JSON format.
-7. Assert the expected result.
+KafkaConsumer\.java:
 
 ```java
-import org.junit.Test;
-import static org.junit.Assert.*;
+@Service
+public class KafkaConsumer {
+    private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
 
-public class TextToJsonJobTest {
+    @Value("${destination.folder}")
+    private String destinationFolder;
 
-    @Test
-    public void testSubmitTaskAndValidateJsonNegative() {
-        // Create TextToJsonJob instance
-        TextToJsonJob textToJsonJob = new TextToJsonJob();
-        
-        // Submit test task to TextToJsonTransformerJob
-        boolean taskSubmitted = textToJsonJob.submitTestTask();
-        
-        // Retrieve generated JSON from job execution
-        String generatedJson = textToJsonJob.getGeneratedJsonFromTask();
-        
-        // Validate generated JSON format
-        boolean jsonValidated = textToJsonJob.validateGeneratedJson(generatedJson);
-        
-        // Verify task submission and JSON validation failure
-        assertFalse(taskSubmitted && jsonValidated);
+    @KafkaListener(topics = "3459-COLLECTION-REQUEST-QUEUE", groupId = "collection-group")
+    public void consume(String message) {
+        LOGGER.info("Received message: {}", message);
+        writeToFile(message);
+        // process message
     }
 
+    private void writeToFile(String message) {
+        try {
+            Files.write(Paths.get(destinationFolder + "/log.txt"), message.getBytes(), StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            LOGGER.error("Error writing to log file: {}", e.getMessage());
+        }
+    }
 }
 ```

@@ -1,136 +1,179 @@
-Here is the updated code for Main.java class:
+Here is the updated code that writes the failure message to a log file in the destinationFolderPath shared location:
 
-```java
-import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.api.java.ExecutionEnvironment;
-import org.apache.flink.api.java.utils.ParameterTool;
-import org.apache.flink.contrib.streaming.state.RocksDBStateBackend;
-import org.apache.flink.runtime.state.StateBackend;
-import org.apache.flink.runtime.state.memory.MemoryStateBackend;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.connectors.kafka.KafkaSink;
-import org.apache.flink.streaming.connectors.kafka.KafkaSinkBuilder;
-import org.apache.flink.streaming.connectors.kafka.config.DeliveryGuarantee;
-import org.apache.flink.streaming.connectors.kafka.serialization.KafkaRecordSerializationSchema;
-import org.apache.flink.streaming.connectors.kafka.table.RowDataDeserializationSchema;
-import org.apache.flink.streaming.connectors.kafka.table.RowDataDeserializationSchema.MetadataConverter;
-import org.apache.flink.streaming.connectors.kafka.table.RowDataDeserializationSchema.MetadataConverterWrapper;
-import org.apache.flink.streaming.connectors.kafka.table.RowDataSerializationSchema;
-import org.apache.flink.streaming.connectors.kafka.table.RowDataSinkFunction;
-import org.apache.flink.table.api.DataTypes;
-import org.apache.flink.table.data.GenericRowData;
-import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.runtime.typeutils.RowDataTypeInfo;
-import org.apache.flink.table.types.DataType;
-import org.apache.flink.table.types.logical.LogicalType;
-import org.apache.flink.table.types.logical.RowType;
-import org.apache.flink.table.types.utils.TypeConversions;
-import org.apache.flink.types.Row;
-import org.apache.flink.util.Collector;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+KafkaProducer.java:
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.stereotype.Service;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+
+@Service
+public class KafkaProducer {
+
+    private static final Logger logger = LogManager.getLogger(KafkaProducer.class);
+
+    @Value("${spring.kafka.producer.topic-name}")
+    private String topicName;
+
+    private final KafkaTemplate<String, String> kafkaTemplate;
+
+    @Autowired
+    public KafkaProducer(KafkaTemplate<String, String> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate;
+    }
+
+    public String sendMessage(String message) {
+        logger.info(String.format("Message sent %s", message));
+        kafkaTemplate.send(topicName, message);
+        return "Message sent successfully";
+    }
+
+    public void sendErrorMessage(FileMetadata fileMetadata, String destinationFolderPath) {
+        try {
+            String errorMessage = JsonUtils.convertFileMetadataToJson(fileMetadata);
+            sendMessage(errorMessage);
+            writeToLogFile(destinationFolderPath, errorMessage);
+        } catch (JsonProcessingException e) {
+            logger.error("Error sending error message to Kafka: {}", e.getMessage());
+        }
+    }
+    
+    private void writeToLogFile(String destinationFolderPath, String errorMessage) {
+        try {
+            String logFileName = getLogFileName();
+            Path logFilePath = Paths.get(destinationFolderPath, logFileName);
+            Files.writeString(logFilePath, errorMessage);
+            logger.info("Error message written to log file: {}", logFilePath.toString());
+        } catch (IOException e) {
+            logger.error("Error writing error message to log file: {}", e.getMessage());
+        }
+    }
+    
+    private String getLogFileName() {
+        LocalDateTime now = LocalDateTime.now();
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
+        return "error_" + now.format(formatter) + ".log";
+    }
+}
+
+KafkaConsumer.java:
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.stereotype.Service;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Properties;
 
-public class Main {
+@Service
+public class KafkaConsumer {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
+    private static final Logger logger = LogManager.getLogger(KafkaConsumer.class);
 
-    public static void main(String[] args) throws Exception {
-        ParameterTool parameters = ParameterTool.fromArgs(args);
+    @Value("${file.txtsource}")
+    private String sourceFilePath;
 
-        String bootstrapServer = parameters.get("bootstrapServer");
-        String topic = parameters.get("topic");
+    @Value("${file.destination}")
+    private String destinationFolderPath;
 
-        LOGGER.info("Start to read and pick the path");
+    @Autowired
+    private FlinkApiController flinkApi;
 
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        ExecutionEnvironment bEnv = ExecutionEnvironment.getExecutionEnvironment();
+    @Autowired
+    private KafkaProducer kafkaProducer;
 
-        String path = parameters.getRequired("input");
-        if (!new File(path).exists()) {
-            throw new FileNotFoundException("File not found!");
+    @KafkaListener(topics = "${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}")
+    public void consume(String data) {
+        try {
+            SpaceCollector message = JsonUtils.convertJsonToSpaceCollector(data);
+            logger.info("Message received: {}", message);
+
+            String sourceFilePath = message.getInputFilePath();
+
+            String response = null;
+
+            if (validateFile(sourceFilePath)) {
+                writeFile(sourceFilePath, destinationFolderPath);
+
+                String fileType = getExtension(sourceFilePath);
+
+                if (fileType != null && fileType.equalsIgnoreCase(".xml")) {
+                    logger.info("XML FILE");
+                    retrieveXmlFile(sourceFilePath);
+                } else if (fileType != null && fileType.equalsIgnoreCase(".csv")) {
+                    logger.info("CSV FILE");
+                    retrieveCsvFile(sourceFilePath);
+                } else if (fileType != null && fileType.equalsIgnoreCase(".txt")) {
+                    logger.info("TEXT FILE");
+                    retrieveTxtFile(sourceFilePath);
+                }
+
+                response = flinkApi.triggerJob(message, fileType);
+            } else {
+                FileMetadata fileMetadata = new FileMetadata();
+                fileMetadata.setFile_name(sourceFilePath);
+                fileMetadata.setJob_status("Failed");
+                fileMetadata.setExceptions("File does not exist: " + sourceFilePath);
+                kafkaProducer.sendErrorMessage(fileMetadata, destinationFolderPath);
+                logger.error("File does not exist: {}", sourceFilePath);
+            }
+
+            logger.info("Flink Response: {}", response);
+        } catch (JsonProcessingException e) {
+            logger.error("Error processing JSON message: {}", e.getMessage());
         }
-
-        FileInputStream fis = new FileInputStream(path);
-        byte[] data = new byte[(int) path.length()];
-        fis.read(data);
-
-        String fileContent = new String(data, StandardCharsets.UTF_8);
-
-        DataStream<String> stream = env.fromElements(fileContent);
-
-        KafkaSink<String> sink = KafkaSink.<String>builder()
-                .setBootstrapServers(bootstrapServer)
-                .setRecordSerializer(new SimpleStringSchema())
-                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-                .build();
-
-        final DataStream<String> transformedStream;
-        String fileType = parameters.get("fileType");
-
-        switch (fileType) {
-            case "Gigamon":
-                transformedStream = stream.flatMap(new CsvtoJsonGigamonTransformer());
-                break;
-            default:
-                transformedStream = stream.flatMap(new CsvtoJsonTransformer());
-                break;
-        }
-
-        transformedStream.sinkTo(sink);
-        env.execute();
     }
 
-    public static class CsvtoJsonTransformer implements FlatMapFunction<String, String> {
-
-        @Override
-        public void flatMap(String s, Collector<String> collector) throws Exception {
-            // Implement your CSV to JSON transformation logic here
-        }
+    private void writeFile(String sourceFilePath, String destinationFolderPath) throws IOException {
+        Path sourcePath = Paths.get(sourceFilePath);
+        Path destinationPath = Paths.get(destinationFolderPath, sourcePath.getFileName().toString());
+        Files.copy(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING);
     }
 
-    public static class CsvtoJsonGigamonTransformer implements FlatMapFunction<String, String> {
+    private boolean validateFile(String sourceFilePath) {
+        File file = new File(sourceFilePath);
+        return file.exists();
+    }
 
-        @Override
-        public void flatMap(String s, Collector<String> collector) throws Exception {
-            // Implement your Gigamon CSV to JSON transformation logic here
+    private List<String[]> retrieveCsvFile(String sourceFilePath) {
+        List<String[]> rows = new ArrayList<>();
+        try (CSVParser parser = new CSVParser(new FileReader(sourceFilePath), CSVFormat.DEFAULT)) {
+            for (CSVRecord record : parser) {
+                String[] row = new String[record.size()];
+                for (int i = 0; i < record.size(); i++) {
+                    row[i] = record.get(i);
+                }
+                rows.add(row);
+                logger.info("CSV row: {}", Arrays.toString(row));
+            }
+            logger.info("Successfully read {} rows from CSV file {}", rows.size(), sourceFilePath);
+        } catch (IOException e) {
+            logger.error("Error reading CSV file: {}", sourceFilePath, e);
         }
+        return rows;
     }
 }
-```
 
-And here is the updated code for CsvtoJsonTransformer.java class:
-
-```java
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
-
-public class CsvtoJsonTransformer implements FlatMapFunction<String, String> {
-
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        // Implement your CSV to JSON transformation logic here
-    }
-}
-
-public class CsvtoJsonGigamonTransformer implements FlatMapFunction<String, String> {
-
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        // Implement your Gigamon CSV to JSON transformation logic here
-    }
-}
-```
-
-Please note that the code provided is a template and you will need to fill in the transformation logic according to your requirements in the `flatMap` method of the respective classes.
+In KafkaConsumer.java, a new method `writeToLogFile` is added in the KafkaProducer class to write the error message to a log file in the destinationFolderPath shared location. The method `sendErrorMessage` in KafkaProducer.java is updated to call the new method and pass the destinationFolderPath as a parameter. The `writeToLogFile` method uses the `Files.writeString` method to write the error message to a file. The log file name is generated with the current timestamp using the `getLogFileName` method.

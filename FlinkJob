@@ -1,106 +1,390 @@
-Here is the modified code with the added functionality:
 
-Main.java:
+SpaceCollector.java model class:-
 
-```java
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.api.java.utils.ParameterTool;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema;
-import org.apache.flink.streaming.connectors.kafka.KafkaSink;
-import org.apache.flink.streaming.connectors.kafka.internals.DeliveryGuarantee;
-import org.apache.flink.streaming.connectors.kafka.internals.KafkaSerializationSchemaWrapper;
-import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
-import org.apache.flink.util.Collector;
-import org.json.JSONObject;
-
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.nio.file.Path;
-import java.util.Arrays;
-import java.util.List;
-
-public class Main {
-
-    private static String bootstrapServer;
-    private static String topic;
-    private static String[] headers;
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
-
-    public static void main(String[] args) throws Exception {
-        ParameterTool parameters = ParameterTool.fromArgs(args);
-
-        bootstrapServer = parameters.get("bootstrapServer");
-        topic = parameters.get("topic");
-
-        LOGGER.info("Start to read and pick the path");
-
-        String path = parameters.getRequired("input");
-        if (!(new File(path).exists())) {
-            throw new FileNotFoundException("File not found!");
-        }
-
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(1); // Set parallelism to 1 for this example
-
-        KafkaSink<String> sink = KafkaSink.<String>builder()
-                .setBootstrapServers(bootstrapServer)
-                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
-                        .setTopic(topic)
-                        .setValueSerializationSchema(new SimpleStringSchema())
-                        .build())
-                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-                .build();
-
-        final DataStream<String> stream = env.readTextFile(path)
-                .flatMap(new CsvToJsonTransformer())
-                .sinkTo(sink);
-
-        env.execute("Flink Kafka Sink Example");
-    }
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@ToString
+public class SpaceCollector {
+   private Integer id;
+   private String url;
+   @Max(value = 9999, message = "Only 4 digit port number allowed")
+   private Integer port;
+   private String inputFilePath;
+   private String outputFilePath;
+   private String delimiters;
+   private String fileType;
 }
-```
 
-CsvToJsonTransformer.java:
-```java
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
-import org.json.JSONObject;
+FileMetadata.java model class:-
 
-public class CsvToJsonTransformer implements FlatMapFunction<String, String> {
-    private String[] headers;
-
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] arr = s.split(",");
-
-        if (headers == null) {
-            headers = arr; // Store the header row for key names
-            return; // Skip processing the header row
-        }
-
-        JSONObject obj = new JSONObject();
-
-        for (int i = 0; i < arr.length; i++) {
-            String jsonKey = headers[i].trim();
-            String jsonValue = arr[i].trim().replace("\"", ""); // Remove any quotes around the value
-            obj.put(jsonKey, jsonValue);
-        }
-
-        collector.collect(obj.toString());
-    }
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@ToString
+public class FileMetadata {
+   private String file_name;
+   private String date_received;
+   private String date_processed;
+   private Integer no_of_records_in_the_file;
+   private Integer no_of_records_processed;
+   private Integer no_of_records_failed;
+   private String job_status;
+   private String job_id;
+   private String jar_id;
+   private String exceptions;
 }
-```
 
-Note that I made a few changes to the original code for better readability and clarity:
+JsonUtils.java class:-
+public class JsonUtils {
+   public static String convertSpaceCollectorToJson(SpaceCollector sp) throws JsonProcessingException { 
+      ObjectWriter ow = new ObjectMapper().writer().withDefaultPrettyPrinter();
+      return ow.writeValueAsString(sp);
+   }
 
-- Removed unused imports.
-- Added a separate variable for the headers array.
-- Changed the Logger declaration to `private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);`
-- Set parallelism to 1 in the StreamExecutionEnvironment for this example.
-- Added a name for the execution environment using `env.execute("Flink Kafka Sink Example");`.
+   public static SpaceCollector convertJsonToSpaceCollector(String data) throws JsonProcessingException {
+      ObjectMapper mapper = new ObjectMapper();
+      return mapper.readValue(data, SpaceCollector.class);
+   }
+}
 
-Please make sure to import the required packages and adjust the code according to your specific use case.
+KafkaProducer.java class:-
+@Service
+public class KafkaProducer {
+
+   @Value("${spring.kafka.producer.topic-name}")
+   private String topicName;
+
+   private static final Logger Logger = LoggerFactory.getLogger(KafkaProducer.class);
+
+   private final KafkaTemplate<String, Object> kafkaTemplate;
+
+   @Autowired
+   public KafkaProducer(KafkaTemplate<String, Object> kafkaTemplate) {
+      this.kafkaTemplate = kafkaTemplate;
+   }
+
+   public String sendMessage(SpaceCollector message) {
+      Logger.info(String.format("Message sent %s", message));
+      kafkaTemplate.send(topicName, message);
+      return "Message sent successfully";
+   }
+
+   public void sendFailureMessage(FileMetadata metadata) {
+      Logger.info(String.format("Failure message sent %s", metadata));
+      kafkaTemplate.send(topicName, metadata);
+   }
+}
+
+KafkaController.java:-
+@RestController
+public class KafkaController {
+
+   @Autowired
+   private KafkaProducer kafkaProducer;
+
+   @PostMapping("/kafkaPush")
+   public Boolean sendMessage(@RequestBody SpaceCollector message) {
+      kafkaProducer.sendMessage(message);
+      return true;
+   }
+}
+
+FlinkApiController.java:-
+@Service
+public class FlinkApiController {
+
+   @Value("${flink.api.url}")
+   private String flinkApiUrl;
+
+   @Value("${flink.job.csv.jarid}")
+   private String flinkJobJarid;
+
+   @Value("${flink.job.csv.program-args}")
+   private String programArgs;
+
+   @Value("${flink.job.txt.jarid}")
+   private String flinkJobTxtJarid;
+
+   @Value("${flink.job.xml.program-args}")
+   private String programXmlArgs;
+
+   @Value("${flink.job.xml.jarid}")
+   private String flinkJobXmlJarid;
+
+   HttpHeaders headers = new HttpHeaders();
+
+   private static final Logger LOGGER = LoggerFactory.getLogger(FlinkApiController.class);
+
+   @PostMapping
+   public String triggerJob(SpaceCollector collector, String fileType) {
+      RestTemplate restTemplate = new RestTemplate();
+      LOGGER.info("TRIGGER JOB");
+
+      HttpEntity<String> request = null;
+      String jobSubmitUrl = null;
+
+      if (programArgs != null && !programArgs.isEmpty()) {
+         headers.setContentType(MediaType.APPLICATION_JSON);
+
+         JSONObject requestBody = new JSONObject();
+
+         if (fileType.equalsIgnoreCase(".csv")) {
+            requestBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+            jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
+
+         } else if (fileType.equalsIgnoreCase(".xml")) {
+            LOGGER.info("XML FLINK TRIGGER");
+
+programXmlArgs = programXmlArgs.replace("|filePath|", collector.getInputFilePath());
+            programXmlArgs = programXmlArgs.replace(" |primaryKey|", "");
+            requestBody.put("programArgs", programXmlArgs);
+            jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobXmlJarid + "/run";
+            LOGGER.info("jobSubmitUrl:" + jobSubmitUrl);
+            LOGGER.info("requestBody::" + requestBody.toString());
+         } else if (fileType.equalsIgnoreCase(".txt")) {
+            LOGGER.info("TEXT FLINK TRIGGER");
+
+            requestBody.put("programArgs", programArgs.replace("|input|", collector.getInputFilePath()));
+            jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobTxtJarid + "/run";
+         }
+
+         request = new HttpEntity<String>(requestBody.toString(), headers);
+      }
+
+      // Trigger the submitted jar
+      String response = restTemplate.postForObject(jobSubmitUrl, request, String.class);
+      LOGGER.info("response: " + response);
+      return response;
+   }
+
+   public void setRestTemplate(RestTemplate restTemplate) {
+      this.restTemplate = restTemplate;
+   }
+}
+
+KafkaConsumer.java class:-
+@Service
+public class KafkaConsumer {
+
+   private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
+
+   @Value("${file.txtsource}")
+   private String sourceFilePath;
+
+   @Value("${file.destination}")
+   private String destinationFolderPath;
+
+   @Autowired
+   FlinkApiController flinkApiController;
+
+   @Autowired
+   KafkaProducer kafkaProducer;
+
+   @Autowired
+   private void setRestTemplate(RestTemplate restTemplate) {
+      this.restTemplate = restTemplate;
+   }
+
+   @KafkaListener(topics = "${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}")
+   public void consume(String data) throws IOException {
+      ObjectMapper mapper = new ObjectMapper();
+      SpaceCollector message = mapper.readValue(data, SpaceCollector.class);
+      LOGGER.info(String.format("Message received -> %s", message));
+
+      String sourceFilePath = message.getInputFilePath();
+      String response = null;
+
+      if (validateFile(sourceFilePath)) {
+         writeFile(sourceFilePath, destinationFolderPath);
+
+         String fileType = getExtension(sourceFilePath);
+
+         if (fileType != null && fileType.equalsIgnoreCase(".xml")) {
+            LOGGER.info("XML FILE");
+            response = flinkApiController.triggerJob(message, fileType);
+
+         } else if (fileType != null && fileType.equalsIgnoreCase(".csv")) {
+            LOGGER.info("CSV FILE");
+            response = flinkApiController.triggerJob(message, fileType);
+
+         } else if (fileType != null && fileType.equalsIgnoreCase(".txt")) {
+            LOGGER.info("TEXT FILE");
+            response = flinkApiController.triggerJob(message, fileType);
+         }
+
+         if (response != null && !response.equalsIgnoreCase("OK")) {
+            FileMetadata metadata = createFailureMetadata(message, fileType, response);
+            kafkaProducer.sendFailureMessage(metadata);
+         }
+      } else {
+         FileMetadata metadata = createFailureMetadata(message, null, "File does not exist");
+         kafkaProducer.sendFailureMessage(metadata);
+      }
+   }
+
+   public void writeFile(String sourceFilePath, String destinationFolderPath) throws IOException {
+      Path sourcePath = Paths.get(sourceFilePath);
+      Path destinationPath = Paths.get(destinationFolderPath, sourcePath.getFileName().toString());
+      Files.copy(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING);
+   }
+
+   public boolean validateFile(String sourceFilePath) {
+      File file = new File(sourceFilePath);
+      return file.exists();
+   }
+
+   public String getExtension(String sourceFilePath) {
+      String fileExtension = null;
+      try {
+
+if (sourceFilePath != null && sourceFilePath.contains(".")) {
+            fileExtension = (sourceFilePath.substring(sourceFilePath.lastIndexOf(".")));
+            LOGGER.info("fileExtension: " + fileExtension);
+         } else {
+            fileExtension = null;
+         }
+      } catch (Exception e) {
+         e.printStackTrace();
+      }
+      return fileExtension;
+   }
+
+   public FileMetadata createFailureMetadata(SpaceCollector message, String fileType, String errorMessage) {
+      FileMetadata metadata = new FileMetadata();
+      metadata.setFile_name(message.getInputFilePath());
+      metadata.setDate_received(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+      metadata.setDate_processed("");
+      metadata.setNo_of_records_in_the_file(0);
+      metadata.setNo_of_records_processed(0);
+      metadata.setNo_of_records_failed(0);
+      metadata.setJob_status("FAILURE");
+      metadata.setJob_id("");
+      metadata.setJar_id("");
+      metadata.setExceptions(errorMessage);
+      return metadata;
+   }
+}
+
+Please note that in the KafkaConsumer class, the method "retrieveCsvFile" and the method to delete the file have been removed as they are not required based on the given requirements.
+
+Updated code:
+
+KafkaConsumer.java class:-
+
+@Service
+public class KafkaConsumer {
+
+   private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
+
+   @Value("${file.txtsource}")
+   private String sourceFilePath;
+
+   @Value("${file.destination}")
+   private String destinationFolderPath;
+
+   @Autowired
+   FlinkApiController flinkApiController;
+
+   @Autowired
+   KafkaProducer kafkaProducer;
+
+   @Autowired
+   private void setRestTemplate(RestTemplate restTemplate) {
+      this.restTemplate = restTemplate;
+   }
+
+   @KafkaListener(topics = "${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}")
+   public void consume(String data) throws IOException {
+      ObjectMapper mapper = new ObjectMapper();
+      SpaceCollector message = mapper.readValue(data, SpaceCollector.class);
+      LOGGER.info(String.format("Message received -> %s", message));
+
+      String sourceFilePath = message.getInputFilePath();
+      String response = null;
+
+      if (validateFile(sourceFilePath)) {
+         writeFile(sourceFilePath, destinationFolderPath);
+
+         String fileType = getExtension(sourceFilePath);
+
+         if (fileType != null && fileType.equalsIgnoreCase(".xml")) {
+            LOGGER.info("XML FILE");
+            response = flinkApiController.triggerJob(message, fileType);
+
+         } else if (fileType != null && fileType.equalsIgnoreCase(".csv")) {
+            LOGGER.info("CSV FILE");
+            response = flinkApiController.triggerJob(message, fileType);
+
+         } else if (fileType != null && fileType.equalsIgnoreCase(".txt")) {
+            LOGGER.info("TEXT FILE");
+            response = flinkApiController.triggerJob(message, fileType);
+         }
+
+         if (response != null && !response.equalsIgnoreCase("OK")) {
+            FileMetadata metadata = createFailureMetadata(message, fileType, response);
+            kafkaProducer.sendFailureMessage(metadata);
+            writeLogToFile(metadata, destinationFolderPath);
+         }
+      } else {
+         FileMetadata metadata = createFailureMetadata(message, null, "File does not exist");
+         kafkaProducer.sendFailureMessage(metadata);
+         writeLogToFile(metadata, destinationFolderPath);
+      }
+   }
+
+   public void writeFile(String sourceFilePath, String destinationFolderPath) throws IOException {
+      Path sourcePath = Paths.get(sourceFilePath);
+      Path destinationPath = Paths.get(destinationFolderPath, sourcePath.getFileName().toString());
+      Files.copy(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING);
+   }
+
+   public boolean validateFile(String sourceFilePath) {
+      File file = new File(sourceFilePath);
+      return file.exists();
+   }
+
+   public String getExtension(String sourceFilePath) {
+      String fileExtension = null;
+      try {
+         if (sourceFilePath != null && sourceFilePath.contains(".")) {
+            fileExtension = (sourceFilePath.substring(sourceFilePath.lastIndexOf(".")));
+            LOGGER.info("fileExtension: " + fileExtension);
+         } else {
+            fileExtension = null;
+         }
+      } catch (Exception e) {
+         e.printStackTrace();
+      }
+      return fileExtension;
+   }
+
+   public FileMetadata createFailureMetadata(SpaceCollector message, String fileType, String errorMessage) {
+      FileMetadata metadata = new FileMetadata();
+      metadata.setFile_name(message.getInputFilePath());
+      metadata.setDate_received(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+      metadata.setDate_processed("");
+      metadata.setNo_of_records_in_the_file(0);
+      metadata.setNo_of_records_processed(0);
+      metadata.setNo_of_records_failed(0);
+      metadata.setJob_status("FAILURE");
+      metadata.setJob_id("");
+      metadata.setJar_id("");
+      metadata.setExceptions(errorMessage);
+
+return metadata;
+   }
+   
+   public void writeLogToFile(FileMetadata metadata, String destinationFolderPath) {
+      String logFilePath = destinationFolderPath + "/log.txt";
+      try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
+         fileWriter.write(metadata.toString());
+         fileWriter.write(System.lineSeparator());
+         fileWriter.flush();
+      } catch (IOException e) {
+         e.printStackTrace();
+      }
+   }
+}
+
+Note: The updated code includes a new method "writeLogToFile" in the KafkaConsumer class, which writes the failure message to a log file in the destinationFolderPath shared location.

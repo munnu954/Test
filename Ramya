@@ -1,60 +1,51 @@
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.util.Collector;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonArray;
 
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
     @Override
     public void flatMap(String input, Collector<String> collector) throws Exception {
         String[] lines = input.split(System.lineSeparator());
-        JsonArray resultArray = new JsonArray();
-        JsonObject currentObject = null;
-        boolean skipNextRow = false;
+        String objectName = lines[0].split(",")[2].trim();
+        JsonObject result = new JsonObject();
+        JsonObject objectDetails = new JsonObject();
 
-        for (int i = 0; i < lines.length; i++) {
-            if (skipNextRow) {
-                skipNextRow = false;
-                continue;
-            }
-
+        for (int i = 1; i < lines.length; i++) {
             String[] arr = lines[i].split(",");
 
             if (arr.length > 2 && !arr[2].isEmpty()) {
                 // This is the line containing ObjectName
-                if (currentObject != null) {
-                    resultArray.add(currentObject);
-                }
+                objectName = arr[2].trim();
 
-                currentObject = new JsonObject();
-                currentObject.addProperty("ObjectName", arr[2].trim());
-
-                // Fetching EndDate and Ticket Number
-                if (i + 2 < lines.length) {
-                    currentObject.addProperty("Begin Date", lines[i + 1].split(",")[1].trim());
-                    currentObject.addProperty("End Date", lines[i + 2].split(",")[1].trim());
-                    currentObject.addProperty("Ticket Number", lines[i + 3].split(",")[1].trim());
-                    skipNextRow = true; // Skip the next row after "TICKET NUMBER"
+                // Extract details from the lines below ObjectName
+                if (i + 3 < lines.length) {
+                    objectDetails.put("Begin Date", lines[i + 1].split(",")[1].trim());
+                    objectDetails.put("End Date", lines[i + 2].split(",")[1].trim());
+                    objectDetails.put("Ticket Number", lines[i + 3].split(",")[1].trim());
                 }
-            } else if (arr.length > 0 && !arr[0].isEmpty() && !arr[0].equals(",,,Min Average Max CumulativeCounterValue(Skip this row)")) {
+            } else if (arr.length > 0 && !arr[0].isEmpty() && !arr[0].equals("TICKET NUMBER")) {
                 // This is a line containing SectionName
                 String sectionName = arr[0].trim();
                 JsonObject sectionObject = new JsonObject();
 
-                sectionObject.addProperty("Min", arr.length > 3 ? arr[3].trim() : "");
-                sectionObject.addProperty("Average", arr.length > 4 ? arr[4].trim() : "");
-                sectionObject.addProperty("Max", arr.length > 5 ? arr[5].trim() : "");
-                sectionObject.addProperty("Cumulative Counter Value", arr.length > 6 ? arr[6].trim() : "");
+                // Extract details for the section
+                if (arr.length > 3) {
+                    sectionObject.put("Min", arr[3].trim());
+                    sectionObject.put("Average", arr[4].trim());
+                    sectionObject.put("Max", arr[5].trim());
+                    sectionObject.put("Cumulative Counter Value", arr[6].trim());
+                }
 
-                currentObject.add(sectionName, sectionObject);
+                // Add section to objectDetails
+                objectDetails.put(sectionName, sectionObject);
             }
         }
 
-        // Add the final JSON structure for the last object
-        if (currentObject != null) {
-            resultArray.add(currentObject);
-        }
+        // Add the final JSON structure to result
+        JsonObject finalResult = new JsonObject();
+        finalResult.put("ObjectName", objectName);
+        finalResult.put("Details", objectDetails);
 
-        collector.collect(resultArray.toString());
+        collector.collect(finalResult.toString());
     }
 }

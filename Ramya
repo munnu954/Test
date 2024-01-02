@@ -8,14 +8,25 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
     public void flatMap(String input, Collector<String> collector) throws Exception {
         String[] lines = input.split(System.lineSeparator());
 
-        for (int i = 1; i < lines.length; i++) {
+        JsonObject result = null;
+        JsonObject objectDetails = null;
+
+        // Extract details from the lines below ObjectName
+        int i = 0;
+        while (i < lines.length) {
             String[] arr = lines[i].split(",");
 
             if (arr.length > 2 && !arr[2].isEmpty()) {
                 // This is the line containing ObjectName
+                if (result != null) {
+                    // Collect the previous result
+                    collector.collect(result.toString());
+                }
+
+                result = new JsonObject();
+                objectDetails = new JsonObject();
+
                 String objectName = arr[2].trim();
-                JsonObject result = new JsonObject();
-                JsonObject objectDetails = new JsonObject();
 
                 // Extract details from the lines below ObjectName
                 if (i + 3 < lines.length) {
@@ -24,32 +35,37 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
                     objectDetails.addProperty("Ticket Number", getProperty(lines, i + 3, 1));
                 }
 
+                result.addProperty("ObjectName", objectName);
+                result.add("ObjectDetails", objectDetails);
+
                 // Continue processing the sections inside the loop
-                for (int j = i + 4; j < lines.length; j++) {
+                int j = i + 4; // Set initial value for j
+                while (j < lines.length && !lines[j].startsWith(",")) {
                     String[] sectionArr = lines[j].split(",");
-                    if (sectionArr.length > 0 && !sectionArr[0].isEmpty() && !sectionArr[0].equals("TICKET NUMBER")) {
+                    if (sectionArr.length > 0 && !sectionArr[0].isEmpty()) {
                         // This is a line containing SectionName, skip rows with "TICKET NUMBER"
                         String sectionName = sectionArr[0].trim();
                         JsonObject sectionObject = new JsonObject();
 
                         // Extract details for the section
-                        for (int k = 3; k < sectionArr.length; k++) {
-                            String propertyName = getPropertyName(sectionArr, k);
-                            String propertyValue = (k < sectionArr.length) ? sectionArr[k].trim() : "";
-                            sectionObject.addProperty(propertyName, propertyValue);
+                        int sectionLength = Math.min(sectionArr.length, 7); // Limit the section length
+                        for (int k = 3; k < sectionLength; k++) {
+                            sectionObject.addProperty(getPropertyName(sectionArr, k), getProperty(sectionArr, k));
                         }
 
-                        // Add section to result
-                        result.add(sectionName, sectionObject);
+                        // Add section to objectDetails
+                        objectDetails.add(sectionName, sectionObject);
                     }
+                    j++;
                 }
-
-                // Add the remaining JSON structure to result
-                result.addProperty("ObjectName", objectName);
-                result.add("ObjectDetails", objectDetails);
-
-                collector.collect(result.toString());
             }
+
+            i++;
+        }
+
+        // Collect the last result
+        if (result != null) {
+            collector.collect(result.toString());
         }
     }
 

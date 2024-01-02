@@ -1,35 +1,27 @@
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.util.Collector;
-import org.json.JSONObject;
+import com.google.gson.JsonObject;
 
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
 
     @Override
     public void flatMap(String input, Collector<String> collector) throws Exception {
         String[] lines = input.split(System.lineSeparator());
-        String currentObjectName = null;
-        JSONObject result = null;
-        JSONObject objectDetails = null;
 
         for (int i = 1; i < lines.length; i++) {
             String[] arr = lines[i].split(",");
 
             if (arr.length > 2 && !arr[2].isEmpty()) {
                 // This is the line containing ObjectName
-                if (currentObjectName != null) {
-                    // If a previous objectName set was being processed, collect it
-                    collectObjectAndReset(currentObjectName, result, objectDetails, collector);
-                }
-
-                currentObjectName = arr[2].trim();
-                result = new JSONObject();
-                objectDetails = new JSONObject();
+                String objectName = arr[2].trim();
+                JsonObject result = new JsonObject();
+                JsonObject objectDetails = new JsonObject();
 
                 // Extract details from the lines below ObjectName
                 if (i + 3 < lines.length) {
-                    objectDetails.put("Begin Date", lines[i + 1].split(",")[1].trim());
-                    objectDetails.put("End Date", lines[i + 2].split(",")[1].trim());
-                    objectDetails.put("Ticket Number", lines[i + 3].split(",")[1].trim());
+                    objectDetails.addProperty("Begin Date", getProperty(lines, i + 1, 1));
+                    objectDetails.addProperty("End Date", getProperty(lines, i + 2, 1));
+                    objectDetails.addProperty("Ticket Number", getProperty(lines, i + 3, 1));
                 }
 
                 // Continue processing the sections inside the loop
@@ -38,44 +30,37 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
                     if (sectionArr.length > 0 && !sectionArr[0].isEmpty() && !sectionArr[0].equals("TICKET NUMBER")) {
                         // This is a line containing SectionName, skip rows with "TICKET NUMBER"
                         String sectionName = sectionArr[0].trim();
-                        JSONObject sectionObject = new JSONObject();
+                        JsonObject sectionObject = new JsonObject();
 
                         // Extract details for the section
-                        if (sectionArr.length > 3) {
-                            sectionObject.put("Min", sectionArr[3].trim());
-                            sectionObject.put("Average", sectionArr[4].trim());
-                            sectionObject.put("Max", sectionArr[5].trim());
-                            sectionObject.put("Cumulative Counter Value", sectionArr[6].trim());
+                        for (int k = 3; k < sectionArr.length; k++) {
+                            sectionObject.addProperty(getPropertyName(sectionArr, k), getProperty(sectionArr, k));
                         }
 
-                        // Add section to objectDetails
-                        objectDetails.put(sectionName, sectionObject);
+                        // Add section to result
+                        result.add(sectionName, sectionObject);
                     }
                 }
 
                 // Add the remaining JSON structure to result
-                result.put("ObjectName", currentObjectName);
-                result.put("Begin Date", objectDetails.getString("Begin Date"));
-                result.put("End Date", objectDetails.getString("End Date"));
-                result.put("Ticket Number", objectDetails.getString("Ticket Number"));
-                objectDetails.remove("Begin Date");
-                objectDetails.remove("End Date");
-                objectDetails.remove("Ticket Number");
-                result.put("Sections", objectDetails);
-            }
-        }
+                result.addProperty("ObjectName", objectName);
+                result.add("ObjectDetails", objectDetails);
 
-        // Collect the last objectName set
-        if (currentObjectName != null) {
-            collectObjectAndReset(currentObjectName, result, objectDetails, collector);
+                collector.collect(result.toString());
+            }
         }
     }
 
-    private void collectObjectAndReset(String currentObjectName, JSONObject result, JSONObject objectDetails, Collector<String> collector) {
-        collector.collect(result.toString());
-        // Reset variables for the next objectName set
-        currentObjectName = null;
-        result = null;
-        objectDetails = null;
+    private String getProperty(String[] arr, int index) {
+        return (index < arr.length) ? arr[index].trim() : "";
+    }
+
+    private String getProperty(String[] lines, int lineIndex, int colIndex) {
+        String[] lineArr = lines[lineIndex].split(",");
+        return (colIndex < lineArr.length) ? lineArr[colIndex].trim() : "";
+    }
+
+    private String getPropertyName(String[] arr, int index) {
+        return (index < arr.length) ? arr[index].trim().replace(" ", "_") : "";
     }
 }

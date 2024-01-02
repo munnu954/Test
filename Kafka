@@ -1,160 +1,151 @@
-To fix these errors, the validation messages need to be returned properly in the KafkaProducerService class. The updated code for the KafkaProducerService class is as follows:
+To fulfill the above ACs, you can make the following changes in the code:
 
-public class KafkaProducerService {
+AC1: The job submission throws error and status code received is Not OK.
 
-    private static final String TOPIC = "space-collector";
+In the FlinkApiController class, modify the triggerJob() method:
+```java
+public String triggerJob(SpaceCollector collector, String fileType) {
+   // ...
+   ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
+   LOGGER.info("response: {}", response);
+   if (response.getStatusCode().is2xxSuccessful()) {
+      // Job submission successful
+      return "Job triggered: " + response;
+   } else {
+      // Job submission failed
+      LOGGER.error("Job submission failed. Status code: {}", response.getStatusCode());
+      kafkaProducer.sendFailureMessage(collector, fileType, response);
 
-    @Autowired
-    private KafkaTemplate<String, Object> kafkaTemplate;
+      // Add the code to validate the failure message, push it to the audit queue, and check the stack trace
 
-    public String sendJsonMessage(SpaceCollector spaceCollector) {
+      return "Job submission failed. Status code: " + response.getStatusCode();
+   }
+}
+```
 
-        if (spaceCollector.getId() == null) {
-            return "SpaceCollector json must have an id";
-        }
+AC2: Publishing to the queue 3459-COLLECTION-AUDIT-QUEUE fails and write the same to a log file in a shared location.
 
-        if (spaceCollector.getUrl() == null || spaceCollector.getUrl().isEmpty()) {
-            return "SpaceCollector json must have a non-empty url";
-        }
+In the KafkaProducer class, modify the sendFailureMessage() method:
+```java
+public void sendFailureMessage(SpaceCollector message, String fileType, ResponseEntity response) {
+   // ...
+   try {
+      this.writeMessage(metadata);
+   } catch (Exception e) {
+      Logger.error("Failed to push failure message to audit queue");
+      writeLogToFile(metadata);
+   }
+}
+```
 
-        if (spaceCollector.getPort() == 0) {
-            return "SpaceCollector json must have a non-zero port number";
-        }
+Add a new method in the FlinkApiController class to write the failure message to a log file:
+```java
+private void writeLogToFile(FileMetadata metadata) {
+   String logFilePath = "shared_location/log.txt";
+   try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
+      fileWriter.write(metadata.toString());
+      fileWriter.write(System.lineSeparator());
+      fileWriter.flush();
+   } catch (IOException e) {
+      e.printStackTrace();
+   }
+}
+```
 
-        if (!"API".equals(spaceCollector.getConnectionType())) {
-            return "SpaceCollector json must have connection_type of 'API'";
-        }
+AC3: Input file is present and input topic 3459-COLLECTION-REQUEST-QUEUE' is not accessible.
 
-        if (spaceCollector.getUsername() == null || spaceCollector.getPassword() == null) {
-            return "SpaceCollector json must have a non-null username and password";
-        }
+In the FlinkApiController class, modify the triggerJob() method:
+```java
+public String triggerJob(SpaceCollector collector, String fileType) {
+   // ...
+   if (!validateTopic(topicName)) {
+      LOGGER.error("Input topic {} is not accessible", topicName);
+      kafkaProducer.sendFailureMessage(collector, fileType, "Input topic not accessible");
+      writeLogToFile(collector.getInputFilePath(), "Input topic not accessible");
+      return "Error: Input topic not accessible";
+   }
+   // ...
+}
 
-        try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            String jsonMessage = objectMapper.writeValueAsString(spaceCollector);
-            kafkaTemplate.send(TOPIC, jsonMessage);
-            return "jsonMessage sent successfully";
-         catch (JsonProcessingException e) {
-            e.printStackTrace();
-            return "Error while sending jsonMessage";
-        }
-    }
+private boolean validateTopic(String topicName) {
+   // Add code to validate if the topic is accessible
+   return true; // Replace with the actual implementation
+}
 
+private void writeLogToFile(String inputFilePath, String errorMessage) {
+   String logFilePath = "shared_location/log.txt";
+   try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
+      fileWriter.write("Error: Input topic not accessible - " + inputFilePath);
+      fileWriter.write(System.lineSeparator());
+      fileWriter.flush();
+   } catch (IOException e) {
+      e.printStackTrace();
+   }
+}
+```
 
-The updated code for the KafkaProducerServiceTest class is as follows:
+AC4: Jar file is not uploaded to the flink cluster.
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+In the FlinkApiController class, modify the triggerJob() method:
+```java
+public String triggerJob(SpaceCollector collector, String fileType) {
+   // ...
+   if (!validateJarId(flinkJobJarid)) {
+      LOGGER.error("Jar file does not exist");
+      kafkaProducer.sendFailureMessage(collector, fileType, "Jar file does not exist");
+      writeLogToFile(collector.getInputFilePath(), "Jar file does not exist");
+      return "Error: Jar file does not exist";
+   }
+   // ...
+}
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.kafka.core.KafkaTemplate;
+private boolean validateJarId(String jarId) {
+   // Add code to validate if the jar file exists on the flink cluster
+   return true; // Replace with the actual implementation
+}
 
-class KafkaProducerServiceTest {
+private void writeLogToFile(String inputFilePath, String errorMessage) {
+   String logFilePath = "shared_location/log.txt";
+   try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
+      fileWriter.write("Error: Jar file does not exist - " + inputFilePath);
+      fileWriter.write(System.lineSeparator());
+      fileWriter.flush();
+   } catch (IOException e) {
+      e.printStackTrace();
+   }
+}
+```
 
-    @Mock
-    private KafkaTemplate<String, Object> kafkaTemplate;
+AC5: Non-existent jar id passed to the flink cluster.
 
-    @InjectMocks
-    private KafkaProducerService kafkaProducerService;
+In the FlinkApiController class, modify the triggerJob() method:
+```java
+public String triggerJob(SpaceCollector collector, String fileType) {
+   // ...
+   if (!validateJarId(flinkJobXmlJarid)) {
+      LOGGER.error("Jar file does not exist");
+      kafkaProducer.sendFailureMessage(collector, fileType, "Jar file does not exist");
+      writeLogToFile(collector.getInputFilePath(), "Jar file does not exist");
+      return "Error: Jar file does not exist";
+   }
+   // ...
+}
 
-    @BeforeEach
-    void setUp() throws Exception {
-        MockitoAnnotations.initMocks(this);
-    }
+private boolean validateJarId(String jarId) {
+   // Add code to validate if the jar file exists on the flink cluster
+   return true; // Replace with the actual implementation
+}
 
-    @Test
-    void testSendJsonMessage_PositiveScenario() {
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setId("123");
-        spaceCollector.setUrl("http://localhost");
-        spaceCollector.setPort(8080);
-        spaceCollector.setConnectionType("API");
-        spaceCollector.setUsername("user");
-        spaceCollector.setPassword("pass");
+private void writeLogToFile(String inputFilePath, String errorMessage) {
+   String logFilePath = "shared_location/log.txt";
+   try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
+      fileWriter.write("Error: Jar file does not exist - " + inputFilePath);
+      fileWriter.write(System.lineSeparator());
+      fileWriter.flush();
+   } catch (IOException e) {
+      e.printStackTrace();
+   }
+}
+```
 
-        String result = kafkaProducerService.sendJsonMessage(spaceCollector);
-
-        assertEquals("jsonMessage sent successfully", result);
-    }
-
-    @Test
-    void testSendJsonMessage_NullId() {
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setId(null);
-        spaceCollector.setUrl("http://localhost");
-        spaceCollector.setPort(8080);
-        spaceCollector.setConnectionType("API");
-        spaceCollector.setUsername("user");
-        spaceCollector.setPassword("pass");
-
-        String result = kafkaProducerService.sendJsonMessage(spaceCollector);
-
-        assertEquals("SpaceCollector json must have an id", result);
-    }
-
-    @Test
-    void testSendJsonMessage_EmptyUrl() {
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setId("123");
-        spaceCollector.setUrl("");
-        spaceCollector.setPort(8080);
-        spaceCollector.setConnectionType("API");
-        spaceCollector.setUsername("user");
-        spaceCollector.setPassword("pass");
-
-        String result = kafkaProducerService.sendJsonMessage(spaceCollector);
-
-        assertEquals("SpaceCollector json must have a non-empty url", result);
-    }
-
-    @Test
-    void testSendJsonMessage_ZeroPort() {
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setId("123");
-        spaceCollector.setUrl("http://localhost");
-        spaceCollector.setPort(0);
-        spaceCollector.setConnectionType("API");
-        spaceCollector.setUsername("user");
-        spaceCollector.setPassword("pass");
-
-        String result = kafkaProducerService.sendJsonMessage(spaceCollector);
-
-        assertEquals("SpaceCollector json must have a non-zero port number", result);
-    }
-
-    @Test
-    void testSendJsonMessage_WrongConnectionType() {
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setId("123");
-        spaceCollector.setUrl("http://localhost");
-        spaceCollector.setPort(8080);
-        spaceCollector.setConnectionType("TCP");
-        spaceCollector.setUsername("user");
-        spaceCollector.setPassword("pass");
-
-        String result = kafkaProducerService.sendJsonMessage(spaceCollector);
-
-        assertEquals("SpaceCollector json must have connection_type of 'API'", result);
-    }
-
-    @Test
-    void testSendJsonMessage_NullUsernameAndPassword() {
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setId("123");
-        spaceCollector.setUrl("http://localhost");
-        spaceCollector.setPort(8080);
-        spaceCollector.setConnectionType("API");
-        spaceCollector.setUsername(null);
-        spaceCollector.setPassword(null);
-
-        String result = kafkaProducerService.sendJsonMessage(spaceCollector);
-
-        assertEquals("SpaceCollector json must have a non-null username and password", result);
-    }
-
- 
-
-With these changes, the test cases should execute without any errors.
+Note: Replace the "shared_location/log.txt" with the actual path where you want to write the log file. Also, update the logic inside the validation methods (validateTopic, validateJarId) to fit your use case.

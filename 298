@@ -1,286 +1,283 @@
-Sure, I can create a new entity class called "FileMetadata" to hold the additional fields and update the existing classes accordingly\.
+M A S:
+SpaceCollector.java:
 
-FileMetadata\.java:
-
-```java
-public class FileMetadata {
-    private String fileName;
-    private String dateReceived;
-    private String dateProcessed;
-    private int noOfRecordsInFile;
-    private int noOfRecordsProcessed;
-    private int noOfRecordsFailed;
-    private String jobStatus;
-    private String jobId;
-    private String jarId;
-    private String exceptions;
-
-    // constructors, getters and setters
-}
-```
-
-SpaceCollector\.java:
-
-```java
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@ToString
 public class SpaceCollector {
+
+    private Integer id;
+    private String url;
+    
+    @Max(value = 9999, message = "Only 4 digit port number allowed")
+    private Integer port;
+    
+    private String inputFilePath;
+    private String outputFilePath;
+    private String delimiters;
     private String fileType;
-    private String fileContent;
-    private String sourceSystem;
-    private FileMetadata fileMetadata;
 
-    // constructors, getters and setters
+    // Getters and Setters
 }
-```
 
-JsonUtils\.java, KafkaProducer\.java, and KafkaController\.java remain unchanged\.
 
-JsonUtils\.java:
-
-```java
+JsonUtils.java:
 public class JsonUtils {
-    private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    public static String toJson(Object object) throws JsonProcessingException {
-        return objectMapper.writeValueAsString(object);
+    private JsonUtils() {}
+
+    public static String convertSpaceCollectorToJson(SpaceCollector sp) throws JsonProcessingException {
+        ObjectWriter ow = new ObjectMapper().writer().withDefaultPrettyPrinter();
+        return ow.writeValueAsString(sp);
     }
 
-    public static <T> T fromJson(String json, Class<T> clazz) throws JsonProcessingException {
-        return objectMapper.readValue(json, clazz);
+    public static SpaceCollector convertJsonToSpaceCollector(String data) throws JsonProcessingException {
+        ObjectMapper mapper = new ObjectMapper();
+        return mapper.readValue(data, SpaceCollector.class);
     }
 }
-```
 
-KafkaProducer\.java:
-
-```java
+KafkaProducer.java:
+@Service
 public class KafkaProducer {
-    @Autowired
-    private KafkaTemplate<String, String> kafkaTemplate;
 
-    public void sendMessage(String topic, String message) {
-        kafkaTemplate.send(topic, message);
+    private static final Logger Logger = LoggerFactory.getLogger(KafkaProducer.class);
+
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+
+    @Autowired
+    public KafkaProducer(KafkaTemplate<String, Object> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate;
+    }
+
+    public void sendMessage(SpaceCollector message) {
+        Logger.info(String.format("Message sent %s", message));
+        kafkaTemplate.send("3459-COLLECTION-REQUEST-QUEUE", message);
+    }
+
+    public void sendErrorMessage(String errorMessage) {
+        kafkaTemplate.send("3459-COLLECTION-AUDIT-QUEUE", errorMessage);
     }
 }
-```
 
-KafkaController\.java:
-
-```java
+KafkaController.java:
 @RestController
-@RequestMapping("/kafka")
 public class KafkaController {
-    @Autowired
-    private KafkaProducer kafkaProducer;
 
-    @PostMapping("/send")
-    public void sendMessageToKafkaTopic(@RequestParam("topic") String topic, @RequestBody SpaceCollector spaceCollector) throws JsonProcessingException {
-        String message = JsonUtils.toJson(spaceCollector);
-        kafkaProducer.sendMessage(topic, message);
+    private final KafkaProducer kafkaProducer;
+
+    @Autowired
+    public KafkaController(KafkaProducer kafkaProducer) {
+        this.kafkaProducer = kafkaProducer;
+    }
+
+    @PostMapping("/kafkaPush")
+    public void sendMessage(@RequestBody SpaceCollector message) {
+        kafkaProducer.sendMessage(message);
     }
 }
 
-FlinkApiController\.java:
-
-```java
-@RestController
-@RequestMapping("/flink")
+FlinkApiController.java:
+@Service
 public class FlinkApiController {
+
     private static final Logger LOGGER = LoggerFactory.getLogger(FlinkApiController.class);
+
+    @Value("${flink.api.url}")
+    private String flinkApiUrl;
+
+    @Value("${flink.job.csv.jarid}")
+    private String flinkJobCsvJarId;
+
+    @Value("${flink.job.csv.program-args}")
+    private String flinkJobCsvProgramArgs;
+
+    @Value("${flink.job.txt.jarid}")
+    private String flinkJobTxtJarId;
+
+    @Value("${flink.job.txt.program-args}")
+    private String flinkJobTxtProgramArgs;
+
+    @Value("${flink.job.xml.jarid}")
+    private String flinkJobXmlJarId;
+
+    @Value("${flink.job.xml.program-args}")
+    private String flinkJobXmlProgramArgs;
+
+    HttpHeaders headers = new HttpHeaders();
 
     @Autowired
     private RestTemplate restTemplate;
 
-    @Value("${destination.folder}")
-    private String destinationFolder;
+    public void setRestTemplate(RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+    }
+
+    @PostMapping("/triggerJob")
+    public String triggerJob(SpaceCollector collector) {
+        LOGGER.info("TRIGGER JOB");
+
+        String fileExtension = getFileExtension(collector.getInputFilePath());
+
+        if (fileExtension == null) {
+            LOGGER.error("Invalid file extension");
+            return "Invalid file extension";
+        }
+
+        String jobSubmitUrl;
+        String programArgs;
+        String jarId;
+
+        if (fileExtension.equalsIgnoreCase(".csv")) {
+            LOGGER.info("CSV FLINK TRIGGER");
+            jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobCsvJarId + "/run";
+            programArgs = flinkJobCsvProgramArgs.replace("input", collector.getInputFilePath());
+            jarId = flinkJobCsvJarId;
+        } else if (fileExtension.equalsIgnoreCase(".txt")) {
+            LOGGER.info("TEXT FLINK TRIGGER");
+
+jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobTxtJarId + "/run";
+            programArgs = flinkJobTxtProgramArgs.replace("|input|", collector.getInputFilePath());
+            jarId = flinkJobTxtJarId;
+        } else if (fileExtension.equalsIgnoreCase(".xml")) {
+            LOGGER.info("XML FLINK TRIGGER");
+            jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobXmlJarId + "/run";
+            programArgs = flinkJobXmlProgramArgs.replace("|filePath|", collector.getInputFilePath()).replace("|primaryKey|", "");
+            jarId = flinkJobXmlJarId;
+        } else {
+            LOGGER.error("Unsupported file extension");
+            return "Unsupported file extension";
+        }
+
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        JSONObject requestBody = new JSONObject();
+        requestBody.put("programArgs", programArgs);
+
+        HttpEntity<String> request = new HttpEntity<>(requestBody.toString(), headers);
+
+        // Trigger the submitted jar
+        ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
+
+        if (response.getStatusCode() != HttpStatus.OK) {
+            LOGGER.error("Job submission failed");
+            return "Job submission failed";
+        }
+
+        LOGGER.info("Job triggered: {}", response.getBody());
+        return response.getBody();
+    }
+
+    private String getFileExtension(String filePath) {
+        int dotIndex = filePath.lastIndexOf('.');
+        if (dotIndex > 0 && dotIndex < filePath.length() - 1) {
+            return filePath.substring(dotIndex);
+        }
+        return null;
+    }
+}
+
+KafkaConsumer.java:
+@Service
+public class KafkaConsumer {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
+
+    @Autowired
+    private FlinkApiController flinkApiController;
 
     @Autowired
     private KafkaProducer kafkaProducer;
 
-    @PostMapping("/transform")
-    public ResponseEntity<String> transformFile(@RequestBody SpaceCollector spaceCollector) throws Exception {
-        FileMetadata fileMetadata = spaceCollector.getFileMetadata();
-        String fileType = spaceCollector.getFileType();
-        String url = "http://flink-cluster:8081/jars/upload";
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+    @KafkaListener(topics = "3459-COLLECTION-REQUEST-QUEUE", groupId = "custom-data-transformer-client")
+    public void consume(SpaceCollector spaceCollector) {
+        LOGGER.info("Received Message: {}", spaceCollector);
 
-        // check if jar file exists
-        if (!checkJarExists(fileMetadata.getJarId())) {
-            LOGGER.error("Jar file not found for job with id: {}", fileMetadata.getJobId());
-            pushFailureMessageToAuditQueue(fileMetadata, "Jar file not found");
-            writeToFile("Jar file not found for job with id: " + fileMetadata.getJobId());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Jar file not found");
+        String inputFilePath = spaceCollector.getInputFilePath();
+        String fileExtension = getFileExtension(inputFilePath);
+
+        if (fileExtension == null) {
+            LOGGER.error("Invalid file extension");
+            String errorMessage = createErrorMessage(spaceCollector, "Invalid file extension");
+            kafkaProducer.sendErrorMessage(errorMessage);
+            return;
         }
 
-        // upload jar file to Flink cluster
-        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-        body.add("jarfile", new FileSystemResource("/jars/" + fileMetadata.getJarId()));
-        HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
-        ResponseEntity<String> responseEntity = restTemplate.exchange(url, HttpMethod.POST, requestEntity, String.class);
-        if (responseEntity.getStatusCode() != HttpStatus.CREATED) {
-            LOGGER.error("Error uploading jar file for job with id: {}", fileMetadata.getJobId());
-            pushFailureMessageToAuditQueue(fileMetadata, "Error uploading jar file");
-            writeToFile("Error uploading jar file for job with id: " + fileMetadata.getJobId());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error uploading jar file");
+        if (!validateFile(inputFilePath)) {
+            LOGGER.error("File does not exist: {}", inputFilePath);
+            String errorMessage = createErrorMessage(spaceCollector, "File does not exist");
+            kafkaProducer.sendErrorMessage(errorMessage);
+            return;
         }
 
-        // submit Flink job based on file type
-        switch (fileType) {
-            case "csv":
-                // submit CSV job
-                break;
-            case "xml":
-                // submit XML job
-                break;
-            case "txt":
-                // submit TXT job
-                break;
-            default:
-                LOGGER.error("Invalid file type: {}", fileType);
-                pushFailureMessageToAuditQueue(fileMetadata, "Invalid file type");
-                writeToFile("Invalid file type for job with id: " + fileMetadata.getJobId());
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid file type");
+        String flinkResponse = flinkApiController.triggerJob(spaceCollector);
+
+        if (flinkResponse.equals("Job submission failed")) {
+            String errorMessage = createErrorMessage(spaceCollector, "Job submission failed");
+            kafkaProducer.sendErrorMessage(errorMessage);
+            return;
         }
 
-        return ResponseEntity.ok().build();
+        LOGGER.info("Flink Response: {}", flinkResponse);
+        // Process success message
+        // TODO: Implement success message handling
     }
 
-    private boolean checkJarExists(String jarId) {
-        // check if jar file exists on Flink cluster
-        // return true if found, false otherwise
+    private String createErrorMessage(SpaceCollector spaceCollector, String errorReason) {
+        String fileName = getFileName(spaceCollector.getInputFilePath());
+        String dateReceived = getCurrentDate();
+        String dateProcessed = getCurrentDate();
+        int numberOfRecords = getNumberOfRecords(spaceCollector.getInputFilePath());
+        int numberOfRecordsProcessed = 0;
+        int numberOfRecordsFailed = 0;
+        String jobStatus = "Failed";
+        String jobId = "";
+        String jarId = "";
+        String exceptions = errorReason;
+
+String errorMessage = String.format("%s %s %s %d %d %d %s %s %s",
+                fileName, dateReceived, dateProcessed, numberOfRecords, numberOfRecordsProcessed,
+                numberOfRecordsFailed, jobStatus, jobId, jarId, exceptions);
+
+        return errorMessage;
     }
 
-    private void pushFailureMessageToAuditQueue(FileMetadata fileM
-
-etadata, String errorMessage) throws JsonProcessingException {
-        fileMetadata.setNoOfRecordsProcessed(0);
-        fileMetadata.setJobStatus("Failed");
-        fileMetadata.setExceptions(errorMessage);
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setFileMetadata(fileMetadata);
-        String message = JsonUtils.toJson(spaceCollector);
-        try {
-            kafkaProducer.sendMessage("3459-COLLECTION-AUDIT-QUEUE", message);
-        } catch (Exception e) {
-            LOGGER.error("Error publishing failure message to Kafka topic: {}", e.getMessage());
-            writeToFile("Error publishing failure message to Kafka topic: " + e.getMessage());
+    private String getFileExtension(String filePath) {
+        int dotIndex = filePath.lastIndexOf('.');
+        if (dotIndex > 0 && dotIndex < filePath.length() - 1) {
+            return filePath.substring(dotIndex);
         }
+        return null;
     }
 
-    private void writeToFile(String message) {
-        try {
-            Files.write(Paths.get(destinationFolder + "/log.txt"), message.getBytes(), StandardOpenOption.APPEND);
+    private String getFileName(String filePath) {
+        int slashIndex = filePath.lastIndexOf('/');
+        if (slashIndex >= 0 && slashIndex < filePath.length() - 1) {
+            return filePath.substring(slashIndex + 1);
+        }
+        return filePath;
+    }
+
+    private String getCurrentDate() {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        return sdf.format(new Date());
+    }
+
+    private int getNumberOfRecords(String filePath) {
+        int count = 0;
+        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+            while (reader.readLine() != null) {
+                count++;
+            }
         } catch (IOException e) {
-            LOGGER.error("Error writing to log file: {}", e.getMessage());
+            LOGGER.error("Error reading file: {}", filePath, e);
         }
-    }
-}
-```
-
-KafkaConsumer\.java:
-
-```java
-@Service
-public class KafkaConsumer {
-    private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
-
-    @Value("${destination.folder}")
-    private String destinationFolder;
-
-    @KafkaListener(topics = "3459-COLLECTION-REQUEST-QUEUE", groupId = "collection-group")
-    public void consume(String message) {
-        LOGGER.info("Received message: {}", message);
-        writeToFile(message);
-        // process message
+        return count;
     }
 
-    private void writeToFile(String message) {
-        try {
-            Files.write(Paths.get(destinationFolder + "/log.txt"), message.getBytes(), StandardOpenOption.APPEND);
-        } catch (IOException e) {
-            LOGGER.error("Error writing to log file: {}", e.getMessage());
-        }
-    }
-}
-```
-
-
-Sure, here are the import statements for the classes:
-
-FileMetadata.java:
-
-import java.util.Objects;
-
-
-SpaceCollector.java:
-
-import java.util.Objects;
-
-
-FlinkApiController.java:
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.client.RestTemplate;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-
-import kafka.Producer.KafkaProducer;
-import model.FileMetadata;
-import model.SpaceCollector;
-import util.JsonUtils;
-
-
-KafkaConsumer.java:
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.stereotype.Service;
-
-@Service
-public class KafkaConsumer {
-    private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
-
-    @Value("${destination.folder}")
-    private String destinationFolder;
-
-    @KafkaListener(topics = "3459-COLLECTION-REQUEST-QUEUE", groupId = "collection-group")
-    public void consume(String message) {
-        LOGGER.info("Received message: {}", message);
-        writeToFile(message);
-        // process message
-    }
-
-    private void writeToFile(String message) {
-        try {
-            Files.write(Paths.get(destinationFolder + "/log.txt"), message.getBytes(), StandardOpenOption.APPEND);
-        } catch (IOException e) {
-            LOGGER.error("Error writing to log file: {}", e.getMessage());
-        }
+    private boolean validateFile(String filePath) {
+        File file = new File(filePath);
+        return file.exists();
     }
 }

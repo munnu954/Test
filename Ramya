@@ -7,60 +7,75 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
     @Override
     public void flatMap(String input, Collector<String> collector) throws Exception {
         String[] lines = input.split(System.lineSeparator());
+        String currentObjectName = null;
+        JSONObject result = null;
+        JSONObject objectDetails = null;
 
-        if (lines.length < 5) {
-            // Not enough lines for a valid entry
-            return;
-        }
+        for (int i = 1; i < lines.length; i++) {
+            String[] arr = lines[i].split(",");
 
-        String objectName = lines[1].split(",")[1].trim();
-        String beginDate = lines[2].split(",")[1].trim();
-        String endDate = lines[3].split(",")[1].trim();
-        String ticketNumber = lines[4].split(",")[1].trim();
-
-        JSONObject result = new JSONObject();
-        JSONObject objectDetails = new JSONObject();
-
-        result.put("ObjectName", objectName);
-        objectDetails.put("Begin Date", beginDate);
-        objectDetails.put("End Date", endDate);
-        objectDetails.put("Ticket Number", ticketNumber);
-
-        // Continue processing the sections inside the loop
-        boolean skipNextLine = false;
-        for (int j = 5; j < lines.length; j++) {
-            if (skipNextLine) {
-                skipNextLine = false;
-                continue;
-            }
-
-            String[] sectionArr = lines[j].split(",");
-            if (sectionArr.length > 0 && !sectionArr[0].isEmpty() && !sectionArr[0].equals("TICKET NUMBER")) {
-                // This is a line containing SectionName, skip rows with "TICKET NUMBER"
-                String sectionName = sectionArr[0].trim();
-                JSONObject sectionObject = new JSONObject();
-
-                // Extract details for the section
-                if (sectionArr.length > 3) {
-                    sectionObject.put("Min", sectionArr[3].trim());
-                    sectionObject.put("Average", sectionArr[4].trim());
-                    sectionObject.put("Max", sectionArr[5].trim());
-                    sectionObject.put("Cumulative Counter Value", sectionArr[6].trim());
+            if (arr.length > 2 && !arr[2].isEmpty()) {
+                // This is the line containing ObjectName
+                if (currentObjectName != null) {
+                    // If a previous objectName set was being processed, collect it
+                    collectObjectAndReset(currentObjectName, result, objectDetails, collector);
                 }
 
-                // Add section to objectDetails
-                objectDetails.put(sectionName, sectionObject);
+                currentObjectName = arr[2].trim();
+                result = new JSONObject();
+                objectDetails = new JSONObject();
 
-                // Check if the next line should be skipped
-                if (lines[j].contains("TICKET NUMBER")) {
-                    skipNextLine = true;
+                // Extract details from the lines below ObjectName
+                if (i + 3 < lines.length) {
+                    objectDetails.put("Begin Date", lines[i + 1].split(",")[1].trim());
+                    objectDetails.put("End Date", lines[i + 2].split(",")[1].trim());
+                    objectDetails.put("Ticket Number", lines[i + 3].split(",")[1].trim());
                 }
+
+                // Continue processing the sections inside the loop
+                for (int j = i + 4; j < lines.length; j++) {
+                    String[] sectionArr = lines[j].split(",");
+                    if (sectionArr.length > 0 && !sectionArr[0].isEmpty() && !sectionArr[0].equals("TICKET NUMBER")) {
+                        // This is a line containing SectionName, skip rows with "TICKET NUMBER"
+                        String sectionName = sectionArr[0].trim();
+                        JSONObject sectionObject = new JSONObject();
+
+                        // Extract details for the section
+                        if (sectionArr.length > 3) {
+                            sectionObject.put("Min", sectionArr[3].trim());
+                            sectionObject.put("Average", sectionArr[4].trim());
+                            sectionObject.put("Max", sectionArr[5].trim());
+                            sectionObject.put("Cumulative Counter Value", sectionArr[6].trim());
+                        }
+
+                        // Add section to objectDetails
+                        objectDetails.put(sectionName, sectionObject);
+                    }
+                }
+
+                // Add the remaining JSON structure to result
+                result.put("ObjectName", currentObjectName);
+                result.put("Begin Date", objectDetails.getString("Begin Date"));
+                result.put("End Date", objectDetails.getString("End Date"));
+                result.put("Ticket Number", objectDetails.getString("Ticket Number"));
+                objectDetails.remove("Begin Date");
+                objectDetails.remove("End Date");
+                objectDetails.remove("Ticket Number");
+                result.put("Sections", objectDetails);
             }
         }
 
-        // Add the remaining JSON structure to result
-        result.put("Details", objectDetails);
+        // Collect the last objectName set
+        if (currentObjectName != null) {
+            collectObjectAndReset(currentObjectName, result, objectDetails, collector);
+        }
+    }
 
+    private void collectObjectAndReset(String currentObjectName, JSONObject result, JSONObject objectDetails, Collector<String> collector) {
         collector.collect(result.toString());
+        // Reset variables for the next objectName set
+        currentObjectName = null;
+        result = null;
+        objectDetails = null;
     }
 }

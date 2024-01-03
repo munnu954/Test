@@ -1,10 +1,9 @@
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.util.Collector;
-
-import java.util.HashMap;
-import java.util.Map;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
+    private static final ObjectMapper mapper = new ObjectMapper();
 
     @Override
     public void flatMap(String input, Collector<String> collector) throws Exception {
@@ -13,6 +12,7 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
         String objectName = "";
         JsonObject result = new JsonObject();
         JsonObject objectDetails = new JsonObject();
+        String previousResults = "";
 
         for (int i = 1; i < lines.length; i++) {
             String[] arr = lines[i].split(",");
@@ -20,6 +20,7 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
             if (arr.length > 2 && !arr[2].isEmpty()) {
                 // This is the line containing ObjectName
                 objectName = arr[2].trim();
+                objectDetails = new JsonObject();
                 result = new JsonObject();
                 result.put("ObjectName", objectName);
 
@@ -30,14 +31,14 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
                     objectDetails.put("Ticket Number", lines[i + 3].split(",")[1].trim());
                 }
 
-                Map<String, JsonObject> sectionMap = new HashMap<>();
-
                 // Continue processing the sections inside the loop
                 for (int j = i + 4; j < lines.length; j++) {
                     String[] sectionArr = lines[j].split(",");
+                    String currentResults = String.join(",", sectionArr);
 
-                    if (sectionArr.length > 0 && !sectionArr[0].isEmpty() && !sectionArr[0].equals("TICKET NUMBER")) {
-                        // This is a line containing SectionName
+                    // Check if the current results are the same as the previous results
+                    if (!currentResults.equals(previousResults) && sectionArr.length > 0 && !sectionArr[0].isEmpty() && !sectionArr[0].equals("TICKET NUMBER")) {
+                        // This is a line containing SectionName, skip rows with "TICKET NUMBER"
                         String sectionName = sectionArr[0].trim();
                         JsonObject sectionObject = new JsonObject();
 
@@ -50,7 +51,10 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
                         }
 
                         // Add section to objectDetails
-                        sectionMap.put(sectionName, sectionObject);
+                        objectDetails.put(sectionName, sectionObject);
+
+                        // Update the previous results
+                        previousResults = currentResults;
                     }
                 }
 
@@ -61,7 +65,7 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
                 objectDetails.remove("Begin Date");
                 objectDetails.remove("End Date");
                 objectDetails.remove("Ticket Number");
-                result.putAll(sectionMap);
+                result.put(objectName, objectDetails);
 
                 collector.collect(result.toString());
             }

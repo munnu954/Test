@@ -1,31 +1,33 @@
-Here is the code implementation for the given acceptance criteria:
+KafkaProducer.java: 
 
-AC1: The job submission throws error and status code received is Not OK.
-
-```java
-// FlinkApiController.java
-
-// Update triggerJob method
-public String triggerJob(SpaceCollector collector, String fileType) {
-    // ...
-
-    if (response != null && !response.getStatusCode().equals(HttpStatus.OK)) {
-        LOGGER.info("Not Ok!!");
-        FileMetadata metadata = createFailureMetadata(collector, fileType, response);
-        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
-        writeLogToFile(collector, fileType, response, destinationFolderPath);
-    } else if (collector.getInputFilePath() == null || collector.getInputFilePath().isEmpty() || collector.getInputFilePath().isBlank()) {
-        LOGGER.info("File doesn't exist");
-        FileMetadata metadata = createFailureMetadata(collector, null, "File does not exist");
-        kafkaProducer.sendFailureMessage(collector, null, response.toString());
-        writeLogToFile(collector, null, response, destinationFolderPath);
-    }
-
-    // ...
-}
-
-// Add new method
-public FileMetadata createFailureMetadata(SpaceCollector message, String fileType, ResponseEntity response) {
+@Service
+public class KafkaProducer {
+  
+  @Value("${spring.kafka.producer.topic-name}")
+  private String topicName;
+  
+  private static final Logger LOGGER = LoggerFactory.getLogger(KafkaProducer.class);
+  
+  private final KafkaTemplate<String, Object> kafkaTemplate;
+  
+  @Autowired
+  public KafkaProducer(KafkaTemplate<String, Object> kafkaTemplate) {
+    this.kafkaTemplate = kafkaTemplate;
+  }
+  
+  public String sendMessage(SpaceCollector message) {
+    LOGGER.info("Message sent {}", message);
+    kafkaTemplate.send(topicName, message);
+    return "Message sent successfully";
+  }
+  
+  public boolean writeMessage(FileMetadata message) {
+    kafkaTemplate.send(topicName, message);
+    LOGGER.info("Kafka status message {}", message);
+    return true;
+  }
+  
+  public void sendFailureMessage(SpaceCollector message, String fileType, ResponseEntity response) {
     FileMetadata metadata = new FileMetadata();
     metadata.setFile_name(message.getInputFilePath());
     metadata.setDate_received(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
@@ -36,140 +38,194 @@ public FileMetadata createFailureMetadata(SpaceCollector message, String fileTyp
     metadata.setJob_status("FAILURE");
     metadata.setJob_id("");
     metadata.setJar_id("");
-    metadata.setExceptions(response.getStatusCode().toString());
-
-    return metadata;
+    metadata.setExceptions(getErrorMessage(response));
+    LOGGER.info("Failure message sent {}", metadata);
+    this.writeMessage(metadata);
+  }
+  
+  private String getErrorMessage(ResponseEntity response) {
+    return "Job submission failed with status code " + response.getStatusCodeValue() +
+           " and error message " + response.getBody().toString();
+  }
 }
-```
 
-AC2: Publishing to the queue 3459-COLLECTION-AUDIT-QUEUE fails
+FlinkApiController.java:
 
-```java
-// FlinkApiController.java
+@Service
+public class FlinkApiController {
+  
+  @Value("${flink.api.url}")
+  private String flinkApiUrl;
+  
+  @Value("${flink.job.csv.jarid}")
+  private String flinkJobCsvJarId;
+  
+  @Value("${flink.job.csv.program-args}")
+  private String flinkJobCsvProgramArgs;
+  
+  @Value("${flink.job.xml.program-args}")
+  private String flinkJobXmlProgramArgs;
+  
+  @Value("${flink.job.xml.jarid}")
+  private String flinkJobXmlJarId;
+  
+  @Value("${flink.job.txt.jarid}")
+  private String flinkJobTxtJarId;
+  
+  HttpHeaders headers = new HttpHeaders();
+  
+  private static final Logger LOGGER = LoggerFactory.getLogger(FlinkApiController.class);
+  
+  @Autowired
+  private KafkaProducer kafkaProducer;
+  
+  @PostMapping
+  public String triggerJob(SpaceCollector collector, String fileType) {
+    RestTemplate restTemplate = new RestTemplate();
+    LOGGER.info("TRIGGER JOB::::");
+    HttpEntity<String> request = null;
+    String jobSubmitUrl = null;
+    
+    if (fileType.equalsIgnoreCase(".csv")) {
+      LOGGER.info("CSV FLINK TRIGGER");
+      request = createRequest(flinkJobCsvJarId, flinkJobCsvProgramArgs.replace("input", collector.getInputFilePath()));
+      jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobCsvJarId + "/run";
 
-public void writeLogToFile(SpaceCollector message, String fileType, ResponseEntity response, String destinationFolderPath) {
+    } else if (fileType.equalsIgnoreCase(".xml")) {
+      LOGGER.info("XML FLINK TRIGGER");
+      String programXmlArgs = flinkJobXmlProgramArgs.replace("|filePath|", collector.getInputFilePath())
+                                .replace("|primaryKey|", "");
+      request = createRequest(flinkJobXmlJarId, programXmlArgs);
+      jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobXmlJarId + "/run";
+      LOGGER.info("jobSubmitUrl: {}", jobSubmitUrl);
+      LOGGER.info("requestBody: {}", programXmlArgs);
+      
+    } else if (fileType.equalsIgnoreCase(".txt")) {
+      LOGGER.info("TEXT FLINK TRIGGER");
+      request = createRequest(flinkJobTxtJarId, flinkJobCsvProgramArgs.replace("|input|", collector.getInputFilePath()));
+      jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobTxtJarId + "/run";
+    }
+    
+    ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
+    LOGGER.info("Response: {}", response);
+    
+    if (response.getStatusCode().is2xxSuccessful()) {
+      return "Job triggered: " + response;
+    } else {
+      kafkaProducer.sendFailureMessage(collector, fileType, response);
+      writeLogToFile(collector, fileType, response.getBody(), "shared/location");
+      return "Job triggered failed";
+    }
+  }
+  
+  private HttpEntity<String> createRequest(String jarId, String programArgs) {
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    JSONObject requestBody = new JSONObject();
+    requestBody.put("programArgs", programArgs);
+    return new HttpEntity<>(requestBody.toString(), headers);
+  }
+  
+  private void writeLogToFile(SpaceCollector message, String fileType, String response, String destinationFolderPath) {
     String logFilePath = destinationFolderPath + "/log.txt";
     try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
-        FileMetadata metadata = createFailureMetadata(message, fileType, response);
-        fileWriter.write(metadata.toString());
-        fileWriter.write(System.lineSeparator());
-        fileWriter.flush();
+       fileWriter.write(message.toString());
+       fileWriter.write(System.lineSeparator());
+       fileWriter.write(fileType);
+       fileWriter.write(System.lineSeparator());
+       fileWriter.write(response);
+       fileWriter.write(System.lineSeparator());
+       fileWriter.flush();
     } catch (IOException e) {
-        e.printStackTrace();
+       LOGGER.error("Error writing log file", e);
     }
+  }
 }
-```
 
-AC3: Input file is present and input topic 3459-COLLECTION-REQUEST-QUEUE' is not accessible.
+KafkaConsumer.java:
 
-```java
-// FlinkApiController.java
+@Service
+public class KafkaConsumer {
+  
+  private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
+  
+  @Value("${file.txtsource}")
+  private String sourceFilePath;
+  
+  @Value("${file.destination}")
+  private String destinationFolderPath;
+  
+  @Autowired
+  private FlinkApiController flinkApiController;
+  
+  @Autowired
+  private KafkaProducer kafkaProducer;
+  
+  @KafkaListener(topics = "${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}", errorHandler = "kafkaEventErrorHandler")
+  public void consume(String data) {
+    LOGGER.info("Data Received: {}", data);
+    
+    if (data.contains("inputFilePath")) {
+      ObjectMapper mapper = new ObjectMapper();
+      try {
+        SpaceCollector message = mapper.readValue(data, SpaceCollector.class);
+        LOGGER.info("Message Received: {}", message);
+        String sourceFilePath = message.getInputFilePath();
+        
+        if (validateFile(sourceFilePath)) {
+          String fileType = getExtension(sourceFilePath);
+          writeFile(sourceFilePath, destinationFolderPath);
 
-// Update triggerJob method
-public String triggerJob(SpaceCollector collector, String fileType) {
-    // ...
+          if (fileType != null && fileType.equalsIgnoreCase(".xml")) {
+            LOGGER.info("XML FILE");
+            flinkApiController.triggerJob(message, fileType);
 
-    if (response != null && !response.getStatusCode().equals(HttpStatus.OK)) {
-        LOGGER.info("Not Ok!!");
-        FileMetadata metadata = createFailureMetadata(collector, fileType, response);
-        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
-        writeLogToFile(collector, fileType, response, destinationFolderPath);
-    } else if (collector.getInputFilePath() == null || collector.getInputFilePath().isEmpty() || collector.getInputFilePath().isBlank()) {
-        LOGGER.info("File doesn't exist");
-        FileMetadata metadata = createFailureMetadata(collector, null, "File does not exist");
-        kafkaProducer.sendFailureMessage(collector, null, response.toString());
-        writeLogToFile(collector, null, response, destinationFolderPath);
-    } else if (!isTopicAccessible(topicName)) {
-        LOGGER.info("Topic 3459-COLLECTION-REQUEST-QUEUE' is not accessible");
-        FileMetadata metadata = createFailureMetadata(collector, fileType, "Topic 3459-COLLECTION-REQUEST-QUEUE' is not accessible");
-        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
-        writeLogToFile(collector, fileType, response, destinationFolderPath);
-        kafkaProducer.sendMessage(metadata);
+          } else if (fileType != null && fileType.equalsIgnoreCase(".csv")) {
+            LOGGER.info("CSV FILE");
+            flinkApiController.triggerJob(message, fileType);
+
+          } else if (fileType != null && fileType.equalsIgnoreCase(".txt")) {
+            LOGGER.info("TXT FILE");
+            flinkApiController.triggerJob(message, fileType);
+          }
+
+          deleteFile(sourceFilePath);
+        }
+      } catch (IOException e) {
+        LOGGER.error("Error reading the message", e);
+      }
     }
-
-    // ...
-}
-
-// Add new method
-public boolean isTopicAccessible(String topic) {
-    // Implement logic to check topic accessibility
-    return true; // Replace with actual implementation
-}
-```
-
-AC4: Jar file is not uploaded to flink cluster
-
-```java
-// FlinkApiController.java
-
-// Update triggerJob method
-public String triggerJob(SpaceCollector collector, String fileType) {
-    // ...
-
-    if (response != null && !response.getStatusCode().equals(HttpStatus.OK)) {
-        LOGGER.info("Not Ok!!");
-        FileMetadata metadata = createFailureMetadata(collector, fileType, response);
-        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
-        writeLogToFile(collector, fileType, response, destinationFolderPath);
-    } else if (collector.getInputFilePath() == null || collector.getInputFilePath().isEmpty() || collector.getInputFilePath().isBlank()) {
-        LOGGER.info("File doesn't exist");
-        FileMetadata metadata = createFailureMetadata(collector, null, "File does not exist");
-        kafkaProducer.sendFailureMessage(collector, null, response.toString());
-        writeLogToFile(collector, null, response, destinationFolderPath);
-    } else if (isNoJarsPresent() && isNoEntriesInFlinkJobsTable()) {
-        LOGGER.info("No jars present and flink jobs table has no entries");
-        FileMetadata metadata = createFailureMetadata(collector, fileType, "No jars present and flink jobs table has no entries");
-        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
-        writeLogToFile(collector, fileType, response, destinationFolderPath);
+  }
+  
+  private boolean validateFile(String sourceFilePath) {
+    File file = new File(sourceFilePath);
+    if (file.exists()) {
+      return true;
+    } else {
+      LOGGER.error("Source file does not exist: {}", sourceFilePath);
+      return false;
     }
-
-    // ...
-}
-
-// Add new methods
-public boolean isNoJarsPresent() {
-    // Implement logic to check if there are no jars present on the flink cluster
-    return false; // Replace with actual implementation
-}
-
-public boolean isNoEntriesInFlinkJobsTable() {
-    // Implement logic to check if there are no entries in the FLINK JOBS table
-    return false; // Replace with actual implementation
-}
-```
-
-AC5: Non-existent jar id passed to flink cluster.
-
-```java
-// FlinkApiController.java
-
-// Update triggerJob method
-public String triggerJob(SpaceCollector collector, String fileType) {
-    // ...
-
-    if (response != null && !response.getStatusCode().equals(HttpStatus.OK)) {
-        LOGGER.info("Not Ok!!");
-        FileMetadata metadata = createFailureMetadata(collector, fileType, response);
-        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
-        writeLogToFile(collector, fileType, response, destinationFolderPath);
-    } else if (collector.getInputFilePath() == null || collector.getInputFilePath().isEmpty() || collector.getInputFilePath().isBlank()) {
-        LOGGER.info("File doesn't exist");
-        FileMetadata metadata = createFailureMetadata(collector, null, "File does not exist");
-        kafkaProducer.sendFailureMessage(collector, null, response.toString());
-        writeLogToFile(collector, null, response, destinationFolderPath);
-    } else if (!isValidJarId(flinkJobJarid)) {
-        LOGGER.info("Invalid jar id passed to flink cluster");
-        FileMetadata metadata = createFailureMetadata(collector, fileType, "Invalid jar id passed to flink cluster");
-        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
-        writeLogToFile(collector, fileType, response, destinationFolderPath);
+  }
+  
+  private void writeFile(String sourceFilePath, String destinationFolderPath) {
+    try {
+      Files.copy(Paths.get(sourceFilePath), Paths.get(destinationFolderPath), StandardCopyOption.REPLACE_EXISTING);
+    } catch (IOException e) {
+      LOGGER.error("Error writing the file", e);
     }
-
-    // ...
+  }
+  
+  private void deleteFile(String sourceFilePath) {
+    try {
+      Files.deleteIfExists(Paths.get(sourceFilePath));
+    } catch (IOException e) {
+      LOGGER.error("Error deleting the file", e);
+    }
+  }
+  
+  private String getExtension(String sourceFilePath) {
+    if (sourceFilePath != null && sourceFilePath.contains(".")) {
+      return sourceFilePath.substring(sourceFilePath.lastIndexOf("."));
+    }
+    return null;
+  }
 }
-
-// Add new method
-public boolean isValidJarId(String jarId) {
-    // Implement logic to check if the jar id is valid
-    return true; // Replace with actual implementation
-}
-```

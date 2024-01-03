@@ -1,215 +1,175 @@
-Updated Main.java class with the modified FileSource method:
+Here is the code implementation for the given acceptance criteria:
+
+AC1: The job submission throws error and status code received is Not OK.
 
 ```java
-import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.source.FileSource;
-import org.apache.flink.streaming.api.functions.source.FileSource.FileSourceBuilder;
-import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema;
-import org.apache.flink.streaming.connectors.kafka.KafkaSink;
-import org.apache.flink.streaming.connectors.kafka.internals.DeliveryGuarantee;
-import org.apache.flink.streaming.util.serialization.TextLineInputFormat;
-import org.apache.flink.util.Collector;
+// FlinkApiController.java
 
-import java.io.File;
-import java.io.FileNotFoundException;
+// Update triggerJob method
+public String triggerJob(SpaceCollector collector, String fileType) {
+    // ...
 
-public class Main {
+    if (response != null && !response.getStatusCode().equals(HttpStatus.OK)) {
+        LOGGER.info("Not Ok!!");
+        FileMetadata metadata = createFailureMetadata(collector, fileType, response);
+        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
+        writeLogToFile(collector, fileType, response, destinationFolderPath);
+    } else if (collector.getInputFilePath() == null || collector.getInputFilePath().isEmpty() || collector.getInputFilePath().isBlank()) {
+        LOGGER.info("File doesn't exist");
+        FileMetadata metadata = createFailureMetadata(collector, null, "File does not exist");
+        kafkaProducer.sendFailureMessage(collector, null, response.toString());
+        writeLogToFile(collector, null, response, destinationFolderPath);
+    }
 
-    private static String bootstarpServer;
-    private static String topic;
-    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
+    // ...
+}
 
-    public static void main(String[] args) throws Exception {
-        ParameterTool parameters = ParameterTool.fromArgs(args);
+// Add new method
+public FileMetadata createFailureMetadata(SpaceCollector message, String fileType, ResponseEntity response) {
+    FileMetadata metadata = new FileMetadata();
+    metadata.setFile_name(message.getInputFilePath());
+    metadata.setDate_received(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+    metadata.setDate_processed("");
+    metadata.setNo_of_records_in_the_file(0);
+    metadata.setNo_of_records_processed(0);
+    metadata.setNo_of_records_failed(0);
+    metadata.setJob_status("FAILURE");
+    metadata.setJob_id("");
+    metadata.setJar_id("");
+    metadata.setExceptions(response.getStatusCode().toString());
 
-        bootstarpServer = parameters.get("bootstarpServer");
-        topic = parameters.get("Topic");
+    return metadata;
+}
+```
 
-        LOGGER.info("Start to read and pick the path");
+AC2: Publishing to the queue 3459-COLLECTION-AUDIT-QUEUE fails
 
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+```java
+// FlinkApiController.java
 
-        String path = parameters.getRequired("input");
-        if (!new File(path).exists()) {
-            throw new FileNotFoundException("File not found!");
-        }
-
-        FileSourceBuilder<String> fileSourceBuilder = FileSource.forRecordStreamFormat(new TextLineInputFormat(), new Path(path));
-        fileSourceBuilder.ignoreParseErrors();
-        final FileSource<String> source = fileSourceBuilder.build();
-        final DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "file-source");
-
-        KafkaSink<String> sink = KafkaSink.<String>builder()
-                .setBootstrapServers(bootstarpServer)
-                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
-                        .setTopic(topic)
-                        .setValueSerializationSchema(new SimpleStringSchema())
-                        .build())
-                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-                .build();
-
-        final DataStream<String> transformedStream;
-        String fileType = parameters.get("fileType");
-
-        switch (fileType) {
-            case "Gigamon":
-                transformedStream = stream.flatMap(new CsvtoJsonGigamonTransformer());
-                break;
-            default:
-                transformedStream = stream.flatMap(new CsvtoJsonTransformer());
-                break;
-        }
-
-        transformedStream.sinkTo(sink);
-        env.execute();
+public void writeLogToFile(SpaceCollector message, String fileType, ResponseEntity response, String destinationFolderPath) {
+    String logFilePath = destinationFolderPath + "/log.txt";
+    try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
+        FileMetadata metadata = createFailureMetadata(message, fileType, response);
+        fileWriter.write(metadata.toString());
+        fileWriter.write(System.lineSeparator());
+        fileWriter.flush();
+    } catch (IOException e) {
+        e.printStackTrace();
     }
 }
 ```
 
-Updated CsvtoJsonTransformer.java class:
+AC3: Input file is present and input topic 3459-COLLECTION-REQUEST-QUEUE' is not accessible.
 
 ```java
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
+// FlinkApiController.java
 
-public class CsvtoJsonTransformer implements FlatMapFunction<String, String> {
+// Update triggerJob method
+public String triggerJob(SpaceCollector collector, String fileType) {
+    // ...
 
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        // Implement your CSV to JSON transformation logic here
+    if (response != null && !response.getStatusCode().equals(HttpStatus.OK)) {
+        LOGGER.info("Not Ok!!");
+        FileMetadata metadata = createFailureMetadata(collector, fileType, response);
+        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
+        writeLogToFile(collector, fileType, response, destinationFolderPath);
+    } else if (collector.getInputFilePath() == null || collector.getInputFilePath().isEmpty() || collector.getInputFilePath().isBlank()) {
+        LOGGER.info("File doesn't exist");
+        FileMetadata metadata = createFailureMetadata(collector, null, "File does not exist");
+        kafkaProducer.sendFailureMessage(collector, null, response.toString());
+        writeLogToFile(collector, null, response, destinationFolderPath);
+    } else if (!isTopicAccessible(topicName)) {
+        LOGGER.info("Topic 3459-COLLECTION-REQUEST-QUEUE' is not accessible");
+        FileMetadata metadata = createFailureMetadata(collector, fileType, "Topic 3459-COLLECTION-REQUEST-QUEUE' is not accessible");
+        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
+        writeLogToFile(collector, fileType, response, destinationFolderPath);
+        kafkaProducer.sendMessage(metadata);
     }
+
+    // ...
 }
 
-public class CsvtoJsonGigamonTransformer implements FlatMapFunction<String, String> {
-
-    private String[] headers;
-
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        // Implement your Gigamon CSV to JSON transformation logic here
-    }
+// Add new method
+public boolean isTopicAccessible(String topic) {
+    // Implement logic to check topic accessibility
+    return true; // Replace with actual implementation
 }
 ```
 
-In the updated code, the `FileSource` method has been modified to include `ignoreParseErrors()` so that it can read the CSV file in one go and process it in one go. The rest of the code remains the same.
-
-
-Updated Main.java class:
+AC4: Jar file is not uploaded to flink cluster
 
 ```java
-import org.apache.flink.api.common.serialization.SimpleStringSchema;
-import org.apache.flink.api.java.utils.ParameterTool;
-import org.apache.flink.core.fs.Path;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema;
-import org.apache.flink.streaming.connectors.kafka.KafkaSink;
-import org.apache.flink.streaming.connectors.kafka.internals.DeliveryGuarantee;
-import org.apache.flink.streaming.connectors.kafka.table.KafkaSinkSemantic;
-import org.apache.flink.streaming.connectors.kafka.topic.KafkaTopicSerializationSchema;
-import org.apache.flink.streaming.connectors.kafka.topic.NewTopic;
-import org.apache.flink.streaming.connectors.kafka.topic.TopicPartition;
-import org.apache.flink.streaming.connectors.kafka.topic.TopicPartitionSerializationSchema;
-import org.apache.flink.streaming.connectors.kafka.topic.TopicSerializationSchema;
-import org.apache.flink.streaming.connectors.kafka.topic.TopicSerializationSchema.InitializedTopic;
-import org.apache.flink.streaming.connectors.kafka.topic.TopicSerializationSchema.InitializedWithTopic;
-import org.apache.flink.streaming.util.serialization.KeyedSerializationSchema;
-import org.apache.flink.util.Collector;
-import org.apache.flink.util.FileUtils;
+// FlinkApiController.java
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+// Update triggerJob method
+public String triggerJob(SpaceCollector collector, String fileType) {
+    // ...
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-public class Main {
-
-    private static String bootstarpServer;
-    private static String topic;
-    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
-
-    public static void main(String[] args) throws Exception {
-        ParameterTool parameters = ParameterTool.fromArgs(args);
-
-        bootstarpServer = parameters.get("bootstarpServer");
-        topic = parameters.get("Topic");
-
-        LOGGER.info("Start to read and pick the path");
-
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        
-        env.setParallelism(1); // Set parallelism to 1 to process the file in one go
-
-        String path = parameters.getRequired("input");
-        if (!new File(path).exists()) {
-            throw new FileNotFoundException("File not found!");
-        }
-        
-        // Read the CSV file using FileUtils.readFileUtf8() method and process it in one go
-        String fileContent = FileUtils.readFileUtf8(new File(path));
-
-        final DataStream<String> stream = env.fromElements(fileContent);
-
-        KafkaSink<String> sink = KafkaSink.<String>builder()
-                .setBootstrapServers(bootstarpServer)
-                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
-                        .setTopic(topic)
-                        .setValueSerializationSchema(new SimpleStringSchema())
-                        .build())
-                .setDeliverySemantic(KafkaSinkSemantic.AT_LEAST_ONCE)
-                .build();
-
-        final DataStream<String> transformedStream;
-        String fileType = parameters.get("fileType");
-
-        switch (fileType) {
-            case "Gigamon":
-                transformedStream = stream.flatMap(new CsvtoJsonGigamonTransformer());
-                break;
-            default:
-                transformedStream = stream.flatMap(new CsvtoJsonTransformer());
-                break;
-        }
-
-        transformedStream.sinkTo(sink);
-        env.execute();
+    if (response != null && !response.getStatusCode().equals(HttpStatus.OK)) {
+        LOGGER.info("Not Ok!!");
+        FileMetadata metadata = createFailureMetadata(collector, fileType, response);
+        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
+        writeLogToFile(collector, fileType, response, destinationFolderPath);
+    } else if (collector.getInputFilePath() == null || collector.getInputFilePath().isEmpty() || collector.getInputFilePath().isBlank()) {
+        LOGGER.info("File doesn't exist");
+        FileMetadata metadata = createFailureMetadata(collector, null, "File does not exist");
+        kafkaProducer.sendFailureMessage(collector, null, response.toString());
+        writeLogToFile(collector, null, response, destinationFolderPath);
+    } else if (isNoJarsPresent() && isNoEntriesInFlinkJobsTable()) {
+        LOGGER.info("No jars present and flink jobs table has no entries");
+        FileMetadata metadata = createFailureMetadata(collector, fileType, "No jars present and flink jobs table has no entries");
+        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
+        writeLogToFile(collector, fileType, response, destinationFolderPath);
     }
+
+    // ...
+}
+
+// Add new methods
+public boolean isNoJarsPresent() {
+    // Implement logic to check if there are no jars present on the flink cluster
+    return false; // Replace with actual implementation
+}
+
+public boolean isNoEntriesInFlinkJobsTable() {
+    // Implement logic to check if there are no entries in the FLINK JOBS table
+    return false; // Replace with actual implementation
 }
 ```
 
-Updated CsvtoJsonTransformer.java class:
+AC5: Non-existent jar id passed to flink cluster.
 
 ```java
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
+// FlinkApiController.java
 
-public class CsvtoJsonTransformer implements FlatMapFunction<String, String> {
+// Update triggerJob method
+public String triggerJob(SpaceCollector collector, String fileType) {
+    // ...
 
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        // Implement your CSV to JSON transformation logic here
+    if (response != null && !response.getStatusCode().equals(HttpStatus.OK)) {
+        LOGGER.info("Not Ok!!");
+        FileMetadata metadata = createFailureMetadata(collector, fileType, response);
+        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
+        writeLogToFile(collector, fileType, response, destinationFolderPath);
+    } else if (collector.getInputFilePath() == null || collector.getInputFilePath().isEmpty() || collector.getInputFilePath().isBlank()) {
+        LOGGER.info("File doesn't exist");
+        FileMetadata metadata = createFailureMetadata(collector, null, "File does not exist");
+        kafkaProducer.sendFailureMessage(collector, null, response.toString());
+        writeLogToFile(collector, null, response, destinationFolderPath);
+    } else if (!isValidJarId(flinkJobJarid)) {
+        LOGGER.info("Invalid jar id passed to flink cluster");
+        FileMetadata metadata = createFailureMetadata(collector, fileType, "Invalid jar id passed to flink cluster");
+        kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
+        writeLogToFile(collector, fileType, response, destinationFolderPath);
     }
+
+    // ...
 }
 
-public class CsvtoJsonGigamonTransformer implements FlatMapFunction<String, String> {
-
-    private String[] headers;
-
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        // Implement your Gigamon CSV to JSON transformation logic here
-    }
+// Add new method
+public boolean isValidJarId(String jarId) {
+    // Implement logic to check if the jar id is valid
+    return true; // Replace with actual implementation
 }
 ```
-
-In the updated code, the `FileSource` method has been replaced with `FileUtils.readFileUtf8()` method to read the entire CSV file content in one go. The content is then converted to a single element `DataStream` using `env.fromElements()` method.

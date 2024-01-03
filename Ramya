@@ -1,9 +1,4 @@
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
-
 public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
-    private static final ObjectMapper mapper = new ObjectMapper();
 
     @Override
     public void flatMap(String input, Collector<String> collector) throws Exception {
@@ -12,37 +7,30 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
         String objectName = "";
         JsonObject result = new JsonObject();
         JsonObject objectDetails = new JsonObject();
-        String previousResults = "";
 
         for (int i = 1; i < lines.length; i++) {
             String[] arr = lines[i].split(",");
 
             if (arr.length > 2 && !arr[2].isEmpty()) {
-                // This is the line containing ObjectName
                 objectName = arr[2].trim();
                 objectDetails = new JsonObject();
                 result = new JsonObject();
                 result.put("ObjectName", objectName);
 
-                // Extract details from the lines below ObjectName
                 if (i + 3 < lines.length) {
                     objectDetails.put("Begin Date", lines[i + 1].split(",")[1].trim());
                     objectDetails.put("End Date", lines[i + 2].split(",")[1].trim());
                     objectDetails.put("Ticket Number", lines[i + 3].split(",")[1].trim());
                 }
 
-                // Continue processing the sections inside the loop
+                boolean isNewSection = false;
+
                 for (int j = i + 4; j < lines.length; j++) {
                     String[] sectionArr = lines[j].split(",");
-                    String currentResults = String.join(",", sectionArr);
-
-                    // Check if the current results are the same as the previous results
-                    if (!currentResults.equals(previousResults) && sectionArr.length > 0 && !sectionArr[0].isEmpty() && !sectionArr[0].equals("TICKET NUMBER")) {
-                        // This is a line containing SectionName, skip rows with "TICKET NUMBER"
+                    if (sectionArr.length > 0 && !sectionArr[0].isEmpty() && !sectionArr[0].equals("TICKET NUMBER")) {
                         String sectionName = sectionArr[0].trim();
                         JsonObject sectionObject = new JsonObject();
 
-                        // Extract details for the section
                         if (sectionArr.length > 3) {
                             sectionObject.put("Min", sectionArr[3].trim());
                             sectionObject.put("Average", sectionArr[4].trim());
@@ -50,24 +38,26 @@ public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
                             sectionObject.put("Cumulative Counter Value", sectionArr[6].trim());
                         }
 
-                        // Add section to objectDetails
-                        objectDetails.put(sectionName, sectionObject);
+                        if (!objectDetails.has(sectionName)) {
+                            // New section detected
+                            isNewSection = true;
+                        }
 
-                        // Update the previous results
-                        previousResults = currentResults;
+                        objectDetails.put(sectionName, sectionObject);
                     }
                 }
 
-                // Add the remaining JSON structure to result
-                result.put("Begin Date", objectDetails.getString("Begin Date"));
-                result.put("End Date", objectDetails.getString("End Date"));
-                result.put("Ticket Number", objectDetails.getString("Ticket Number"));
-                objectDetails.remove("Begin Date");
-                objectDetails.remove("End Date");
-                objectDetails.remove("Ticket Number");
-                result.put(objectName, objectDetails);
+                if (isNewSection) {
+                    result.put("Begin Date", objectDetails.getString("Begin Date"));
+                    result.put("End Date", objectDetails.getString("End Date"));
+                    result.put("Ticket Number", objectDetails.getString("Ticket Number"));
+                    objectDetails.remove("Begin Date");
+                    objectDetails.remove("End Date");
+                    objectDetails.remove("Ticket Number");
+                    result.put(objectName, objectDetails);
 
-                collector.collect(result.toString());
+                    collector.collect(result.toString());
+                }
             }
         }
     }

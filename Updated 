@@ -1,125 +1,65 @@
-To handle job submission failure, you can add an exception handling block around the code for job submission. Here's an updated version of the code that adds the condition for job submission failure:
+Here is the modified code with the additional else condition for job submission failure:
 
 ```java
 String jobSubmitUrl = null;
-
-if (programArgs != null && !programArgs.isEmpty()) {
+if(programArgs != null && !programArgs.isEmpty()){
     headers.setContentType(MediaType.APPLICATION_JSON);
+    JSONObject requestBody = new JSONObject();
 
+    if(fileType.equalsIgnoreCase(".csv")){
+        requestBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+        jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
+    }
+    else if(fileType.equalsIgnoreCase(".xml")){
+        LOGGER.info("XML FLINK TRIGGER::");
+        programXmlArgs = programXmlArgs.replace("|filePath|", collector.getInputFilePath());
+        programXmlArgs = programXmlArgs.replace(" |primaryKey|", "");
+        requestBody.put("programArgs", programXmlArgs);
+        jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobXmlJarid + "/run";
+        LOGGER.info("jobSubmitUrl:" + jobSubmitUrl);
+        LOGGER.info("requestBody::" + requestBody.toString());
+    }
+    else if(fileType.equalsIgnoreCase(".txt")){
+        LOGGER.info("TEXT FLINK TRIGGER::");
+        requestBody.put("programArgs", programArgs.replace("|input|", collector.getInputFilePath()));
+        jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobtxtJarid + "/run";
+    }
+    
+    request = new HttpEntity<String>(requestBody.toString(), headers);
+    ResponseEntity<String> response = null;
     try {
-        JSONObject requestBody = new JSONObject();
-
-        if (fileType.equalsIgnoreCase(".csv")) {
-            requestBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
-            jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
-
-            // Perform job submission here
-            // ...
-
-            // If job submission is successful, set HTTP status code as OK
-            HttpStatus status = HttpStatus.OK;
-
-            // Push FileMetadata success message to Kafka topic
+        response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
+        if(response.getStatusCode() == HttpStatus.OK){
+            // Successful job submission
+            // Push the success message to Kafka topic
             FileMetadata fileMetadata = new FileMetadata();
-            // Set fileMetadata properties
-            // ...
-            kafkaProducer.sendMessage(topicName, fileMetadata.toJson());
-
+            fileMetadata.setJob_status("SUCCESS");
+            fileMetadata.setJob_id(jobId);
+            fileMetadata.setJar_id(jarId);
+            // Push fileMetadata to Kafka topicName
+            kafkaProducer.send(topicName, fileMetadata);
         } else {
-            // If fileType is not ".csv", set HTTP status code as Not OK
-            HttpStatus status = HttpStatus.BAD_REQUEST;
-
-            // Push FileMetadata failure message to Kafka topic
+            // Job submission failure
+            // Push the failure message to Kafka topic
             FileMetadata fileMetadata = new FileMetadata();
-            // Set fileMetadata properties for job submission failure
-            // ...
-            kafkaProducer.sendMessage(topicName, fileMetadata.toJson());
+            fileMetadata.setJob_status("FAILURE");
+            fileMetadata.setJob_id(jobId);
+            fileMetadata.setJar_id(jarId);
+            // Push fileMetadata to Kafka topicName
+            kafkaProducer.send(topicName, fileMetadata);
         }
-
-    } catch (Exception e) {
-        // Handle job submission failure
-
-        // Set HTTP status code as Not OK
-        HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
-
-        // Push FileMetadata failure message to Kafka topic
+    } catch (HttpStatusCodeException e) {
+        // Handle any exception in job submission
+        // Push the failure message to Kafka topic
         FileMetadata fileMetadata = new FileMetadata();
-        // Set fileMetadata properties for job submission failure
-        // ...
-        kafkaProducer.sendMessage(topicName, fileMetadata.toJson());
+        fileMetadata.setJob_status("FAILURE");
+        fileMetadata.setJob_id(jobId);
+        fileMetadata.setJar_id(jarId);
+        fileMetadata.setExceptions(e.getMessage());
+        // Push fileMetadata to Kafka topicName
+        kafkaProducer.send(topicName, fileMetadata);
     }
 }
 ```
 
-Please note that you need to replace the comments with the actual code for job submission and setting the properties of the `FileMetadata` object.
-
-This code sets the HTTP status code as `OK` when the job submission is successful, and as `Not OK` when the job submission fails. It pushes the appropriate `FileMetadata` message (success or failure) to the specified Kafka topic.
-
-
-
-
-
-
-
-
-
-
-
---------------------------+---
-public String triggerJob(SpaceCollector collector, String fileType) {
-    RestTemplate restTemplate = new RestTemplate();
-    LOGGER.info("TRIGGER JOB::::");
-    HttpHeaders headers = new HttpHeaders();
-    HttpEntity<String> request = null;
-    String jobSubmitUrl = null; 
-    
-    if(programArgs != null && !programArgs.isEmpty()) {
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        JSONObject requestBody = new JSONObject();
-
-        if(fileType.equalsIgnoreCase(".csv")) {
-            requestBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath())); 
-            jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
-        } else {
-            // Handle the failure scenario
-            // Populate the FileMetadata with failure details
-            FileMetadata fileMetadata = new FileMetadata();
-            fileMetadata.setFile_name(collector.getInputFilePath());
-            fileMetadata.setDate_received(new Date()); // Set date received
-            fileMetadata.setJob_status("job submission failed");
-            fileMetadata.setNo_of_records_processed(0); // Assuming no records are processed
-            
-            // Add stack trace details to the exceptions field of fileMetadata
-            fileMetadata.setExceptions("Stack trace details of the failure");
-            
-            // Send failure message to the audit queue
-            kafkaProducer.sendFileMetadataToAuditQueue(fileMetadata, "COLLECTION-AUDIT-QUEUE");
-            
-            // Further validation can be added here
-            // Validate the failure message according to the acceptance criteria
-        }
-    } else {
-        // Handle the scenario if programArgs is null or empty
-        // Populate the FileMetadata with failure details
-        FileMetadata fileMetadata = new FileMetadata();
-        fileMetadata.setFile_name(collector.getInputFilePath());
-        fileMetadata.setDate_received(new Date()); // Set date received
-        fileMetadata.setDate_processed(new Date()); // Set date processed
-        fileMetadata.setNo_of_records_in_the_file(0); // Set number of records in the file
-        fileMetadata.setNo_of_records_processed(0); // Set number of records processed
-        fileMetadata.setNo_of_records_failed(0); // Set number of records failed
-        fileMetadata.setJob_status("job submission failed");
-        
-        // Add stack trace details to the exceptions field of fileMetadata
-        fileMetadata.setExceptions("Stack trace details of the failure");
-        
-        // Send failure message to the audit queue
-        kafkaProducer.sendFileMetadataToAuditQueue(fileMetadata, "COLLECTION-AUDIT-QUEUE");
-        
-        // Further validation can be added here
-        // Validate the failure message according to the acceptance criteria
-    }
-
-    // Along with the rest of the code
-}
+In the modified code, I have added a `ResponseEntity<String>` object to capture the response of the job submission request. If the status code of the response is `HttpStatus.OK`, it indicates a successful job submission and the success message is pushed to the Kafka topic. If the status code is not OK, it indicates a job submission failure and the failure message is pushed to the Kafka topic. Additionally, the catch block has been added to handle any exceptions in job submission and push the failure message to the Kafka topic with the exception details.

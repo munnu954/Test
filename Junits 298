@@ -1,3 +1,240 @@
+AC1: The job submission throws error and status code received is Not OK.
+
+```java
+// Inside FlinkApiController class
+
+public FileMetadata createFailureMetadata(SpaceCollector message, String fileType, ResponseEntity errorMessage) {
+    FileMetadata metadata = new FileMetadata();
+    metadata.setFile_name(message.getInputFilePath());
+    metadata.setDate_received(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+    metadata.setDate_processed("");
+    metadata.setNo_of_records_in_the_file(0);
+    metadata.setNo_of_records_processed(0);
+    metadata.setNo_of_records_failed(0);
+    metadata.setJob_status("FAILURE");
+    metadata.setJob_id("");
+    metadata.setJar_id("");
+    metadata.setExceptions(errorMessage.getStatusCode().toString());
+    metadata.setStackTrace(getStackTrace(errorMessage.getBody()));
+    return metadata;
+}
+
+public String getStackTrace(Object responseBody) {
+    if(responseBody instanceof String) {
+        return (String) responseBody;
+    } else {
+        return "";
+    }
+}
+
+public void writeFailureMetadataToAuditQueue(FileMetadata metadata) {
+    this.kafkaProducer.writeMessage(metadata);
+}
+
+public void writeFailureMetadataToLog(FileMetadata metadata, String destinationFolderPath) {
+    String logFilePath = destinationFolderPath + "/log.txt";
+    try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
+        fileWriter.write(metadata.toString());
+        fileWriter.write(System.lineSeparator());
+        fileWriter.flush();
+    } catch (IOException e) {
+        e.printStackTrace();
+    }
+}
+
+public void handleJobSubmissionFailure(SpaceCollector message, String fileType, ResponseEntity response, String destinationFolderPath) {
+    FileMetadata metadata = createFailureMetadata(message, fileType, response);
+    writeFailureMetadataToAuditQueue(metadata);
+    writeFailureMetadataToLog(metadata, destinationFolderPath);
+}
+
+@PostMapping
+public String triggerJob(SpaceCollector collector, String fileType) {
+    // Rest of the code
+
+    // Trigger the submitted jar
+    ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
+    
+    if (response != null && !response.getStatusCode().is2xxSuccessful()) {
+        handleJobSubmissionFailure(collector, fileType, response, destinationFolderPath);
+    }
+    
+    // Rest of the code
+}
+```
+
+AC2: Publishing to the queue 3459-COLLECTION-AUDIT-QUEUE fails
+
+```java
+// Inside KafkaProducer class
+
+public boolean writeFailureMessageToAuditQueue(FileMetadata message) {
+    try {
+        this.kafkaTemplate.send(topicName, message);
+        Logger.info("Kafka audit message {}", message);
+        return true;
+    } catch (Exception e) {
+        e.printStackTrace();
+        return false;
+    }
+}
+
+public void writeFailureMessageToLogFile(FileMetadata message, String destinationFolderPath) {
+    String logFilePath = destinationFolderPath + "/log.txt";
+    try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
+        fileWriter.write(message.toString());
+        fileWriter.write(System.lineSeparator());
+        fileWriter.flush();
+    } catch (IOException e) {
+        e.printStackTrace();
+    }
+}
+
+public void handlePublishingFailure(FileMetadata message, String destinationFolderPath) {
+    if(!writeFailureMessageToAuditQueue(message)) {
+        writeFailureMessageToLogFile(message, destinationFolderPath);
+    }
+}
+
+public void sendFailureMessage(SpaceCollector message, String fileType, ResponseEntity response) {
+    // Rest of the code
+    
+    this.kafkaProducer.writeMessage(metadata);
+    
+    // Rest of the code
+}
+```
+
+AC3: Input file is present and input topic `3459-COLLECTION-REQUEST-QUEUE` is not accessible.
+
+```java
+// Inside FlinkApiController class
+
+public boolean isTopicAccessible(String topicName) {
+    // Code to check if the topic is accessible
+}
+
+public void writeErrorMessageToLogAndAuditQueue(SpaceCollector message, String fileType, String logErrorMessage, String destinationFolderPath) {
+    FileMetadata metadata = createFailureMetadata(message, fileType, logErrorMessage);
+    writeFailureMetadataToAuditQueue(metadata);
+    writeFailureMetadataToLog(metadata, destinationFolderPath);
+}
+
+public String triggerJob(SpaceCollector collector, String fileType) {
+    // Rest of the code
+    
+    if (!isTopicAccessible(topicName)) {
+        String errorMessage = String.format("Input topic %s is not accessible", topicName);
+        writeErrorMessageToLogAndAuditQueue(collector, fileType, errorMessage, destinationFolderPath);
+    }
+    
+    // Rest of the code
+}
+```
+
+AC4: Jar file is not uploaded to flink cluster.
+
+```java
+// Inside FlinkApiController class
+
+public boolean areJarsPresentOnFlinkCluster() {
+    // Code to check if the jars are present on the flink cluster
+}
+
+public boolean areJobsPresentInFlinkJobsTable() {
+    // Code to check if the FLINK JOBS table has entries
+}
+
+public void handleJobJarNotUploadedFailure(SpaceCollector message, String fileType, String logErrorMessage, String destinationFolderPath) {
+    FileMetadata metadata = createFailureMetadata(message, fileType, logErrorMessage);
+    
+    if(!areJarsPresentOnFlinkCluster() && !areJobsPresentInFlinkJobsTable()) {
+        this.kafkaProducer.writeMessage(metadata);
+        this.kafkaProducer.writeMessageToLogFile(metadata, destinationFolderPath);
+    } else {
+        this.kafkaProducer.sendFailureMessage(message, fileType, null);
+    }
+}
+
+public String triggerJob(SpaceCollector collector, String fileType) {
+    // Rest of the code
+    
+    if (areJarsPresentOnFlinkCluster() || areJobsPresentInFlinkJobsTable()) {
+        String errorMessage = "Failure message could not be pushed to audit queue and log file because jars are present on the flink cluster or FLINK JOBS table has entries";
+        handleJobJarNotUploadedFailure(collector, fileType, errorMessage, destinationFolderPath);
+    }
+    
+    // Rest of the code
+}
+```
+
+AC5: Non-existent jar id passed to flink cluster.
+
+```java
+// Inside FlinkApiController class
+
+public boolean isJarIdValid(String jarId) {
+    // Code to check if the jar ID is valid on the flink cluster
+}
+
+public void handleNonExistentJarIdFailure(SpaceCollector message, String fileType, String jarId, String logErrorMessage, String destinationFolderPath) {
+    FileMetadata metadata = createFailureMetadata(message, fileType, logErrorMessage);
+    
+    if(!isJarIdValid(jarId)) {
+        this.kafkaProducer.writeMessage(metadata);
+        this.kafkaProducer.writeMessageToLogFile(metadata, destinationFolderPath);
+    } else {
+        this.kafkaProducer.sendFailureMessage(message, fileType, null);
+    }
+}
+
+public String triggerJob(SpaceCollector collector, String fileType) {
+    // Rest of the code
+    
+    if (!isJarIdValid(jarId)) {
+        String errorMessage = String.format("Non-existent jar id %s passed to flink cluster", jarId);
+        handleNonExistentJarIdFailure(collector, fileType, jarId, errorMessage, destinationFolderPath);
+    }
+    
+    // Rest of the code
+}
+```
+
+Please note that the above code snippets are suggestions and may require modifications according to your specific requirements and implementation.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 S M A:
 KafkaProducer.java:
 

@@ -1,82 +1,40 @@
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
-import com.google.gson.JsonObject;
+@Override
+public void flatMap(String s, Collector<String> collector) throws Exception {
+    String[] arr = s.split(",");
+    if (headers == null) {
+        headers = arr;
+        return;
+    }
 
-import java.util.HashMap;
-import java.util.Map;
+    JsonObject obj = new JsonObject();
+    String currentObjectName = arr[2].trim();
 
-public class CsvtoJsonConversion implements FlatMapFunction<String, String> {
+    for (int i = 0; i < arr.length; i++) {
+        String jsonKey = headers[i].trim();
+        String jsonValue = arr[i].trim().replace("\"", "");
 
-    @Override
-    public void flatMap(String input, Collector<String> collector) throws Exception {
-        String[] lines = input.split(System.lineSeparator());
-
-        String currentObjectName = "";
-        JsonObject objectDetails = new JsonObject();
-
-        for (int i = 1; i < lines.length; i++) {
-            String[] arr = lines[i].split(",");
-
-            if (arr.length > 2 && !arr[2].isEmpty()) {
-                String newObjectName = arr[2].trim();
-
-                if (!newObjectName.equals(currentObjectName)) {
-                    // Emit result if it's a new objectName
-                    if (!currentObjectName.isEmpty()) {
-                        JsonObject result = new JsonObject();
-                        result.put("ObjectName", currentObjectName);
-                        result.put("Begin Date", objectDetails.getString("Begin Date"));
-                        result.put("End Date", objectDetails.getString("End Date"));
-                        result.put("Ticket Number", objectDetails.getString("Ticket Number"));
-                        objectDetails.remove("Begin Date");
-                        objectDetails.remove("End Date");
-                        objectDetails.remove("Ticket Number");
-                        result.put(currentObjectName, objectDetails);
-                        collector.collect(result.toString());
-                    }
-
-                    // Reset objectDetails for the new objectName
-                    currentObjectName = newObjectName;
-                    objectDetails = new JsonObject();
-
-                    if (i + 3 < lines.length) {
-                        objectDetails.put("Begin Date", lines[i + 1].split(",")[1].trim());
-                        objectDetails.put("End Date", lines[i + 2].split(",")[1].trim());
-                        objectDetails.put("Ticket Number", lines[i + 3].split(",")[1].trim());
-                    }
-                }
-            }
-
-            for (int j = i + 4; j < lines.length; j++) {
-                String[] sectionArr = lines[j].split(",");
-                if (sectionArr.length > 0 && !sectionArr[0].isEmpty() && !sectionArr[0].equals("TICKET NUMBER")) {
-                    String sectionName = sectionArr[0].trim();
-                    JsonObject sectionObject = new JsonObject();
-
-                    if (sectionArr.length > 3) {
-                        sectionObject.put("Min", sectionArr[3].trim());
-                        sectionObject.put("Average", sectionArr[4].trim());
-                        sectionObject.put("Max", sectionArr[5].trim());
-                        sectionObject.put("Cumulative Counter Value", sectionArr[6].trim());
-                    }
-
-                    objectDetails.put(sectionName, sectionObject);
-                }
-            }
+        if (jsonKey.equals("ObjectName")) {
+            currentObjectName = jsonValue;
+            continue;
         }
 
-        // Emit result for the last objectName
-        if (!currentObjectName.isEmpty()) {
-            JsonObject result = new JsonObject();
-            result.put("ObjectName", currentObjectName);
-            result.put("Begin Date", objectDetails.getString("Begin Date"));
-            result.put("End Date", objectDetails.getString("End Date"));
-            result.put("Ticket Number", objectDetails.getString("Ticket Number"));
-            objectDetails.remove("Begin Date");
-            objectDetails.remove("End Date");
-            objectDetails.remove("Ticket Number");
-            result.put(currentObjectName, objectDetails);
-            collector.collect(result.toString());
+        if (jsonValue.equals("") || jsonKey.equals("")) {
+            continue;  // Skip empty values and keys
+        }
+
+        if (jsonKey.equals("BEGIN DATE") || jsonKey.equals("END DATE") || jsonKey.equals("TICKET NUMBER")) {
+            obj.addProperty(jsonKey, jsonValue);
+        } else {
+            JsonObject metricsObj = new JsonObject();
+            metricsObj.addProperty("Min", arr[i + 1].trim());
+            metricsObj.addProperty("Average", arr[i + 2].trim());
+            metricsObj.addProperty("Max", arr[i + 3].trim());
+            metricsObj.addProperty("Cumulative Counter Value", arr[i + 4].trim());
+            obj.add(jsonKey, metricsObj);
+            i += 4;  // Skip the metrics columns
         }
     }
+
+    String jsonOutput = obj.toString();
+    collector.collect(jsonOutput);
 }

@@ -1,65 +1,134 @@
-Here is the modified code with the additional else condition for job submission failure:
+Updated FlinkApiController.java:-
 
-```java
-String jobSubmitUrl = null;
-if(programArgs != null && !programArgs.isEmpty()){
-    headers.setContentType(MediaType.APPLICATION_JSON);
-    JSONObject requestBody = new JSONObject();
+@Service
+public class FlinkApiController {
 
-    if(fileType.equalsIgnoreCase(".csv")){
-        requestBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
-        jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
-    }
-    else if(fileType.equalsIgnoreCase(".xml")){
-        LOGGER.info("XML FLINK TRIGGER::");
-        programXmlArgs = programXmlArgs.replace("|filePath|", collector.getInputFilePath());
-        programXmlArgs = programXmlArgs.replace(" |primaryKey|", "");
-        requestBody.put("programArgs", programXmlArgs);
-        jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobXmlJarid + "/run";
-        LOGGER.info("jobSubmitUrl:" + jobSubmitUrl);
-        LOGGER.info("requestBody::" + requestBody.toString());
-    }
-    else if(fileType.equalsIgnoreCase(".txt")){
-        LOGGER.info("TEXT FLINK TRIGGER::");
-        requestBody.put("programArgs", programArgs.replace("|input|", collector.getInputFilePath()));
-        jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobtxtJarid + "/run";
-    }
-    
-    request = new HttpEntity<String>(requestBody.toString(), headers);
-    ResponseEntity<String> response = null;
-    try {
-        response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
-        if(response.getStatusCode() == HttpStatus.OK){
-            // Successful job submission
-            // Push the success message to Kafka topic
-            FileMetadata fileMetadata = new FileMetadata();
-            fileMetadata.setJob_status("SUCCESS");
-            fileMetadata.setJob_id(jobId);
-            fileMetadata.setJar_id(jarId);
-            // Push fileMetadata to Kafka topicName
-            kafkaProducer.send(topicName, fileMetadata);
-        } else {
-            // Job submission failure
-            // Push the failure message to Kafka topic
-            FileMetadata fileMetadata = new FileMetadata();
-            fileMetadata.setJob_status("FAILURE");
-            fileMetadata.setJob_id(jobId);
-            fileMetadata.setJar_id(jarId);
-            // Push fileMetadata to Kafka topicName
-            kafkaProducer.send(topicName, fileMetadata);
+    @Value("${flink.api.url}")
+    private String flinkApiUrl;
+
+    @Value("${flink.job.csv.jarid}")
+    private String flinkJobJarid;
+
+    @Value("${flink.job.csv.program-args}")
+    private String programArgs;
+
+    @Value("${flink.job.txt.jarid}")
+    private String flinkJobtxtJarid;
+
+    @Value("${flink.job.xml.program-args}")
+    private String programXmlArgs;
+
+    @Value("${flink.job.xml.jarid}")
+    private String flinkJobXmlJarid;
+
+    HttpHeaders headers = new HttpHeaders();
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(FlinkApiController.class);
+
+    @PostMapping
+    public String triggerJob(SpaceCollector collector, String fileType) {
+
+        RestTemplate restTemplate = new RestTemplate();
+        LOGGER.info("TRIGGER JOB::::");
+        HttpEntity<String> request = null;
+        String jobSubmitUrl = null;
+        if (programArgs != null && !programArgs.isEmpty()) {
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            JSONObject requestBody = new JSONObject();
+
+            try {
+                if (fileType.equalsIgnoreCase(".csv")) {
+                    requestBody.put("programArgs", programArgs.replace("|input|", collector.getInputFilePath()));
+                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
+
+                } else if (fileType.equalsIgnoreCase(".xml")) {
+                    LOGGER.info("XML FLINK TRIGGER::");
+
+                    programXmlArgs = programXmlArgs.replace("|filePath|", collector.getInputFilePath());
+                    programXmlArgs = programXmlArgs.replace(" |primaryKey|", "");
+                    requestBody.put("programArgs", programXmlArgs);
+                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobXmlJarid + "/run";
+                    LOGGER.info("jobSubmitUrl:" + jobSubmitUrl);
+                    LOGGER.info("requestBody::" + requestBody.toString());
+                } else if (fileType.equalsIgnoreCase(".txt")) {
+                    LOGGER.info("TEXT FLINK TRIGGER::");
+
+                    requestBody.put("programArgs", programArgs.replace("|input|", collector.getInputFilePath()));
+
+                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobtxtJarid + "/run";
+
+                }
+
+                request = new HttpEntity<>(requestBody.toString(), headers);
+
+                // Trigger the submitted jar
+                ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
+                LOGGER.info("response::::" + response);
+
+                if (response.getStatusCode() != HttpStatus.OK) {
+                    LOGGER.info("Not OK!!");
+                    FileMetadata metadata = logMetadata(collector, fileType, response);
+                    kafkaProducer.sendFailureMessage(collector, fileType, response.toString());
+                    writeLogToFile(metadata, destinationFolderPath);
+                } else if (collector.getInputFilePath() == null || collector.getInputFilePath().isEmpty()
+                        || collector.getInputFilePath().isBlank()) {
+                    LOGGER.info("File doesn't exist::");
+                    FileMetadata metadata = logMetadata(collector, null, "File does not exist");
+                    kafkaProducer.sendFailureMessage(collector, null, response.toString());
+                    writeLogToFile(metadata, destinationFolderPath);
+                }
+            } catch (Exception e) {
+                LOGGER.error("Error triggering job", e);
+                FileMetadata metadata = logMetadata(collector, fileType, e);
+                kafkaProducer.sendFailureMessage(collector, fileType, e.toString());
+                writeLogToFile(metadata, destinationFolderPath);
+            }
         }
-    } catch (HttpStatusCodeException e) {
-        // Handle any exception in job submission
-        // Push the failure message to Kafka topic
-        FileMetadata fileMetadata = new FileMetadata();
-        fileMetadata.setJob_status("FAILURE");
-        fileMetadata.setJob_id(jobId);
-        fileMetadata.setJar_id(jarId);
-        fileMetadata.setExceptions(e.getMessage());
-        // Push fileMetadata to Kafka topicName
-        kafkaProducer.send(topicName, fileMetadata);
+        return "Job triggered: " + response;
+    }
+
+    public FileMetadata logMetadata(SpaceCollector collector, String fileType, ResponseEntity<String> errorMessage) {
+        FileMetadata metadata = new FileMetadata();
+        metadata.setFile_name(collector.getInputFilePath());
+        metadata.setDate_received(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+        metadata.setDate_processed("");
+        metadata.setNo_of_records_in_the_file(0);
+        metadata.setNo_of_records_processed(0);
+        metadata.setNo_of_records_failed(0);
+        metadata.setJob_status("FAILURE");
+        metadata.setJob_id("");
+        metadata.setJar_id("");
+        metadata.setExceptions(errorMessage.getStatusCode().toString());
+
+        return metadata;
+    }
+
+    public FileMetadata logMetadata(SpaceCollector collector, String fileType, Exception e) {
+        FileMetadata metadata = new FileMetadata();
+        metadata.setFile_name(collector.getInputFilePath());
+        metadata.setDate_received(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+        metadata.setDate_processed("");
+        metadata.setNo_of_records_in_the_file(0);
+        metadata.setNo_of_records_processed(0);
+        metadata.setNo_of_records_failed(0);
+        metadata.setJob_status("FAILURE");
+        metadata.setJob_id("");
+        metadata.setJar_id("");
+        metadata.setExceptions("Job submission failed");
+        metadata.setStackTrace(ExceptionUtils.getStackTrace(e));
+
+        return metadata;
+    }
+
+    public void writeLogToFile(FileMetadata metadata, String destinationFolderPath) {
+        String logFilePath = destinationFolderPath + "/log.txt";
+        try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
+            fileWriter.write(metadata.toString());
+            fileWriter.write(System.lineSeparator());
+            fileWriter.flush();
+        } catch (IOException e) {
+            LOGGER.error("Error writing log to file", e);
+        }
     }
 }
-```
-
-In the modified code, I have added a `ResponseEntity<String>` object to capture the response of the job submission request. If the status code of the response is `HttpStatus.OK`, it indicates a successful job submission and the success message is pushed to the Kafka topic. If the status code is not OK, it indicates a job submission failure and the failure message is pushed to the Kafka topic. Additionally, the catch block has been added to handle any exceptions in job submission and push the failure message to the Kafka topic with the exception details.

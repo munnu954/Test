@@ -1,24 +1,19 @@
-catch (HttpStatusCodeException ex) {
+catch (HttpClientErrorException | HttpServerErrorException ex) {
     ex.printStackTrace();
-    LOGGER.error("Error triggering job", ex.getMessage());
+    LOGGER.error("Error triggering job: " + ex.getMessage());
 
-    if (ex instanceof HttpClientErrorException) {
-        int statusCode = ex.getRawStatusCode();
-        if (statusCode == 404 && ex.getResponseBodyAsString().contains("Non existent jar id")) {
-            // Handle the non-existent jar id scenario
-            int httpStatusCode = 400; // Not OK
-            // Specific actions and logging for this scenario
-        }
-    } else if (ex instanceof HttpServerErrorException) {
-        int statusCode = ex.getRawStatusCode();
-        if (statusCode == 500) {
-            // Handle 500 Internal Server Error scenario
-            // Specific actions and logging for this scenario
-        }
+    if (ex.getStatusCode() == HttpStatus.NOT_FOUND) {
+        // Handle Non-existent jar ID passed to Flink cluster
+        LOGGER.error("Non-existent jar ID passed to Flink cluster");
+        // Additional handling if needed
+    } else if (ex.getStatusCode() == HttpStatus.INTERNAL_SERVER_ERROR && ex.getResponseBodyAsString().contains("org.apache.flink.runtime.rest.handler.RestHandlerException: Jar file")) {
+        // Handle specific internal server error related to Flink
+        LOGGER.error("Internal server error related to Flink: " + ex.getResponseHeaders());
+        // Additional handling if needed
+    } else {
+        // General error handling
+        FileMetadata metadata = kafkaConsumer.logMetadata(collector, fileType, ex);
+        kafkaInputProducer.sendFailureMessage(collector, fileType, ex);
+        kafkaConsumer.writeLogToFile(metadata, destinationFolderPath);
     }
-
-    FileMetadata metadata = kafkaConsumer.logMetadata(collector, fileType, ex);
-
-    kafkaInputProducer.sendFailureMessage(collector, fileType, ex);
-    kafkaConsumer.writeLogToFile(metadata, destinationFolderPath);
 }

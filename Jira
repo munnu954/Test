@@ -1,298 +1,33 @@
-ChatGPT & Midjourney | New bot:
-SpaceCollector\.java:
+try {
+    // Your existing code for successful job submission
+    // If everything goes well, you set the HTTP status code as OK
+    int httpStatusCode = 200; // OK
+    // ... rest of the code
+} catch (HttpClientErrorException clientErrorException) {
+    // Client Error occurred (status code 4xx). You might want to log it and handle it appropriately
+    clientErrorException.printStackTrace();
+    LOGGER.error("Client Error triggering job", clientErrorException.getMessage());
 
-```
-import java.io.File;
-import java.io.IOException;
-import java.util.Map;
+    FileMetadata metadata = kafkaConsumer.logMetadata(collector, fileType, clientErrorException);
 
-public class SpaceCollector {
-    
-    public static void main(String[] args) throws IOException {
-        File inputFile = new File(args[0]);
-        String jobId = args[1];
-        String jarId = args[2];
-        String inputTopic = "3459-COLLECTION-REQUEST-QUEUE";
-        String auditTopic = "3459-COLLECTION-AUDIT-QUEUE";
-        
-        // check if input file exists
-        if (!inputFile.exists()) {
-            JsonUtils.writeToLog("Input file not found at location: " + inputFile.getAbsolutePath());
-            JsonUtils.publishFailureMessageToAuditQueue(auditTopic, inputFile.getName(), jobId, jarId, "Input file not found", null);
-            return;
-        }
-        
-        // check if input topic is accessible
-        if (!KafkaController.isTopicAccessible(inputTopic)) {
-            JsonUtils.writeToLog("Input topic not accessible: " + inputTopic);
-            JsonUtils.publishFailureMessageToAuditQueue(auditTopic, inputFile.getName(), jobId, jarId, "Input topic not accessible", null);
-            return;
-        }
-        
-        // check if jar file is present on Flink cluster
-        if (!FlinkApiController.isJarPresent(jarId)) {
-            JsonUtils.writeToLog("Jar file not present on Flink cluster: " + jarId);
-            JsonUtils.publishFailureMessageToAuditQueue(auditTopic, inputFile.getName(), jobId, jarId, "Jar file not present on Flink cluster", null);
-            return;
-        }
-        
-        // submit job to Flink API
-        Map<String, Object> response = FlinkApiController.submitJob(inputFile.getAbsolutePath(), jarId);
-        
-        // check if job submission was successful
-        if (response.containsKey("error")) {
-            String errorMessage = (String) response.get("error");
-            JsonUtils.writeToLog("Job submission failed: " + errorMessage);
-            JsonUtils.publishFailureMessageToAuditQueue(auditTopic, inputFile.getName(), jobId, jarId, "Job submission failed", errorMessage);
-            return;
-        }
-        
-        // check if job execution was successful
-        String jobIdFromResponse = (String) response.get("jobId");
-        String statusFromResponse = (String) response.get("status");
-        if (!statusFromResponse.equalsIgnoreCase("OK")) {
-            int numRecordsProcessed = 0;
-            int numRecordsFailed = 0;
-            String exceptionMessage = "Job execution failed";
-            if (response.containsKey("numRecordsProcessed")) {
-                numRecordsProcessed = (int) response.get("numRecordsProcessed");
-            }
-            if (response.containsKey("numRecordsFailed")) {
-                numRecordsFailed = (int) response.get("numRecordsFailed");
-            }
-            if (response.containsKey("exceptionMessage")) {
-                exceptionMessage = (String) response.get("exceptionMessage");
-            }
-            JsonUtils.writeToLog("Job execution failed: " + exceptionMessage);
-            JsonUtils.publishFailureMessageToAuditQueue(auditTopic, inputFile.getName(), jobIdFromResponse, jarId, exceptionMessage, null);
-        } else {
-            JsonUtils.writeToLog("Job execution successful");
-        }
-    }
+    kafkaInputProducer.sendFailureMessage(collector, fileType, clientErrorException);
+    kafkaConsumer.writeLogToFile(metadata, destinationFolderPath);
+} catch (HttpServerErrorException serverErrorException) {
+    // Server Error occurred (status code 5xx). You should handle this as well
+    serverErrorException.printStackTrace();
+    LOGGER.error("Server Error triggering job", serverErrorException.getMessage());
+
+    FileMetadata metadata = kafkaConsumer.logMetadata(collector, fileType, serverErrorException);
+
+    kafkaInputProducer.sendFailureMessage(collector, fileType, serverErrorException);
+    kafkaConsumer.writeLogToFile(metadata, destinationFolderPath);
+} catch (Exception ex) {
+    // Any other unhandled exceptions
+    ex.printStackTrace();
+    LOGGER.error("Error triggering job", ex.getMessage());
+
+    FileMetadata metadata = kafkaConsumer.logMetadata(collector, fileType, ex);
+
+    kafkaInputProducer.sendFailureMessage(collector, fileType, ex);
+    kafkaConsumer.writeLogToFile(metadata, destinationFolderPath);
 }
-```
-
-JsonUtils\.java:
-
-```
-import java.io.BufferedWriter;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.HashMap;
-import java.util.Map;
-
-import com.google.gson.Gson;
-
-public class JsonUtils {
-    
-    private static Gson gson = new Gson();
-    
-    public static void writeToLog(String message) throws IOException {
-        String logFilePath = "/shared/log/custom-data-transformer-client.log";
-        BufferedWriter writer = new BufferedWriter(new FileWriter(logFilePath, true));
-        String logMessage = "[" + LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) + "] " + message;
-        writer.write(logMessage);
-        writer.newLine();
-        writer.close();
-    }
-    
-    public static void publishFa
-
-ilureMessageToAuditQueue(String topic, String fileName, String jobId, String jarId, String errorMessage, String stackTrace) {
-        Map<String, Object> message = new HashMap<>();
-        message.put("file_name", fileName);
-        message.put("date_received", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-        message.put("date_processed", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-        message.put("no_of_records_in_the_file", 0);
-        message.put("no_of_records_processed", 0);
-        message.put("no_of_records_failed", 0);
-        message.put("job_status", "FAILURE");
-        message.put("job_id", jobId);
-        message.put("jar_id", jarId);
-        message.put("exceptions", errorMessage);
-        if (stackTrace != null) {
-            message.put("stack_trace", stackTrace);
-        }
-        KafkaProducer.publishMessage(topic, gson.toJson(message));
-    }
-}
-```
-
-KafkaProducer\.java:
-
-```
-import java.util.Properties;
-
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerRecord;
-
-public class KafkaProducer {
-    
-    private static KafkaProducer<String, String> producer;
-    
-    public static void init(Properties props) {
-        producer = new KafkaProducer<>(props);
-    }
-    
-    public static void publishMessage(String topic, String message) {
-        ProducerRecord<String, String> record = new ProducerRecord<>(topic, message);
-        producer.send(record);
-    }
-    
-    public static void close() {
-        producer.close();
-    }
-}
-```
-
-KafkaController\.java:
-
-```
-import java.util.Arrays;
-import java.util.Properties;
-
-import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.ListTopicsResult;
-import org.apache.kafka.clients.admin.TopicListing;
-
-public class KafkaController {
-    
-    public static boolean isTopicAccessible(String topicName) {
-        Properties props = new Properties();
-        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
-        try (AdminClient client = AdminClient.create(props)) {
-            ListTopicsResult topicsResult = client.listTopics();
-            for (TopicListing topic : topicsResult.listings().get()) {
-                if (topic.name().equals(topicName)) {
-                    return true;
-                }
-            }
-        } catch (Exception e) {
-            // ignore exception and return false
-        }
-        return false;
-    }
-}
-```
-
-FlinkApiController\.java:
-
-```
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.HashMap;
-import java.util.Map;
-
-import com.google.gson.Gson;
-
-public class FlinkApiController {
-    
-    private static Gson gson = new Gson();
-    
-    public static boolean isJarPresent(String jarId) {
-        String flinkApiUrl = "http://localhost:8081/jars";
-        try {
-            URL url = new URL(flinkApiUrl);
-            HttpURLConnection con = (HttpURLConnection) url.openConnection();
-            con.setRequestMethod("GET");
-            int status = con.getResponseCode();
-            if (status != 200) {
-                return false;
-            }
-            BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
-            String inputLine;
-            StringBuffer content = new StringBuffer();
-            while ((inputLine = in.readLine()) != null) {
-                content.append(inputLine);
-            }
-            in.close();
-            con.disconnect();
-            Map<String, Object> response = gson.fromJson(content.toString(), HashMap.class);
-            if (response.containsKey("files")) {
-                Map<String, Object> files = (Map<String, Object>) response.get("files");
-                if (files.containsKey(jarId)) {
-                    return true;
-                }
-            }
-        } catch (Exception e) {
-            // ignore exception
-
-and return false
-        }
-        return false;
-    }
-    
-    public static Map<String, Object> submitJob(String inputFile, String jarId) {
-        String flinkApiUrl = "http://localhost:8081/jars/" + jarId + "/run?entry-class=com.example.TransformJob";
-        try {
-            URL url = new URL(flinkApiUrl);
-            HttpURLConnection con = (HttpURLConnection) url.openConnection();
-            con.setRequestMethod("POST");
-            con.setRequestProperty("Content-Type", "application/json");
-            con.setDoOutput(true);
-            String jsonInputString = "{\\"inputFilePath\\":\\"" + inputFile + "\\"}";
-            byte[] input = jsonInputString.getBytes("utf-8");
-            con.getOutputStream().write(input, 0, input.length);
-            int status = con.getResponseCode();
-            BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
-            String inputLine;
-            StringBuffer content = new StringBuffer();
-            while ((inputLine = in.readLine()) != null) {
-                content.append(inputLine);
-            }
-            in.close();
-            con.disconnect();
-            Map<String, Object> response = gson.fromJson(content.toString(), HashMap.class);
-            response.put("status", status == 200 ? "OK" : "ERROR");
-            return response;
-        } catch (Exception e) {
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("error", e.getMessage());
-            return errorResponse;
-        }
-    }
-}
-```
-
-KafkaConsumer\.java:
-
-```
-import java.time.Duration;
-import java.util.Collections;
-import java.util.Properties;
-
-import org.apache.kafka.clients.consumer.Consumer;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-
-public class KafkaConsumer {
-    
-    private static Consumer<String, String> consumer;
-    
-    public static void init(Properties props) {
-        consumer = new KafkaConsumer<>(props);
-        consumer.subscribe(Collections.singletonList("3459-COLLECTION-RESPONSE-QUEUE"));
-    }
-    
-    public static void consumeMessages() {
-        while (true) {
-            ConsumerRecords<String, String> records = consumer.poll(Duration.ofSeconds(1));
-            if (!records.isEmpty()) {
-                for (org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record : records) {
-                    // process the record
-                }
-            }
-        }
-    }
-    
-    public static void close() {
-        consumer.close();
-    }
-}
-```

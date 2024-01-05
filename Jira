@@ -1,41 +1,84 @@
-To fix the error, you need to update the code by properly mocking the `restTemplate` object and providing the correct response entity. Here's the updated and executable JUnit 5 test case code:
-
-```java
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.RestTemplate;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import java.io.IOException;
+
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class FlinkApiControllerTest {
-    
-    @Test
-    void testTriggerJob_Successful() {
-        SpaceCollector collector = new SpaceCollector();
-        collector.setInputFilePath("test.csv");
-        String fileType = ".csv";
-        String programArgs = "--input |inputPath|";
-        String jobSubmitUrl = "http://flink-api-url/jars/flink-job-jar-id/run";
-        ResponseEntity<String> responseEntity = new ResponseEntity<>("Job triggered", HttpStatus.OK);
-        
-        RestTemplate restTemplate = mock(RestTemplate.class);
-        FlinkApiController flinkApiController = new FlinkApiController(restTemplate);
-        
-        when(restTemplate.postForEntity(eq(jobSubmitUrl), any(), eq(String.class))).thenReturn(responseEntity);
+@WebMvcTest(FlinkApiController.class)
+public class FlinkApiControllerTests {
 
-        String result = flinkApiController.triggerJob(collector, fileType);
+  @Autowired
+  private MockMvc mockMvc;
 
-        assertEquals("Job triggered", result);
-        verify(restTemplate, times(1)).postForEntity(eq(jobSubmitUrl), any(), eq(String.class));
-    }
+  @MockBean
+  private KafkaInputProducer kafkaInputProducer;
+
+  @MockBean
+  private FlinkApiController flinkApiController;
+
+  @MockBean
+  private KafkaConsumer kafkaConsumer;
+
+  @MockBean
+  private KafkaAuditProducer kafkaAuditProducer;
+
+  @MockBean
+  private KafkaTemplate<String, Object> kafkaTemplate;
+
+  @Test
+  public void givenNoJarsAndNoEntries_whenTriggerJob_thenReturnFailureMessage() throws Exception {
+    when(flinkApiController.triggerJob(any(), any())).thenReturn("Job is not triggered");
+
+    mockMvc.perform(MockMvcRequestBuilders.post("/")
+            .contentType("application/json")
+            .content("{\"fileType\": \".csv\"}")
+            .accept("application/json"))
+            .andExpect(MockMvcResultMatchers.status().isOk())
+            .andExpect(MockMvcResultMatchers.content().string("Job is not triggered"));
+
+    verify(kafkaInputProducer).sendFailureMessage(any(), any(), any());
+    verify(kafkaConsumer).writeLogToFile(any(), any(), any(), any());
+  }
+
+  @Test
+  public void givenNonExistentJarId_whenTriggerJob_thenReturnFailureMessage() throws Exception {
+    when(flinkApiController.triggerJob(any(), any())).thenReturn("Job is not triggered");
+
+    mockMvc.perform(MockMvcRequestBuilders.post("/")
+            .contentType("application/json")
+            .content("{\"fileType\": \".csv\", \"jarId\": \"nonexistent\"}")
+            .accept("application/json"))
+            .andExpect(MockMvcResultMatchers.status().isOk())
+            .andExpect(MockMvcResultMatchers.content().string("Job is not triggered"));
+
+    verify(kafkaInputProducer).sendFailureMessage(any(), any(), any());
+    verify(kafkaConsumer).writeLogToFile(any(), any(), any(), any());
+  }
+
+  @Test
+  public void givenFailureFromFlinkApi_whenTriggerJob_thenReturnFailureMessageAndLogError() throws Exception {
+    doThrow(new RuntimeException("Flink API exception")).when(flinkApiController).triggerJob(any(), any());
+
+    mockMvc.perform(MockMvcRequestBuilders.post("/")
+            .contentType("application/json")
+            .content("{\"fileType\": \".csv\", \"jarId\": \"123\"}")
+            .accept("application/json"))
+            .andExpect(MockMvcResultMatchers.status().isOk())
+            .andExpect(MockMvcResultMatchers.content().string("Job is not triggered"));
+
+    verify(kafkaInputProducer).sendFailureMessage(any(), any(), any());
+    verify(kafkaConsumer).writeLogToFile(any(), any(), any(), any());
+    verify(kafkaAuditProducer).sendMessage(any());
+  }
 }
-```
-
-In the updated code, I've added the `RestTemplate` object as a parameter to the constructor of `FlinkApiController` class. This will allow us to easily mock the `RestTemplate` object in the test case.

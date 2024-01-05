@@ -1,3 +1,265 @@
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
+
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+@SpringBootTest
+public class KafkaInputProducerTest {
+
+    @InjectMocks
+    private KafkaInputProducer kafkaInputProducer;
+
+    @Mock
+    private KafkaTemplate<String, Object> kafkaTemplate;
+
+    @BeforeEach
+    public void setup() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    public void testWriteMessage_Successful() {
+        String topicName = "test-topic";
+        FileMetadata collector = new FileMetadata();
+        collector.setFileName("test.csv");
+
+        when(kafkaTemplate.send(eq(topicName), anyObject())).thenReturn(null);
+
+        boolean result = kafkaInputProducer.writeMessage(collector);
+
+        assertTrue(result);
+        verify(kafkaTemplate, times(1)).send(eq(topicName), eq(collector));
+    }
+
+    @Test
+    public void testWriteMessage_Failure() {
+        String topicName = "test-topic";
+        FileMetadata collector = new FileMetadata();
+        collector.setFileName("test.csv");
+
+        when(kafkaTemplate.send(eq(topicName), anyObject())).thenThrow(new RuntimeException());
+
+        boolean result = kafkaInputProducer.writeMessage(collector);
+
+        assertFalse(result);
+        verify(kafkaTemplate, times(1)).send(eq(topicName), eq(collector));
+    }
+}
+
+@SpringBootTest
+public class FlinkApiControllerTest {
+
+    @InjectMocks
+    private FlinkApiController flinkApiController;
+
+    @Mock
+    private RestTemplate restTemplate;
+
+    @Mock
+    private KafkaConsumer kafkaConsumer;
+
+    @Mock
+    private KafkaInputProducer kafkaInputProducer;
+
+    @BeforeEach
+    public void setup() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    public void testTriggerJob_Successful() {
+        String flinkApiUrl = "http://localhost:8081";
+        String flinkJobJarid = "job1";
+        String programArgs = "--input path/to/file.csv";
+        String fileType = ".csv";
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath("path/to/file.csv");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        MultiValueMap<String, String> requestBody = new LinkedMultiValueMap<>();
+        requestBody.add("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+
+        HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(requestBody, headers);
+
+        String jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
+
+        when(restTemplate.postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class)))
+                .thenReturn(new ResponseEntity<>("SUCCESS", HttpStatus.OK));
+
+        String result = flinkApiController.triggerJob(collector, fileType);
+
+        assertEquals("SUCCESS", result);
+        verify(restTemplate, times(1)).postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class));
+        verify(kafkaConsumer, never()).logMetadata(any(SpaceCollector.class), anyString(), any(Exception.class));
+        verify(kafkaInputProducer, never()).sendFailureMessage(any(SpaceCollector.class), anyString(), any(ResponseEntity.class));
+        verify(kafkaConsumer, never()).writeLogToFile(any(FileMetadata.class), anyString(), any(ResponseEntity.class), anyString());
+    }
+
+    @Test
+    public void testTriggerJob_JobSubmissionError() {
+        String flinkApiUrl = "http://localhost:8081";
+        String flinkJobJarid = "job1";
+        String programArgs = "--input path/to/file.csv";
+        String fileType = ".csv";
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath("path/to/file.csv");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        MultiValueMap<String, String> requestBody = new LinkedMultiValueMap<>();
+        requestBody.add("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+
+        HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(requestBody, headers);
+
+        String jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
+
+        when(restTemplate.postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class)))
+                .thenThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST, "Job submission failed"));
+
+        String result = flinkApiController.triggerJob(collector, fileType);
+
+        assertEquals("Job submission failed", result);
+        verify(restTemplate, times(1)).postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class));
+        verify(kafkaConsumer, times(1)).logMetadata(eq(collector), eq(fileType), any(Exception.class));
+        verify(kafkaInputProducer, times(1)).sendFailureMessage(eq(collector), eq(fileType), any(Exception.class));
+        verify(kafkaConsumer, times(1)).writeLogToFile(any(FileMetadata.class), anyString(), any(ResponseEntity.class), anyString());
+    }
+}
+
+@SpringBootTest
+public class KafkaConsumerTest {
+
+    @InjectMocks
+    private KafkaConsumer kafkaConsumer;
+
+    @Mock
+    private KafkaTopicUtil kafkaTopicUtil;
+
+    @Mock
+    private FlinkApiController flinkApiController;
+
+    @Mock
+    private KafkaAuditProducer kafkaAuditProducer;
+
+    @Mock
+    private KafkaInputProducer kafkaInputProducer;
+
+    @BeforeEach
+    public void setup() {
+        MockitoAnnotations.openMocks(this);
+        kafkaConsumer.setDestinationFolderPath("path/to/log/folder");
+    }
+
+    @Test
+    public void testConsume_Successful() throws IOException {
+        String topicName = "test-topic";
+        String sourceFilePath = "path/to/file.csv";
+        FileMetadata metadata = new FileMetadata();
+        metadata.setFileName("test.csv");
+
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath(sourceFilePath);
+
+        String data = "{ \"inputFilePath\": \"" + sourceFilePath + "\" }";
+
+        when(kafkaTopicUtil.isKafkaTopicPresent(eq(topicName))).thenReturn(true);
+        when(flinkApiController.triggerJob(eq(collector), eq(".csv"))).thenReturn("SUCCESS");
+
+        kafkaConsumer.consume(data);
+
+        verify(flinkApiController, times(1)).triggerJob(eq(collector), eq(".csv"));
+        verify(kafkaInputProducer, never()).sendFailureMessage(any(SpaceCollector.class), anyString(), any(Exception.class));
+        verify(kafkaConsumer, never()).writeLogToFile(any(FileMetadata.class), anyString());
+    }
+
+    @Test
+    public void testConsume_JobSubmissionFailure() throws IOException {
+        String topicName = "test-topic";
+        String sourceFilePath = "path/to/file.csv";
+        FileMetadata metadata = new FileMetadata();
+        metadata.setFileName("test.csv");
+
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath(sourceFilePath);
+
+        String data = "{ \"inputFilePath\": \"" + sourceFilePath + "\" }";
+
+        when(kafkaTopicUtil.isKafkaTopicPresent(eq(topicName))).thenReturn(true);
+        when(flinkApiController.triggerJob(eq(collector), eq(".csv"))).thenReturn("Job submission failed");
+        doNothing().when(kafkaConsumer).writeLogToFile(any(FileMetadata.class), anyString());
+
+        kafkaConsumer.consume(data);
+
+        verify(flinkApiController, times(1)).triggerJob(eq(collector), eq(".csv"));
+        verify(kafkaInputProducer, times(1)).sendFailureMessage(eq(collector), eq(".csv"), any(Exception.class));
+        verify(kafkaConsumer, times(1)).writeLogToFile(any(FileMetadata.class), anyString());
+    }
+
+    @Test
+    public void testConsume_TopicNotAccessible() throws IOException {
+        String topicName = "test-topic";
+        String sourceFilePath = "path/to/file.csv";
+        FileMetadata metadata = new FileMetadata();
+        metadata.setFileName("test.csv");
+
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath(sourceFilePath);
+
+        String data = "{ \"inputFilePath\": \"" + sourceFilePath + "\" }";
+
+        when(kafkaTopicUtil.isKafkaTopicPresent(eq(topicName))).thenReturn(false);
+        doNothing().when(kafkaConsumer).writeLogToFile(any(FileMetadata.class), anyString());
+        doNothing().when(kafkaAuditProducer).sendMessage(any(FileMetadata.class));
+
+        kafkaConsumer.consume(data);
+
+        verify(kafkaInputProducer, never()).sendFailureMessage(any(SpaceCollector.class), anyString(), any(Exception.class));
+        verify(kafkaConsumer, times(1)).writeLogToFile(any(FileMetadata.class), anyString());
+        verify(kafkaAuditProducer, times(1)).sendMessage(any(FileMetadata.class));
+    }
+
+    @Test
+    public void testConsume_Failure() throws IOException {
+        String topicName = "test-topic";
+        String sourceFilePath = "path/to/file.csv";
+        FileMetadata metadata = new FileMetadata();
+        metadata.setFileName("test.csv");
+
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath(sourceFilePath);
+
+        String data = "{ \"inputFilePath\": \"" + sourceFilePath + "\" }";
+
+        when(kafkaTopicUtil.isKafkaTopicPresent(eq(topicName))).thenReturn(true);
+        when(flinkApiController.triggerJob(eq(collector), eq(".csv"))).thenThrow(new RuntimeException());
+        doNothing().when(kafkaConsumer).writeLogToFile(any(FileMetadata.class), anyString());
+
+        kafkaConsumer.consume(data);
+
+        verify(flinkApiController, times(1)).triggerJob(eq(collector), eq(".
+
+
+----------_----------6666------------66------
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;

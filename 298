@@ -1,61 +1,143 @@
-
-To fix the error and reframe the code as an executable JUnit 5 test case, you can make the following changes:
-
-```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-import static org.assertj.core.api.Assertions.assertThat;
-
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.serialization.IntegerDeserializer;
+import org.apache.kafka.common.serialization.IntegerSerializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.json.JsonTest;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.springframework.kafka.core.*;
+import org.springframework.kafka.test.context.EmbeddedKafka;
+import org.springframework.kafka.test.utils.KafkaTestUtils;
 
-public class KafkaInputProducerTest {
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
-    @Mock
-    private KafkaTemplate<String, Object> kafkaTemplate;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
 
-    @InjectMocks
+@SpringBootTest
+@EmbeddedKafka(partitions = 1, brokerProperties = {"listeners=PLAINTEXT://localhost:9092", "port=9092"})
+@JsonTest
+public class KafkaInputProducerTests {
+
+    @Autowired
+    KafkaTemplate<String, Object> kafkaTemplate;
+
+    @Autowired
+    private KafkaListenerEndpointRegistry endpointRegistry;
+
+    private Consumer<String, Object> consumer;
+
+    private BlockingQueue<ConsumerRecord<String, Object>> records;
+
+    @MockBean
+    private FlinkApiController flinkApiController;
+
+    @MockBean
     private KafkaInputProducer kafkaInputProducer;
 
     @BeforeEach
-    public void setup() {
-        MockitoAnnotations.openMocks(this);
-        ReflectionTestUtils.setField(kafkaInputProducer, "kafkaTemplate", kafkaTemplate);
+    public void setUp() {
+        mockKafkaConsumer();
+        reset(flinkApiController, kafkaInputProducer);
+    }
+
+    private void mockKafkaConsumer() {
+        records = new LinkedBlockingQueue<>();
+        consumer = KafkaTestUtils.getConsumer(
+                "test-consumer",
+                "test-topic",
+                KafkaTestUtils.producerProps(getEmbeddedKafkaBroker()));
+        consumer.subscribe(Collections.singleton("test-topic"));
+    }
+
+    private EmbeddedKafkaBroker getEmbeddedKafkaBroker() {
+        EmbeddedKafkaBroker embeddedKafkaBroker = new EmbeddedKafkaBroker(1, true, 1, "test-topic");
+        embeddedKafkaBroker.kafkaPorts(9092);
+        return embeddedKafkaBroker;
     }
 
     @Test
-    public void testWriteMessage_Failure() {
-        // Test data
-        FileMetadata collector = new FileMetadata();
+    public void testWriteMessage_Success() throws InterruptedException {
+        // Arrange
+        String topic = "test-topic";
+        String message = "Test Message";
+        ProducerRecord<String, Object> producerRecord = new ProducerRecord<>(topic, message);
+        RecordMetadata recordMetadata = mock(RecordMetadata.class);
+        when(recordMetadata.hasOffset()).thenReturn(true);
+        when(recordMetadata.offset()).thenReturn(1L);
+        SendResult<String, Object> sendResult = new SendResult<>(producerRecord, recordMetadata);
+        when(kafkaTemplate.send(eq(topic), eq(message))).thenReturn(sendResult);
 
-        // Mock behavior
-        when(kafkaTemplate.send(anyString(), any())).thenThrow(new RuntimeException());
+        // Act
+        boolean result = kafkaInputProducer.writeMessage(message);
 
-        // Call method
-        boolean result = kafkaInputProducer.writeMessage(collector);
+        // Assert
+        assertThat(result).isEqualTo(true);
+        assertThat(records).isNotEmpty();
+        ConsumerRecord<String, Object> consumedRecord = records.poll(1, TimeUnit.SECONDS);
+        assertThat(consumedRecord).isNotNull();
+        assertThat(consumedRecord.value()).isEqualTo(message);
+    }
 
-        // Verify behavior
-        verify(kafkaTemplate, times(1)).send(anyString(), eq(collector));
-        assertThat(result).isFalse();
+    @Test
+    public void testWriteMessage_Failure() throws InterruptedException {
+        // Arrange
+        String topic = "test-topic";
+        String message = "Test Message";
+        ProducerRecord<String, Object> producerRecord = new ProducerRecord<>(topic, message);
+        RecordMetadata recordMetadata = mock(RecordMetadata.class);
+        when(recordMetadata.hasOffset()).thenReturn(false);
+        SendResult<String, Object> sendResult = new SendResult<>(producerRecord, recordMetadata);
+        when(kafkaTemplate.send(eq(topic), eq(message))).thenReturn(sendResult);
+
+        // Act
+        boolean result = kafkaInputProducer.writeMessage(message);
+
+        // Assert
+        assertThat(result).isEqualTo(false);
+        assertThat(records).isEmpty();
+    }
+
+    @Test
+    public void testTriggerJob_Success() {
+        // Arrange
+        String fileType = ".csv";
+        SpaceCollector collector = new SpaceCollector();
+
+        // Mock FlinkApiController behavior
+        when(flinkApiController.triggerJob(eq(collector), eq(fileType))).thenReturn("Job is triggered");
+
+        // Act
+        String result = flinkApiController.triggerJob(collector, fileType);
+
+        // Assert
+        assertThat(result).isEqualTo("Job is triggered");
+        verify(flinkApiController, times(1)).triggerJob(eq(collector), eq(fileType));
+    }
+
+    @Test
+    public void testTriggerJob_Failure() {
+        // Arrange
+        String fileType = ".csv";
+        SpaceCollector collector = new SpaceCollector();
+
+        // Mock FlinkApiController behavior to throw exception
+        when(flinkApiController.triggerJob(eq(collector), eq(fileType))).thenThrow(new RuntimeException("Job submission failed"));
+
+        // Act
+        String result = flinkApiController.triggerJob(collector, fileType);
+
+        // Assert
+        assertThat(result).isEqualTo("Job is not trigged");
+        verify(flinkApiController, times(1)).triggerJob(eq(collector), eq(fileType));
     }
 }
-```
-
-In this updated code:
-
-1. The imports are updated to use the JUnit Jupiter APIs and the Mockito static methods.
-2. The Mockito annotations `@Mock` and `@InjectMocks` are used to create the mock and inject it into the tested instance.
-3. The `@BeforeEach` annotated method is added to initialize the mocks and inject them into the tested instance.
-4. The test name should start with a lowercase letter to follow standard naming conventions.
-5. The `any()` method is used as the argument matcher for the `kafkaTemplate.send()` method in the mock behavior.
-6. The final assertion method `assertThat(result).isFalse()` is used to check that the result is `false`.

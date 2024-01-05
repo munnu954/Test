@@ -1,51 +1,221 @@
-Certainly! Here's an updated and executable JUnit 5 test case code for your `FlinkApiController` class, along with the necessary import statements and an updated assertion:
-
-```java
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class FlinkApiControllerTest {
+@SpringBootTest
+@AutoConfigureMockMvc
+public class FlinkApiControllerTest {
+
+    @Autowired
+    private WebApplicationContext webApplicationContext;
+
+    @MockBean
+    private KafkaInputProducer kafkaInputProducer;
+
+    @MockBean
+    private KafkaTemplate<String, Object> kafkaTemplate;
+
+    @MockBean
+    private KafkaListenerEndpointRegistry endpointRegistry;
+
+    @InjectMocks
+    private FlinkApiController flinkApiController;
+
+    private MockMvc mockMvc;
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
+    }
 
     @Test
-    void testTriggerJob_Successful() {
-        // Mocking properties
-        String inputFile = "test.csv";
-        String fileType = ".csv";
-        String programArgs = "input |inputPath|";
-        String jobSubmitUrl = "http://flink-api-url/jars/flink-job-jar-id/run";
-        String expectedResponse = "Job triggered";
+    public void testTriggerJob_WhenNoJarsPresentInFlinkCluster_ShouldPushFailureMessageToAuditQueue() throws Exception {
+        // Mocking Flink API response
+        String flinkApiUrl = "http://localhost:8080";
+        String flinkJobJarid = "jar-id";
+        String programArgs = "--input input.txt";
 
-        // Mocking the collector
-        SpaceCollector collector = Mockito.mock(SpaceCollector.class);
-        Mockito.when(collector.getInputFilePath()).thenReturn(inputFile);
+        when(endpointRegistry.isRunning(anyString())).thenReturn(true);
+        when(kafkaInputProducer.writeMessage(any(FileMetadata.class))).thenReturn(true);
 
-        // Mocking the restTemplate and response entity
-        RestTemplate restTemplate = Mockito.mock(RestTemplate.class);
-        ResponseEntity<String> responseEntity = new ResponseEntity<>(expectedResponse, HttpStatus.OK);
-        when(restTemplate.postForEntity(Mockito.eq(jobSubmitUrl), Mockito.any(), Mockito.eq(String.class)))
-                .thenReturn(responseEntity);
+        MvcResult result = mockMvc.perform(MockMvcRequestBuilders.post("/flink-jobs?fileType=.csv")
+                .param("collector", "collectorJson")
+                .contentType("application/json"))
+                .andReturn();
 
-        // Creating the FlinkApiController and setting the restTemplate
-        FlinkApiController flinkApiController = new FlinkApiController();
-        flinkApiController.setRestTemplate(restTemplate);
+        // Verify Kafka message is pushed to audit queue
+        verify(kafkaInputProducer, times(1)).writeMessage(any(FileMetadata.class));
+    }
 
-        // Triggering the job and getting the result
-        String result = flinkApiController.triggerJob(collector, fileType);
+    @Test
+    public void testTriggerJob_WhenNonExistentJarIdPassed_ShouldPushFailureMessageToAuditQueue() throws Exception {
+        // Mocking Flink API response
+        String flinkApiUrl = "http://localhost:8080";
+        String flinkJobJarid = "non-existent-jar-id";
+        String programArgs = "--input input.txt";
 
-        // Verifying the result and restTemplate method call
-        assertEquals(expectedResponse, result);
-        Mockito.verify(restTemplate, Mockito.times(1))
-                .postForEntity(Mockito.eq(jobSubmitUrl), Mockito.any(), Mockito.eq(String.class));
+        when(endpointRegistry.isRunning(anyString())).thenReturn(true);
+        when(kafkaInputProducer.writeMessage(any(FileMetadata.class))).thenReturn(true);
+
+        MvcResult result = mockMvc.perform(MockMvcRequestBuilders.post("/flink-jobs?fileType=.csv")
+                .param("collector", "collectorJson")
+                .contentType("application/json"))
+                .andReturn();
+
+        // Verify Kafka message is pushed to audit queue
+        verify(kafkaInputProducer, times(1)).writeMessage(any(FileMetadata.class));
     }
 }
-```
 
-I've updated the expected response in the `expectedResponse` variable to match the actual response of "Job triggered". The assertion `assertEquals(expectedResponse, result)` compares the expected response "Job triggered" with the actual result from the `triggerJob` method.
+@SpringBootTest
+public class KafkaConsumerTest {
 
-Make sure to adapt the code to your specific requirements and adjust any URLs or method calls accordingly.
+    @MockBean
+    private KafkaTopicUtil kafkaTopicUtil;
+
+    @MockBean
+    private FlinkApiController flinkApiController;
+
+    @MockBean
+    private KafkaAuditProducer kafkaAuditProducer;
+
+    @MockBean
+    private KafkaInputProducer kafkaInputProducer;
+
+    @MockBean
+    private Consumer<String, String> kafkaConsumer;
+
+    @MockBean
+    private FileWriter fileWriter;
+
+    @InjectMocks
+    private KafkaConsumer consumer;
+
+    @Test
+    public void testConsume_WhenValidInputFilePathAndNoJarsPresentInFlinkCluster_ShouldWriteToLogFile() throws IOException {
+        // Mocking the message
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setInputFilePath("input.txt");
+        ObjectMapper mapper = new ObjectMapper();
+        String messageJson = mapper.writeValueAsString(spaceCollector);
+
+        // Mocking the Kafka consumer
+        ConsumerRecords<String, String> records = new ConsumerRecords<>(Collections.singletonList(new ConsumerRecord<>("topic", 0, 0, "key", messageJson)));
+        when(kafkaConsumer.poll(any())).thenReturn(records);
+
+        // Mocking the Flink API response
+        when(kafkaTopicUtil.isKafkaTopicPresent("topic")).thenReturn(false);
+
+        // Mocking the log file path
+        String logFilePath = "log.txt";
+
+        // Mocking the file writer
+        when(fileWriter.write(anyString())).thenReturn(fileWriter);
+
+        // Mocking the file writer constructor
+        whenNew(FileWriter.class).withArguments(logFilePath, true).thenReturn(fileWriter);
+
+        // Call the consume method
+        consumer.consume();
+
+        // Verify that log file is written
+        verify(fileWriter, times(1)).write(anyString());
+    }
+
+    @Test
+    public void testConsume_WhenInvalidInputFilePathAndNoJarsPresentInFlinkCluster_ShouldWriteToLogFile() throws IOException {
+        // Mocking the message
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setInputFilePath("invalid-input.txt");
+        ObjectMapper mapper = new ObjectMapper();
+        String messageJson = mapper.writeValueAsString(spaceCollector);
+
+        // Mocking the Kafka consumer
+        ConsumerRecords<String, String> records = new ConsumerRecords<>(Collections.singletonList(new ConsumerRecord<>("topic", 0, 0, "key", messageJson)));
+        when(kafkaConsumer.poll(any())).thenReturn(records);
+
+        // Mocking the Flink API response
+        when(kafkaTopicUtil.isKafkaTopicPresent("topic")).thenReturn(false);
+
+        // Mocking the log file path
+        String logFilePath = "log.txt";
+
+        // Mocking the file writer
+        when(fileWriter.write(anyString())).thenReturn(fileWriter);
+
+        // Mocking the file writer constructor
+        whenNew(FileWriter.class).withArguments(logFilePath, true).thenReturn(fileWriter);
+
+        // Call the consume method
+        consumer.consume();
+
+        // Verify that log file is written
+        verify(fileWriter, times(1)).write(anyString());
+    }
+
+    @Test
+    public void testConsume_WhenNonExistentJarIdPassedToTriggerJob_ShouldWriteToLogFile() throws IOException {
+        // Mocking the message
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setInputFilePath("input.txt");
+        ObjectMapper mapper = new ObjectMapper();
+        String messageJson = mapper.writeValueAsString(spaceCollector);
+
+        // Mocking the Kafka consumer
+        ConsumerRecords<String, String> records = new ConsumerRecords<>(Collections.singletonList(new ConsumerRecord<>("topic", 0, 0, "key", messageJson)));
+        when(kafkaConsumer.poll(any())).thenReturn(records);
+
+        // Mocking the Flink API response
+        when(kafkaTopicUtil.isKafkaTopicPresent("topic")).thenReturn(true);
+
+        // Mocking the Flink API trigger job response
+        String flinkApiResponse = "Non OK response";
+        when(flinkApiController.triggerJob(any(SpaceCollector.class), anyString())).thenReturn(flinkApiResponse);
+
+        // Mocking the log file path
+        String logFilePath = "log.txt";
+
+        // Mocking the file writer
+        when(fileWriter.write(anyString())).thenReturn(fileWriter);
+
+        // Mocking the file writer constructor
+        whenNew(FileWriter.class).withArguments(logFilePath, true).thenReturn(fileWriter);
+
+        // Call the consume method
+        consumer.consume();
+
+        // Verify that log file is written
+        verify(fileWriter, times(1)).write(anyString());
+    }
+}

@@ -1,38 +1,61 @@
-try {
-    // Your existing code for successful job submission
-    // If everything goes well, you set the HTTP status code as OK
-    int httpStatusCode = 200; // OK
-    // ... rest of the code
-} catch (HttpClientErrorException clientErrorException) {
-    // Client Error occurred (status code 4xx). You might want to log it and handle it appropriately
-    clientErrorException.printStackTrace();
-    LOGGER.error("Client Error triggering job", clientErrorException.getMessage());
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.kafka.test.context.EmbeddedKafka;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
+import org.springframework.test.util.ReflectionTestUtils;
 
-    FileMetadata metadata = kafkaConsumer.logMetadata(collector, fileType, clientErrorException);
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
 
-    kafkaInputProducer.sendFailureMessage(collector, fileType, clientErrorException);
-    kafkaConsumer.writeLogToFile(metadata, destinationFolderPath);
-} catch (HttpServerErrorException serverErrorException) {
-    // Server Error occurred (status code 5xx). You should handle this as well
-    serverErrorException.printStackTrace();
-    LOGGER.error("Server Error triggering job", serverErrorException.getMessage());
+@EmbeddedKafka(topics = {"3459-COLLECTION-REQUEST-QUEUE", "3459-COLLECTION-AUDIT-QUEUE"}, partitions = 1)
+@SpringBootTest
+@SpringJUnitConfig
+@ExtendWith(SpringExtension.class)
+public class KafkaInputProducerTest {
 
-    if (serverErrorException.getRawStatusCode() == 500) {
-        // Handle the 500 Internal Server Error scenario
-        // Perform specific actions and logging for this scenario
+    @Autowired
+    private KafkaInputProducer kafkaInputProducer;
+
+    @Test
+    public void testWriteMessage_Success() {
+        // Mock dependencies
+        KafkaTemplate<String, Object> kafkaTemplate = mock(KafkaTemplate.class);
+        ReflectionTestUtils.setField(kafkaInputProducer, "kafkaTemplate", kafkaTemplate);
+
+        // Test data
+        FileMetadata collector = new FileMetadata();
+
+        // Mock behavior
+        when(kafkaTemplate.send(anyString(), any())).thenReturn(null);
+
+        // Call method
+        boolean result = kafkaInputProducer.writeMessage(collector);
+
+        // Verify behavior
+        verify(kafkaTemplate, times(1)).send(anyString(), eq(collector));
+        assertThat(result).isTrue();
     }
 
-    FileMetadata metadata = kafkaConsumer.logMetadata(collector, fileType, serverErrorException);
+    @Test
+    public void testWriteMessage_Failure() {
+        // Mock dependencies
+        KafkaTemplate<String, Object> kafkaTemplate = mock(KafkaTemplate.class);
+        ReflectionTestUtils.setField(kafkaInputProducer, "kafkaTemplate", kafkaTemplate);
 
-    kafkaInputProducer.sendFailureMessage(collector, fileType, serverErrorException);
-    kafkaConsumer.writeLogToFile(metadata, destinationFolderPath);
-} catch (Exception ex) {
-    // Any other unhandled exceptions
-    ex.printStackTrace();
-    LOGGER.error("Error triggering job", ex.getMessage());
+        // Test data
+        FileMetadata collector = new FileMetadata();
 
-    FileMetadata metadata = kafkaConsumer.logMetadata(collector, fileType, ex);
+        // Mock behavior
+        when(kafkaTemplate.send(anyString(), anyString())).thenThrow(new RuntimeException());
 
-    kafkaInputProducer.sendFailureMessage(collector, fileType, ex);
-    kafkaConsumer.writeLogToFile(metadata, destinationFolderPath);
+        // Call method
+        boolean result = kafkaInputProducer.writeMessage(collector);
+
+        // Verify behavior
+        verify(kafkaTemplate, times(1)).send(anyString(), eq(collector));
+        assertThat(result).isFalse();
+    }
 }

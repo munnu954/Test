@@ -1,14 +1,257 @@
-@Test
-public void givenNoJarsAndNoEntries_whenTriggerJob_thenReturnFailureMessage() throws Exception {
-    when(flinkApiController.triggerJob(any(), any())).thenReturn("Job is not triggered");
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.header.Headers;
+import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.stubbing.Answer;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.test.autoconfigure.kafka.EmbeddedKafka;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
+import org.springframework.test.context.TestPropertySource;
 
-    mockMvc.perform(MockMvcRequestBuilders.post("/")
-            .contentType("application/json")
-            .content("{\"fileType\": \".csv\"}")
-            .accept("application/json"))
-            .andExpect(MockMvcResultMatchers.status().isOk())
-            .andExpect(MockMvcResultMatchers.content().string("Job is not triggered"));
+import java.io.File;
+import java.io.FileWriter;
+import java.time.Duration;
+import java.util.concurrent.Future;
 
-    verify(kafkaInputProducer).sendFailureMessage(any(SpaceCollector.class), any(String.class), any(ResponseEntity.class));
-    verify(kafkaConsumer).writeLogToFile(any(String.class), any(String.class), any(String.class), any(String.class));
-}
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+@EmbeddedKafka
+@TestPropertySource(properties = {
+        "spring.kafka.producer.topic-name=3459-COLLECTION-AUDIT-QUEUE",
+        "flink.api.url=http://localhost:8081",
+        "flink.job.csv.jarid=csv-jar",
+        "flink.job.csv.program-args=csv-args",
+        "flink.job.txt.jarid=txt-jar",
+        "flink.job.txt.program-args=txt-args",
+        "flink.job.xml.jarid=xml-jar",
+        "flink.job.xml.program-args=xml-args",
+        "file.txtsource=source.txt",
+        "file.destination=target"
+})
+public class ApplicationTest {
+
+    private static final String TOPIC_NAME = "3459-COLLECTION-AUDIT-QUEUE";
+
+    @Value("${file.txtsource}")
+    private String sourceFilePath;
+
+    @Value("${file.destination}")
+    private String destinationFolderPath;
+
+    @Value("${flink.job.txt.jarid}")
+    private String flinkJobtxtJarid;
+
+    @Value("${flink.job.txt.program-args}")
+    private String programArgs;
+
+    @Mock
+    private FlinkApiController flinkApiController;
+
+    private KafkaTemplate<String, Object> kafkaTemplate;
+
+    private KafkaInputProducer kafkaInputProducer;
+
+    @BeforeEach
+    public void setup() {
+        MockitoAnnotations.initMocks(this);
+        kafkaTemplate = mock(KafkaTemplate.class);
+        kafkaInputProducer = new KafkaInputProducer(kafkaTemplate);
+    }
+
+    @Test
+    public void testWriteMessage_Successful() {
+        FileMetadata collector = new FileMetadata();
+
+        when(kafkaTemplate.send(eq(TOPIC_NAME), eq(collector)))
+                .thenReturn(new TestListenableFuture<>());
+
+        boolean result = kafkaInputProducer.writeMessage(collector);
+
+        assertTrue(result);
+        verify(kafkaTemplate, times(1))
+                .send(eq(TOPIC_NAME), eq(collector));
+    }
+
+    @Test
+    public void testWriteMessage_Failed() {
+        FileMetadata collector = new FileMetadata();
+
+        when(kafkaTemplate.send(eq(TOPIC_NAME), eq(collector)))
+                .thenReturn(new TestFailedListenableFuture<>());
+
+        boolean result = kafkaInputProducer.writeMessage(collector);
+
+        assertFalse(result);
+        verify(kafkaTemplate, times(1))
+                .send(eq(TOPIC_NAME), eq(collector));
+    }
+
+    @Test
+    public void testTriggerJob_JobSubmissionError() {
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath("input.csv");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        JSONObject requestBody = new JSONObject();
+        requestBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        ResponseEntity<String> responseEntity = new ResponseEntity<>("Error", HttpStatus.INTERNAL_SERVER_ERROR);
+        when(restTemplate.postForEntity(anyString(), any(), eq(String.class)))
+                .thenReturn(responseEntity);
+
+        FlinkApiController flinkApiController = new FlinkApiController();
+        flinkApiController.setFlinkApiUrl("http://localhost:8081");
+        flinkApiController.setFlinkJobtxtJarid(flinkJobtxtJarid);
+        flinkApiController.setProgramArgs(programArgs);
+
+        HttpHeaders expectedHeaders = new HttpHeaders();
+        expectedHeaders.setContentType(MediaType.APPLICATION_JSON);
+
+        JSONObject expectedBody = new JSONObject();
+        expectedBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+
+        ArgumentCaptor<HttpEntity<String>> requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        when(restTemplate.postForEntity(eq("http://localhost:8081/jars/txt-jar/run"), requestCaptor.capture(), eq(String.class)))
+                .thenReturn(responseEntity);
+
+        kafkaInputProducer.setRestTemplate(restTemplate);
+        kafkaInputProducer.setFlinkApiController(flinkApiController);
+
+        String result = kafkaInputProducer.triggerJob(collector, ".txt");
+
+        assertNotEquals("Job is not triggered", result);
+
+        HttpEntity<String> capturedRequest = requestCaptor.getValue();
+        assertEquals(expectedBody.toString(), capturedRequest.getBody());
+        assertEquals(expectedHeaders, capturedRequest.getHeaders());
+    }
+
+    @Test
+    public void testTriggerJob_JobSubmissionError_PushFailureMessageFailed() {
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath("input.csv");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        JSONObject requestBody = new JSONObject();
+        requestBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        ResponseEntity<String> responseEntity = new ResponseEntity<>("Error", HttpStatus.INTERNAL_SERVER_ERROR);
+        when(restTemplate.postForEntity(anyString(), any(), eq(String.class)))
+                .thenReturn(responseEntity);
+
+        FlinkApiController flinkApiController = new FlinkApiController();
+        flinkApiController.setFlinkApiUrl("http://localhost:8081");
+        flinkApiController.setFlinkJobtxtJarid(flinkJobtxtJarid);
+        flinkApiController.setProgramArgs(programArgs);
+
+        HttpHeaders expectedHeaders = new HttpHeaders();
+        expectedHeaders.setContentType(MediaType.APPLICATION_JSON);
+
+        JSONObject expectedBody = new JSONObject();
+        expectedBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+
+        ArgumentCaptor<HttpEntity<String>> requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        when(restTemplate.postForEntity(eq("http://localhost:8081/jars/txt-jar/run"), requestCaptor.capture(), eq(String.class)))
+                .thenReturn(responseEntity);
+
+        kafkaInputProducer.setRestTemplate(restTemplate);
+        kafkaInputProducer.setFlinkApiController(flinkApiController);
+
+        doThrow(new RuntimeException("Kafka Push Failed")).when(kafkaTemplate).send(any(), any());
+
+        String result = kafkaInputProducer.triggerJob(collector, ".txt");
+
+        assertEquals("Job is not triggered", result);
+
+        HttpEntity<String> capturedRequest = requestCaptor.getValue();
+        assertEquals(expectedBody.toString(), capturedRequest.getBody());
+        assertEquals(expectedHeaders, capturedRequest.getHeaders());
+    }
+
+    @Test
+    public void testTriggerJob_TopicNotAccessible() {
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath("input.csv");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        JSONObject requestBody = new JSONObject();
+        requestBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        ResponseEntity<String> responseEntity = new ResponseEntity<>("Error", HttpStatus.INTERNAL_SERVER_ERROR);
+        when(restTemplate.postForEntity(anyString(), any(), eq(String.class)))
+                .thenReturn(responseEntity);
+
+        FlinkApiController flinkApiController = new FlinkApiController();
+        flinkApiController.setFlinkApiUrl("http://localhost:8081");
+        flinkApiController.setFlinkJobtxtJarid(flinkJobtxtJarid);
+        flinkApiController.setProgramArgs(programArgs);
+
+        HttpHeaders expectedHeaders = new HttpHeaders();
+        expectedHeaders.setContentType(MediaType.APPLICATION_JSON);
+
+        JSONObject expectedBody = new JSONObject();
+        expectedBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+
+        ArgumentCaptor<HttpEntity<String>> requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        when(restTemplate.postForEntity(eq("http://localhost:8081/jars/txt-jar/run"), requestCaptor.capture(), eq(String.class)))
+                .thenReturn(responseEntity);
+
+        kafkaInputProducer.setRestTemplate(restTemplate);
+        kafkaInputProducer.setFlinkApiController(flinkApiController);
+
+        doThrow(new RuntimeException("Kafka Push Failed")).when(kafkaTemplate).send(any(), any());
+
+        String result = kafkaInputProducer.triggerJob(collector, ".txt");
+
+        assertEquals("Job is not triggered", result);
+
+        HttpEntity<String> capturedRequest = requestCaptor.getValue();
+        assertEquals(expectedBody.toString(), capturedRequest.getBody());
+        assertEquals(expectedHeaders, capturedRequest.getHeaders());
+    }
+
+    @Test
+    public void testTriggerJob_JarNotUploaded() {
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath("input.csv");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        JSONObject requestBody = new JSONObject();
+        requestBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        ResponseEntity<String> responseEntity = new ResponseEntity<>("Error", HttpStatus.INTERNAL_SERVER_ERROR);
+        when(restTemplate.postForEntity(anyString(), any(), eq(String.class)))
+                .thenReturn(responseEntity);
+
+        FlinkApiController flinkApiController = new FlinkApiController();
+        flinkApiController.setFlinkApiUrl("http://localhost:8081");
+        flinkApiController.setFlinkJobtxtJarid(flinkJobtxtJarid);
+        flinkApiController.setProgramArgs(programArgs);
+
+        HttpHeaders expectedHeaders = new HttpHeaders();
+        expectedHeaders.setContentType(MediaType.APPLICATION_JSON);
+
+        JSONObject expectedBody = new JSONObject();
+        expectedBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
+
+        ArgumentCaptor<HttpEntity<String

@@ -1,101 +1,83 @@
-Sure, I'll add the constructor method for the FlinkApiController class. Here is the updated code:
+Sure! Here's the reframed code for the updated and executable JUnit 5 test case:
 
 ```java
-@Service
-public class FlinkApiController {
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+
+class FlinkApiControllerTest {
+
+    private FlinkApiController flinkApiController;
     private RestTemplate restTemplate;
-    private KafkaConsumer kafkaConsumer;
-    private KafkaInputProducer kafkaInputProducer;
 
-    @Value("${flink.api.url}")
-    private String flinkApiUrl;
-
-    @Value("${flink.job.csv.jarid}")
-    private String flinkJobJarid;
-
-    @Value("${flink.job.csv.program-args)")
-    private String programArgs;
-
-    @Value("${flink.job.txt.jarid}")
-    private String flinkJobtxtJarid;
-
-    @Value("${flink.job.xml.program-args)")
-    private String programXmlArgs;
-
-    @Value("${flink.job.xml.jarid}")
-    private String flinkJobXmlJarid;
-
-    private HttpHeaders headers = new HttpHeaders();
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(FlinkApiController.class);
-
-    public FlinkApiController(RestTemplate restTemplate) {
-        this.restTemplate = restTemplate;
-        this.kafkaConsumer = new KafkaConsumer();
+    @BeforeEach
+    public void setUp() {
+        restTemplate = Mockito.mock(RestTemplate.class);
+        flinkApiController = new FlinkApiController(restTemplate);
     }
 
-    @Autowired
-    public void setKafkaInputProducer(KafkaInputProducer kafkaInputProducer) {
-        this.kafkaInputProducer = kafkaInputProducer;
+    @Test
+    void testTriggerJob_Failure_HttpClientErrorException() {
+        // Arrange
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath("test.csv");
+        String fileType = ".csv";
+        String programArgs = "--input |inputPath|";
+        String jobSubmitUrl = "http://flink-api-url/jars/non-existent-jar-id/run";
+        HttpClientErrorException exception = new HttpClientErrorException(HttpStatus.NOT_FOUND);
+        Mockito.when(restTemplate.postForEntity(eq(jobSubmitUrl), any(), eq(String.class))).thenThrow(exception);
+
+        // Act
+        String result = flinkApiController.triggerJob(collector, fileType);
+
+        // Assert
+        assertEquals("Job is not triggered", result);
+        Mockito.verify(restTemplate).postForEntity(eq(jobSubmitUrl), any(), eq(String.class));
     }
 
-    @PostMapping
-    public String triggerJob(SpaceCollector collector, String fileType) {
-        LOGGER.info("TRIGGER JOB::::");
-        HttpEntity<String> request = null;
-        String jobSubmitUrl = null;
-        if (programArgs != null && !programArgs.isEmpty()) {
-            headers.setContentType(MediaType.APPLICATION_JSON);
+    @Test
+    void testTriggerJob_Failure_RuntimeException() {
+        // Arrange
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath("test.csv");
+        String fileType = ".csv";
+        String programArgs = "--input |inputPath|";
+        String jobSubmitUrl = "http://flink-api-url/jars/flink-job-jar-id/run";
+        RuntimeException exception = new RuntimeException("Internal Server Error");
+        Mockito.when(restTemplate.postForEntity(eq(jobSubmitUrl), any(), eq(String.class))).thenThrow(exception);
 
-            JSONObject requestBody = new JSONObject();
-            try {
-                if (fileType.equalsIgnoreCase(".csv")) {
-                    requestBody.put("programArgs", programArgs.replace("input", collector.getInputFilePath()));
-                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
-                } else if (fileType.equalsIgnoreCase(".xml")) {
-                    LOGGER.info("XML FLINK TRIGGER::");
-                    programXmlArgs = programXmlArgs.replace("|filePath|", collector.getInputFilePath());
-                    programXmlArgs = programXmlArgs.replace(" |primaryKey|", "");
-                    requestBody.put("programArgs", programXmlArgs);
-                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobXmlJarid + "/run";
-                    LOGGER.info("jobSubmitUrl:" + jobSubmitUrl);
-                    LOGGER.info("requestBody::" + requestBody.toString());
-                } else if (fileType.equalsIgnoreCase(".txt")) {
-                    LOGGER.info("TEXT FLINK TRIGGER::");
-                    requestBody.put("programArgs", programArgs.replace("|input|", collector.getInputFilePath()));
-                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobtxtJarid + "/run";
-                }
+        // Act
+        String result = flinkApiController.triggerJob(collector, fileType);
 
-                request = new HttpEntity<String>(requestBody.toString(), headers);
-
-                // Trigger the submitted jar
-                ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
-                LOGGER.info("response: {}" + response);
-
-                if (response != null && response.getStatusCode() != HttpStatus.OK) {
-                    LOGGER.info("Not Ok!!");
-                    FileMetadata metadata = kafkaConsumer.logMetadata(collector, fileType, response);
-                    kafkaInputProducer.sendFailureMessage(collector, fileType, response);
-                    kafkaConsumer.writeLogToFile(collector, fileType, response, destinationFolderPath);
-                }
-            } catch (HttpClientErrorException | HttpServerErrorException ex) {
-                ex.printStackTrace();
-                LOGGER.error("Error triggering job", ex.getMessage());
-                FileMetadata metadata = kafkaConsumer.logMetadata(collector, fileType, ex);
-                kafkaInputProducer.sendFailureMessage(collector, fileType, ex);
-                kafkaConsumer.writeLogToFile(metadata, destinationFolderPath);
-            } catch (Exception e) {
-                e.printStackTrace();
-                LOGGER.error("Error triggering job", e.getMessage());
-                FileMetadata metadata = kafkaConsumer.logMetadata(collector, fileType, e);
-                kafkaInputProducer.sendFailureMessage(collector, fileType, e);
-                kafkaConsumer.writeLogToFile(metadata, destinationFolderPath);
-            }
-        }
-        return "Job is not trigged";
+        // Assert
+        assertEquals("Job is not triggered", result);
+        Mockito.verify(restTemplate).postForEntity(eq(jobSubmitUrl), any(), eq(String.class));
     }
 }
 ```
 
-Now you can create an instance of the FlinkApiController class with the `RestTemplate` as a constructor parameter.
+Make sure to import the following packages in your test class:
+
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+```
+
+This updated code should address the issue you were facing and make the test cases pass. Let me know if you need further assistance!

@@ -1,73 +1,44 @@
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
-import org.springframework.boot.web.server.LocalServerPort;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
+@SpringBootTest
+@ExtendWith(MockitoExtension.class)
+class FlinkApiControllerTest {
 
-@ExtendWith(SpringExtension.class)
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-public class CsvToJsonTransformerJobTest {
+    @Mock
+    private RestTemplate restTemplate;
+    
+    @Mock
+    private KafkaInputProducer kafkaInputProducer;
+    
+    @Mock
+    private KafkaConsumer kafkaConsumer;
 
-    @LocalServerPort
-    private int port;
+    @InjectMocks
+    private FlinkApiController flinkApiController;
 
-    @Autowired
-    private TestRestTemplate restTemplate;
+    // AC1: Jar file is not uploaded to flink cluster
+    @Test
+    void testJarFileNotUploadedToFlinkCluster() {
+        given(restTemplate.postForEntity(anyString(), any(), eq(String.class)))
+                .willReturn(new ResponseEntity<>("", HttpStatus.INTERNAL_SERVER_ERROR));
 
-    private String jarId;
-    private String filePath;
+        String result = flinkApiController.triggerJob(new SpaceCollector(), ".csv");
 
-    @BeforeEach
-    public void setup() {
-        this.jarId = "valid-jar-id";
-        this.filePath = "path/to/file.csv";
+        assertEquals("Job is not triggered", result);
+        
+        verify(kafkaConsumer, times(1)).writeLogToFile(eq(metadata), eq(destinationFolderPath));
+        verify(kafkaInputProducer, times(1)).sendFailureMessage(any(), any(), any());
     }
 
+    // AC2: Non existent jar id passed to flink cluster
     @Test
-    public void testInvokeCsvToJsonTransformerJob_invalidJarId() {
-        String invalidJarId = "invalid-jar-id";
-        String url = "http://localhost:" + port + "/jars/" + invalidJarId + "/run";
+    void testNonExistentJarIdPassedToFlinkCluster() {
+        given(restTemplate.postForEntity(anyString(), any(), eq(String.class)))
+                .willThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        String result = flinkApiController.triggerJob(new SpaceCollector(), ".csv");
 
-        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-        body.add("programArgs", "--input" + filePath + "-fileType csv --bootstarpServer localhost:9092 --Topic COLLECTION-TOPIC");
-
-        HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
-
-        String response = restTemplate.exchange(url, HttpMethod.POST, requestEntity, String.class).getBody();
-
-        Assertions.assertNotNull(response);
-        Assertions.assertEquals("Invalid Jar ID", response);
-    }
-
-    @Test
-    public void testInvokeCsvToJsonTransformerJob_nonExistentJarId() {
-        String nonExistentJarId = "non-existent-jar-id";
-        String url = "http://localhost:" + port + "/jars/" + nonExistentJarId + "/run";
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
-
-        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-        body.add("programArgs", "--input" + filePath + "-fileType csv --bootstarpServer localhost:9092 --Topic COLLECTION-TOPIC");
-
-        HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
-
-        String response = restTemplate.exchange(url, HttpMethod.POST, requestEntity, String.class).getBody();
-
-        Assertions.assertNotNull(response);
-        Assertions.assertEquals("Jar ID does not exist", response);
+        assertEquals("Job is not triggered", result);
+        
+        verify(kafkaConsumer, times(1)).writeLogToFile(eq(metadata), eq(destinationFolderPath));
+        verify(kafkaInputProducer, times(1)).sendFailureMessage(any(), any(), any());
     }
 }

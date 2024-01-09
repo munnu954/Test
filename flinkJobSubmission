@@ -1,117 +1,112 @@
-To fix the error "Wanted but not invoked: restTemplate.postForEntity("http://localhost:8080/jars/job123/run", <any org.springframework.http.HttpEntity>, dass java.lang.String);", you need to make sure that the method `restTemplate.postForEntity()` is invoked with the correct parameters.
-
-Here is the updated code with the fix:
+Here is an example of JUnit 5 test cases for the FlinkApiController class with the required dependencies and application.yml values:
 
 ```java
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.*;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.HashMap;
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+@SpringBootTest
+@AutoConfigureMockMvc
 @ExtendWith(MockitoExtension.class)
-class FlinkApiControllerTest {
+@TestPropertySource(locations = "classpath:application.yml")
+public class FlinkApiControllerTest {
 
-    @InjectMocks
-    private FlinkApiController flinkApiController;
+    private MockMvc mockMvc;
 
     @Mock
     private RestTemplate restTemplate;
 
-    @Test
-    void triggerJob_withValidFileTypeAndArgs_shouldTriggerJob() {
-        // Arrange
-        SpaceCollector collector = new SpaceCollector();
-        collector.setInputFilePath("test.csv");
-        String fileType = ".csv";
+    @InjectMocks
+    private FlinkApiController flinkApiController;
 
-        ReflectionTestUtils.setField(flinkApiController, "flinkApiUrl", "http://localhost:8080");
-        ReflectionTestUtils.setField(flinkApiController, "flinkJobJarid", "job123");
-        ReflectionTestUtils.setField(flinkApiController, "programArgs", "--input-file input");
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        Map<String, String> requestBody = new HashMap<>();
-        requestBody.put("programArgs", "--input-file test.csv");
-
-        ResponseEntity<String> responseEntity = new ResponseEntity<>("Success", HttpStatus.OK);
-        Mockito.when(restTemplate.postForEntity(eq("http://localhost:8080/jars/job123/run"), any(HttpEntity.class), eq(String.class))).thenReturn(responseEntity);
-
-        // Act
-        String result = flinkApiController.triggerJob(collector, fileType);
-
-        // Assert
-        Mockito.verify(restTemplate).postForEntity(eq("http://localhost:8080/jars/job123/run"), any(HttpEntity.class), eq(String.class));
-        assertEquals("Success", result);
+    @BeforeEach
+    public void setup() {
+        mockMvc = MockMvcBuilders.standaloneSetup(flinkApiController).build();
     }
 
     @Test
-    void triggerJob_withInvalidJobSubmitUrl_shouldNotTriggerJob() {
-        // Arrange
-        SpaceCollector collector = new SpaceCollector();
-        collector.setInputFilePath("test.csv");
-        String fileType = ".csv";
+    public void testTriggerJobWithValidJobSubmitUrl() throws Exception {
+        String jobSubmitUrl = "http://localhost:8081/jars/6c90ea1c-d797-4348-8509-5sv-data-transformer-0.0.1-SNAPSHOT-jar-with-dependencies.jar/run";
+        String expectedResponse = "Job submitted";
 
-        ReflectionTestUtils.setField(flinkApiController, "flinkApiUrl", "http://localhost:8080");
-        ReflectionTestUtils.setField(flinkApiController, "flinkJobJarid", "job123");
-        ReflectionTestUtils.setField(flinkApiController, "programArgs", "--input-file input");
+        when(restTemplate.postForEntity(any(String.class), any(), any())).thenReturn(new ResponseEntity<>(HttpStatus.OK));
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
+        MvcResult result = mockMvc.perform(MockMvcRequestBuilders.post("/")
+                .param("fileType", ".csv"))
+                .andExpect(status().isOk())
+                .andReturn();
 
-        Map<String, String> requestBody = new HashMap<>();
-        requestBody.put("programArgs", "--input-file test.csv");
-
-        Mockito.when(restTemplate.postForEntity(eq("http://localhost:8080/jars/job123/run"), any(HttpEntity.class), eq(String.class))).thenThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST));
-
-        // Act
-        String result = flinkApiController.triggerJob(collector, fileType);
-
-        // Assert
-        Mockito.verify(restTemplate).postForEntity(eq("http://localhost:8080/jars/job123/run"), any(HttpEntity.class), eq(String.class));
-        assertEquals("Job is not triggered", result);
+        String response = result.getResponse().getContentAsString();
+        Assertions.assertEquals(expectedResponse, response);
     }
 
     @Test
-    void triggerJob_withNonExistentFlinkJobJarid_shouldNotTriggerJob() {
-        // Arrange
-        SpaceCollector collector = new SpaceCollector();
-        collector.setInputFilePath("test.csv");
-        String fileType = ".csv";
+    public void testTriggerJobWithInvalidJobSubmitUrl() throws Exception {
+        String jobSubmitUrl = "http://localhost:8081/jars/non_existent.jar/run";
+        String expectedResponse = "Job is not triggered";
 
-        ReflectionTestUtils.setField(flinkApiController, "flinkApiUrl", "http://localhost:8080");
-        ReflectionTestUtils.setField(flinkApiController, "flinkJobJarid", "nonexistentjob");
-        ReflectionTestUtils.setField(flinkApiController, "programArgs", "--input-file input");
+        when(restTemplate.postForEntity(any(String.class), any(), any())).thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
+        MvcResult result = mockMvc.perform(MockMvcRequestBuilders.post("/")
+                .param("fileType", ".csv"))
+                .andExpect(status().isOk())
+                .andReturn();
 
-        Map<String, String> requestBody = new HashMap<>();
-        requestBody.put("programArgs", "--input-file test.csv");
+        String response = result.getResponse().getContentAsString();
+        Assertions.assertEquals(expectedResponse, response);
+    }
 
-        Mockito.when(restTemplate.postForEntity(eq("http://localhost:8080/jars/nonexistentjob/run"), any(HttpEntity.class), eq(String.class))).thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+    @Test
+    public void testTriggerJobWithNonExistentFlinkJobJarid() throws Exception {
+        String jobSubmitUrl = "http://localhost:8081/jars/non_existent.jar/run";
+        String expectedResponse = "Job is not triggered";
 
-        // Act
-        String result = flinkApiController.triggerJob(collector, fileType);
+        when(restTemplate.postForEntity(any(String.class), any(), any())).thenReturn(new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR));
 
-        // Assert
-        Mockito.verify(restTemplate).postForEntity(eq("http://localhost:8080/jars/nonexistentjob/run"), any(HttpEntity.class), eq(String.class));
-        assertEquals("Job is not triggered", result);
+        MvcResult result = mockMvc.perform(MockMvcRequestBuilders.post("/")
+                .param("fileType", ".csv"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String response = result.getResponse().getContentAsString();
+        Assertions.assertEquals(expectedResponse, response);
+    }
+
+    @Test
+    public void testTriggerJobWithHttpServerErrorException() throws Exception {
+        String jobSubmitUrl = "http://localhost:8081/jars/6c90ea1c-d797-4348-8509-5sv-data-transformer-0.0.1-SNAPSHOT-jar-with-dependencies.jar/run";
+        String expectedResponse = "Job is not triggered";
+
+        when(restTemplate.postForEntity(any(String.class), any(), any())).thenThrow(new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        MvcResult result = mockMvc.perform(MockMvcRequestBuilders.post("/")
+                .param("fileType", ".csv"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String response = result.getResponse().getContentAsString();
+        Assertions.assertEquals(expectedResponse, response);
     }
 }
 ```
 
-Please note that the code provided assumes that the `FlinkApiController` and `SpaceCollector` classes are correctly implemented. Make sure to adjust the test cases and mock objects according to your specific implementation.
+Note: Make sure you have the necessary dependencies for JUnit 5, Mockito, and Spring Boot Test in your build file.

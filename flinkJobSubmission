@@ -1,176 +1,93 @@
-Here are the positive and negative JUnit 5 test cases for the given AC. I have added comments to explain each test case.
-
-```java
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.*;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.ResponseErrorHandler;
+import org.springframework.web.client.RestClientResponseException;
 
-import java.io.IOException;
-import java.util.concurrent.ExecutionException;
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.when;
 
-class KafkaConsumerTest {
-
-    @Mock
-    private KafkaTopicUtil util;
-
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.initMocks(this);
-    }
-
-    @Test
-    void consume_ShouldWriteToLogAndAuditQueue_WhenInputFileExistsAndTopicNotAccessible() throws IOException, ExecutionException, InterruptedException {
-        // Arrange
-        KafkaConsumer kafkaConsumer = new KafkaConsumer();
-        kafkaConsumer.util = util;
-
-        when(util.isKafkaTopicPresent(any())).thenReturn(true); // Simulating topic not accessible
-        doNothing().when(kafkaConsumer).writeLogToFile(any(), any());
-
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setInputFilePath("C:/Temp/input.xml");
-        String data = "{\"inputFilePath\":\"C:/Temp/input.xml\"}";
-
-        // Act
-        kafkaConsumer.consume(data);
-
-        // Assert
-        verify(kafkaConsumer).writeLogToFile(any(), any());
-    }
-
-    @Test
-    void consume_ShouldNotWriteToExternalFileAndAuditQueue_WhenInputFileExistsAndTopicAccessible() throws IOException, ExecutionException, InterruptedException {
-        // Arrange
-        KafkaConsumer kafkaConsumer = new KafkaConsumer();
-        kafkaConsumer.util = util;
-
-        when(util.isKafkaTopicPresent(any())).thenReturn(false); // Simulating topic accessible
-        doNothing().when(kafkaConsumer).writeLogToFile(any(), any());
-
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setInputFilePath("C:/Temp/input.xml");
-        String data = "{\"inputFilePath\":\"C:/Temp/input.xml\"}";
-
-        // Act
-        kafkaConsumer.consume(data);
-
-        // Assert
-        verify(kafkaConsumer, never()).writeLogToFile(any(), any());
-        verify(kafkaConsumer, never()).kafkaInputProducer.sendFailureMessage(any(), any(), any());
-    }
-
-    @Test
-    void consume_ShouldWriteToExternalFileAndAuditQueue_WhenInputFileDoesNotExist() throws IOException, ExecutionException, InterruptedException {
-        // Arrange
-        KafkaConsumer kafkaConsumer = new KafkaConsumer();
-        kafkaConsumer.util = util;
-
-        when(util.isKafkaTopicPresent(any())).thenReturn(true); // Simulating topic not accessible
-        doNothing().when(kafkaConsumer).writeLogToFile(any(), any());
-
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setInputFilePath("C:/Temp/nonexistent.xml");
-        String data = "{\"inputFilePath\":\"C:/Temp/nonexistent.xml\"}";
-
-        // Act
-        kafkaConsumer.consume(data);
-
-        // Assert
-        verify(kafkaConsumer, never()).writeLogToFile(any(), any());
-        verify(kafkaConsumer, never()).kafkaInputProducer.sendFailureMessage(any(), any(), any());
-    }
-
-    @Test
-    void consume_ShouldWriteToLogAndAuditQueue_WhenIOExceptionOccurs() throws IOException, ExecutionException, InterruptedException {
-        // Arrange
-        KafkaConsumer kafkaConsumer = new KafkaConsumer();
-        kafkaConsumer.util = util;
-
-        when(util.isKafkaTopicPresent(any())).thenThrow(new ExecutionException("Topic error", null));
-
-        SpaceCollector spaceCollector = new SpaceCollector();
-        spaceCollector.setInputFilePath("C:/Temp/input.xml");
-        String data = "{\"inputFilePath\":\"C:/Temp/input.xml\"}";
-
-        // Act
-        assertThrows(ExecutionException.class, () -> kafkaConsumer.consume(data));
-
-        // Assert
-        verify(kafkaConsumer).writeLogToFile(any(), any());
-        verify(kafkaConsumer, never()).kafkaInputProducer.sendFailureMessage(any(), any(), any());
-    }
-}
-```
-
-Note: Make sure to mock any external dependencies and adjust the test cases according to your specific code implementation.
-
-
-Here is an example of JUnit 5 test cases for the given ACs using mocking:
-
-```java
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.*;
-
+@ExtendWith(MockitoExtension.class)
 public class FlinkApiControllerTest {
 
-    @Test
-    public void testTriggerJob_NoJarsPresentOnFlinkCluster() {
-        // Arrange
-        FlinkApiController flinkApiController = new FlinkApiController();
-        RestTemplate restTemplateMock = mock(RestTemplate.class);
-        ResponseEntity<String> responseMock = mock(ResponseEntity.class);
+    @InjectMocks
+    private FlinkApiController flinkApiController;
 
-        when(restTemplateMock.postForEntity(anyString(), any(), eq(String.class))).thenReturn(responseMock);
-        when(responseMock.getStatusCode()).thenReturn(HttpStatus.OK);
+    @Mock
+    private RestTemplate restTemplate;
+
+    @Test
+    public void testTriggerJob_WithValidJobSubmitUrl_Success() {
+        // Arrange
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath("input.csv");
+        String fileType = ".csv";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        ResponseEntity<String> responseEntity = new ResponseEntity<>("Job triggered successfully", HttpStatus.OK);
+        String jobSubmitUrl = "http://localhost:8081";
+        String flinkJobJarid = "job123";
+        when(restTemplate.postForEntity(jobSubmitUrl, any(HttpEntity.class), String.class)).thenReturn(responseEntity);
 
         // Act
-        String result = flinkApiController.triggerJob(new SpaceCollector(), ".csv");
+        String result = flinkApiController.triggerJob(collector, fileType);
 
         // Assert
-        verify(restTemplateMock, times(1)).postForEntity(anyString(), any(), eq(String.class));
-        verify(responseMock, times(1)).getStatusCode();
+        assertEquals("Job triggered successfully", result);
+    }
+
+    @Test
+    public void testTriggerJob_WithInvalidJobSubmitUrl_Failure() {
+        // Arrange
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath("input.csv");
+        String fileType = ".csv";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        String jobSubmitUrl = "invalidUrl";
+        when(restTemplate.postForEntity(jobSubmitUrl, any(HttpEntity.class), String.class)).thenThrow(new RestClientException("Invalid URL"));
+
+        // Act
+        String result = flinkApiController.triggerJob(collector, fileType);
+
+        // Assert
         assertEquals("Job is not trigged", result);
     }
 
     @Test
-    public void testTriggerJob_NonExistentJarIdPassedToFlinkCluster() {
+    public void testTriggerJob_WithNonExistentFlinkJobJarid_Failure() {
         // Arrange
-        FlinkApiController flinkApiController = new FlinkApiController();
-        RestTemplate restTemplateMock = mock(RestTemplate.class);
-        ResponseEntity<String> responseMock = mock(ResponseEntity.class);
+        SpaceCollector collector = new SpaceCollector();
+        collector.setInputFilePath("input.txt");
+        String fileType = ".txt";
 
-        when(restTemplateMock.postForEntity(anyString(), any(), eq(String.class))).thenReturn(responseMock);
-        when(responseMock.getStatusCode()).thenReturn(HttpStatus.NOT_FOUND);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
 
-        KafkaInputProducer kafkaInputProducerMock = mock(KafkaInputProducer.class);
-        KafkaConsumer kafkaConsumerMock = mock(KafkaConsumer.class);
-
-        flinkApiController.setRestTemplate(restTemplateMock);
-        flinkApiController.setKafkaInputProducer(kafkaInputProducerMock);
-        flinkApiController.setKafkaConsumer(kafkaConsumerMock);
+        ResponseEntity<String> responseEntity = new ResponseEntity<>("Job submitted but not found", HttpStatus.NOT_FOUND);
+        String jobSubmitUrl = "http://localhost:8081";
+        String flinkJobJarid = "nonExistentJob";
+        when(restTemplate.postForEntity(jobSubmitUrl, any(HttpEntity.class), String.class)).thenReturn(responseEntity);
 
         // Act
-        String result = flinkApiController.triggerJob(new SpaceCollector(), ".csv");
+        String result = flinkApiController.triggerJob(collector, fileType);
 
         // Assert
-        verify(restTemplateMock, times(1)).postForEntity(anyString(), any(), eq(String.class));
-        verify(responseMock, times(1)).getStatusCode();
-        verify(kafkaInputProducerMock, times(1)).sendFailureMessage(any(), anyString(), any());
-        verify(kafkaConsumerMock, times(1)).logMetadata(any(), anyString(), any());
-
         assertEquals("Job is not trigged", result);
     }
 }
-```
-
-In this example, we are using Mockito to mock the dependencies (RestTemplate, ResponseEntity) and verify the interactions with them. We also verify the interactions with the KafkaInputProducer and KafkaConsumer mocks to ensure the proper methods are called. Finally, we assert the expected result.

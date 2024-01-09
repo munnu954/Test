@@ -1,38 +1,45 @@
-Here's the updated workable and executable test cases code with the fix for the "InvalidUseOfMatchersException" error:
-
-```java
-import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.*;
-import org.springframework.web.client.RestTemplate;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
-
 @ExtendWith(MockitoExtension.class)
-public class FlinkApiControllerTest {
-
+class FlinkApiControllerTest {
+  
     @InjectMocks
     private FlinkApiController flinkApiController;
-
+    
     @Mock
     private RestTemplate restTemplate;
+    
+    @Mock
+    private KafkaConsumer kafkaConsumer;
+    
+    @Mock
+    private KafkaAuditProducer kafkaAuditProducer;
+    
+    @Captor
+    ArgumentCaptor<String> requestBodyCaptor;
+    
+    @Captor
+    ArgumentCaptor<HttpEntity<String>> requestEntityCaptor;
 
+    @Captor
+    ArgumentCaptor<String> jobSubmitUrlCaptor;
+    
+    @Value("${flink.api.url}")
+    private String flinkApiUrl;
+    
+    @Value("${flink.job.csv.jarid}")
+    private String flinkJobJarid;
+    
+    @Value("${flink.job.csv.program-args)")
+    private String programArgs;
+  
     @Test
-    public void testTriggerJob_WithValidJobSubmitUrl_Success() {
+    void testTriggerJob_WithValidFileType() {
         // Arrange
         SpaceCollector collector = new SpaceCollector();
-        collector.setInputFilePath("input.csv");
+        collector.setInputFilePath("C:/Temp/test.csv");
         String fileType = ".csv";
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        ResponseEntity<String> responseEntity = new ResponseEntity<>("Job triggered successfully", HttpStatus.OK);
-        String jobSubmitUrl = "http://localhost:8081";
-        when(restTemplate.postForEntity(jobSubmitUrl, new HttpEntity<>(collector, headers), String.class)).thenReturn(responseEntity);
+        when(restTemplate.postForEntity(anyString(), any(), eq(String.class)))
+                .thenReturn(new ResponseEntity<>("Job triggered successfully", HttpStatus.OK));
 
         // Act
         String result = flinkApiController.triggerJob(collector, fileType);
@@ -40,48 +47,41 @@ public class FlinkApiControllerTest {
         // Assert
         assertEquals("Job triggered successfully", result);
     }
-
+  
     @Test
-    public void testTriggerJob_WithInvalidJobSubmitUrl_Failure() {
+    void testTriggerJob_WithInvalidJobSubmitUrl() {
         // Arrange
         SpaceCollector collector = new SpaceCollector();
-        collector.setInputFilePath("input.csv");
+        collector.setInputFilePath("C:/Temp/test.csv");
         String fileType = ".csv";
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        String jobSubmitUrl = "invalidUrl";
-        when(restTemplate.postForEntity(jobSubmitUrl, new HttpEntity<>(collector, headers), String.class)).thenThrow(new RestClientException("Invalid URL"));
+        when(restTemplate.postForEntity(anyString(), any(), eq(String.class)))
+                .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
 
         // Act
         String result = flinkApiController.triggerJob(collector, fileType);
 
         // Assert
-        assertEquals("Job is not trigged", result);
+        assertEquals("Job is not triggered", result);
+        verify(kafkaConsumer).writeLogToFile(any(), any(), any(), any());
+        verify(kafkaAuditProducer).sendMessage(any(), any(), any(), eq(false));
     }
 
     @Test
-    public void testTriggerJob_WithNonExistentFlinkJobJarid_Failure() {
+    void testTriggerJob_WithNonExistentFlinkJobJarid() {
         // Arrange
         SpaceCollector collector = new SpaceCollector();
-        collector.setInputFilePath("input.txt");
-        String fileType = ".txt";
+        collector.setInputFilePath("C:/Temp/test.csv");
+        String fileType = ".csv";
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
-        ResponseEntity<String> responseEntity = new ResponseEntity<>("Job submitted but not found", HttpStatus.NOT_FOUND);
-        String jobSubmitUrl = "http://localhost:8081";
-        when(restTemplate.postForEntity(jobSubmitUrl, new HttpEntity<>(collector, headers), String.class)).thenReturn(responseEntity);
+        String jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
 
         // Act
         String result = flinkApiController.triggerJob(collector, fileType);
-
+        
         // Assert
-        assertEquals("Job is not trigged", result);
+        assertEquals("Job is not triggered", result);
+        verify(kafkaConsumer).writeLogToFile(any(), any(), any(), any());
+        verify(kafkaAuditProducer).sendMessage(any(), any(), any(), eq(false));
     }
 }
-```
-
-In the updated code, the `restTemplate.postForEntity` method is now provided with specific instances of `HttpEntity` containing the `collector` and `headers` instead of using the `any` matcher for these parameters. This resolves the "InvalidUseOfMatchersException" error.

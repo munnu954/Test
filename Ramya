@@ -1,88 +1,40 @@
-import org.apache.flink.api.java.utils.ParameterTool;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.time.LocalDateTime;
+import java.util.UUID;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
+public class AuditMessageGenerator {
 
-@SpringBootApplication
-public class Main {
-
-    private static String bootstrapServer;
-    private static String outputTopic;
-    private static String auditTopic;
-    private static String path;
-    private static String fileType;
-    private static final Logger logger = LoggerFactory.getLogger(Main.class);
-    private static StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-    private static CsvDataTransformerUtil util = new CsvDataTransformerUtil();
-    private static KafkaPushMessages kafkaPushMessages = new KafkaPushMessages();
-
-    public static void main(String[] args) throws Exception {
-        ParameterTool parameters = ParameterTool.fromArgs(args);
-
-        path = parameters.getRequired("input");
-        outputTopic = parameters.get("outputTopic");
-        auditTopic = parameters.get("auditTopic");
-        fileType = parameters.get("filetype").toUpperCase();
-        bootstrapServer = parameters.get("bootstrapserver");
-
-        logger.info("Start to read and pick the path");
-
-        try {
-            if (!new File(path).exists() && util.isKafkaTopicPresent(outputTopic, bootstrapServer)) {
-                // Generate and publish audit message for failure
-                UnifiedAuditMessage failedAuditMessage = AuditMessageGenerator.generateAuditMessage(
-                        path, ProcessType.TRANSFORMER, JobStatus.FLINK_JOB_FAILED,
-                        "FileNotFoundException- Input file path doesn't exist/Invalid file"
-                );
-                kafkaPushMessages.pushMessageToAuditKafka(failedAuditMessage, JobStatus.FLINK_JOB_FAILED);
-            } else {
-                String csvRecords = readCsvFile(path);
-
-                if (csvRecords == null || csvRecords.equals("\r\n")) {
-                    throw new NullPointerException("No records found");
-                }
-
-                final DataStream<String> stream = env.fromElements(csvRecords);
-
-                // Assuming your Flink job processing logic is here...
-
-                // Flink job is successful
-                UnifiedAuditMessage successAuditMessage = AuditMessageGenerator.generateAuditMessage(
-                        path, ProcessType.TRANSFORMER, JobStatus.FLINK_JOB_SUCCESSFUL, ""
-                );
-                kafkaPushMessages.pushMessageToAuditKafka(successAuditMessage, JobStatus.FLINK_JOB_SUCCESSFUL);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-            // Generate and publish audit message for failure due to exception
-            UnifiedAuditMessage exceptionAuditMessage = AuditMessageGenerator.generateAuditMessage(
-                    path, ProcessType.TRANSFORMER, JobStatus.FLINK_JOB_FAILED,
-                    "No records found: " + e.getMessage()
-            );
-            kafkaPushMessages.pushMessageToAuditKafka(exceptionAuditMessage, JobStatus.FLINK_JOB_FAILED);
-            env.execute();
-        }
+    public static UnifiedAuditMessage generateFailedAuditMessage(String filePath) {
+        UnifiedAuditMessage auditMessage = new UnifiedAuditMessage();
+        auditMessage.setProcessType(ProcessType.TRANSFORMER);
+        auditMessage.setInputFilePath(filePath);
+        auditMessage.setJobStatus(JobStatus.FLINK_JOB_FAILED);
+        auditMessage.getExceptions().add("FileNotFoundException- Input file path doesn't exist/Invalid file");
+        auditMessage.setDateReceived(LocalDateTime.now());
+        auditMessage.setJobId(UUID.randomUUID());
+        // Set other relevant fields...
+        return auditMessage;
     }
 
-    // Existing methods...
+    public static UnifiedAuditMessage generateSuccessAuditMessage(String filePath) {
+        UnifiedAuditMessage auditMessage = new UnifiedAuditMessage();
+        auditMessage.setProcessType(ProcessType.TRANSFORMER);
+        auditMessage.setInputFilePath(filePath);
+        auditMessage.setJobStatus(JobStatus.FLINK_JOB_SUCCESSFUL);
+        auditMessage.setDateReceived(LocalDateTime.now());
+        auditMessage.setJobId(UUID.randomUUID());
+        // Set other relevant fields...
+        return auditMessage;
+    }
 
-    private static String readCsvFile(String filePath) {
-        StringBuilder content = new StringBuilder();
-        String contentString = null;
-        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                content.append(line);
-                content.append(System.lineSeparator());
-            }
-            contentString = content.toString();
-        } catch (Exception e) {
-            logger.error("Error reading CSV file", e);
-        }
-        return contentString;
+    public static UnifiedAuditMessage generateExceptionAuditMessage(String filePath, String errorMessage) {
+        UnifiedAuditMessage auditMessage = new UnifiedAuditMessage();
+        auditMessage.setProcessType(ProcessType.TRANSFORMER);
+        auditMessage.setInputFilePath(filePath);
+        auditMessage.setJobStatus(JobStatus.FLINK_JOB_FAILED);
+        auditMessage.getExceptions().add(errorMessage);
+        auditMessage.setDateReceived(LocalDateTime.now());
+        auditMessage.setJobId(UUID.randomUUID());
+        // Set other relevant fields...
+        return auditMessage;
     }
 }

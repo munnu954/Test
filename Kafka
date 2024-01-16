@@ -1,151 +1,63 @@
-To fulfill the above ACs, you can make the following changes in the code:
 
-AC1: The job submission throws error and status code received is Not OK.
-
-In the FlinkApiController class, modify the triggerJob() method:
-```java
-public String triggerJob(SpaceCollector collector, String fileType) {
-   // ...
-   ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
-   LOGGER.info("response: {}", response);
-   if (response.getStatusCode().is2xxSuccessful()) {
-      // Job submission successful
-      return "Job triggered: " + response;
-   } else {
-      // Job submission failed
-      LOGGER.error("Job submission failed. Status code: {}", response.getStatusCode());
-      kafkaProducer.sendFailureMessage(collector, fileType, response);
-
-      // Add the code to validate the failure message, push it to the audit queue, and check the stack trace
-
-      return "Job submission failed. Status code: " + response.getStatusCode();
-   }
-}
-```
-
-AC2: Publishing to the queue 3459-COLLECTION-AUDIT-QUEUE fails and write the same to a log file in a shared location.
-
-In the KafkaProducer class, modify the sendFailureMessage() method:
-```java
-public void sendFailureMessage(SpaceCollector message, String fileType, ResponseEntity response) {
-   // ...
-   try {
-      this.writeMessage(metadata);
-   } catch (Exception e) {
-      Logger.error("Failed to push failure message to audit queue");
-      writeLogToFile(metadata);
-   }
-}
-```
-
-Add a new method in the FlinkApiController class to write the failure message to a log file:
-```java
-private void writeLogToFile(FileMetadata metadata) {
-   String logFilePath = "shared_location/log.txt";
-   try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
-      fileWriter.write(metadata.toString());
-      fileWriter.write(System.lineSeparator());
-      fileWriter.flush();
-   } catch (IOException e) {
-      e.printStackTrace();
-   }
-}
-```
-
-AC3: Input file is present and input topic 3459-COLLECTION-REQUEST-QUEUE' is not accessible.
-
-In the FlinkApiController class, modify the triggerJob() method:
-```java
-public String triggerJob(SpaceCollector collector, String fileType) {
-   // ...
-   if (!validateTopic(topicName)) {
-      LOGGER.error("Input topic {} is not accessible", topicName);
-      kafkaProducer.sendFailureMessage(collector, fileType, "Input topic not accessible");
-      writeLogToFile(collector.getInputFilePath(), "Input topic not accessible");
-      return "Error: Input topic not accessible";
-   }
-   // ...
+public UnifiedAuditMessage logMetadata(String inputFilePath, String url, int port, String outputFilePath, String delimiters, String fileType, DateTime dateReceived, DateTime dateProcessed, int noOfRecordsInTheFile, int noOfRecordsProcessed, int noOfRecordsFailed, UUID jobId, UUID jarId, List exceptions, String collectorId, JobStatus jobStatus) {
+    UnifiedAuditMessage auditData = new UnifiedAuditMessage();
+    auditData.setInputFilePath(inputFilePath);
+    auditData.setUrl(url);
+    auditData.setPort(port);
+    auditData.setOutputFilePath(outputFilePath);
+    auditData.setDelimiters(delimiters);
+    auditData.setFileType(fileType);
+    auditData.setDate_received(dateReceived);
+    auditData.setDate_processed(dateProcessed);
+    auditData.setNo_of_records_in_the_file(noOfRecordsInTheFile);
+    auditData.setNo_of_records_processed(noOfRecordsProcessed);
+    auditData.setNo_of_records_failed(noOfRecordsFailed);
+    auditData.setJob_id(jobId);
+    auditData.setJar_id(jarId);
+    auditData.setExceptions(exceptions);
+    auditData.setCollector_id(collectorId);
+    auditData.setJob_status(jobStatus);
+    return auditData;
 }
 
-private boolean validateTopic(String topicName) {
-   // Add code to validate if the topic is accessible
-   return true; // Replace with the actual implementation
+public UnifiedAuditMessage logMetadata(UnifiedAuditMessage auditMsg, String fileType, ResponseEntity errorMessage) {
+    return logMetadata(
+        auditMsg.getInputFilePath(),
+        auditMsg.getUrl(),
+        auditMsg.getPort(),
+        auditMsg.getOutputFilePath(),
+        auditMsg.getDelimiters(),
+        fileType,
+        auditMsg.getDate_received(),
+        auditMsg.getDate_processed(),
+        auditMsg.getNo_of_records_in_the_file(),
+        auditMsg.getNo_of_records_processed(),
+        auditMsg.getNo_of_records_failed(),
+        auditMsg.getJob_id(),
+        auditMsg.getJar_id(),
+        Collections.singletonList(errorMessage.getStatusCode().toString()),
+        auditMsg.getCollector_id(),
+        JobStatus.COLLECTION_FAILED
+    );
 }
 
-private void writeLogToFile(String inputFilePath, String errorMessage) {
-   String logFilePath = "shared_location/log.txt";
-   try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
-      fileWriter.write("Error: Input topic not accessible - " + inputFilePath);
-      fileWriter.write(System.lineSeparator());
-      fileWriter.flush();
-   } catch (IOException e) {
-      e.printStackTrace();
-   }
+public UnifiedAuditMessage logMetadata(UnifiedAuditMessage auditMsg, String fileType, Exception e) {
+    return logMetadata(
+        auditMsg.getInputFilePath(),
+        auditMsg.getUrl(),
+        auditMsg.getPort(),
+        auditMsg.getOutputFilePath(),
+        auditMsg.getDelimiters(),
+        fileType,
+        auditMsg.getDate_received(),
+        auditMsg.getDate_processed(),
+        auditMsg.getNo_of_records_in_the_file(),
+        auditMsg.getNo_of_records_processed(),
+        auditMsg.getNo_of_records_failed(),
+        auditMsg.getJob_id(),
+        auditMsg.getJar_id(),
+        Collections.singletonList("Exception: " + e.getMessage()),
+        auditMsg.getCollector_id(),
+        JobStatus.COLLECTION_FAILED
+    );
 }
-```
-
-AC4: Jar file is not uploaded to the flink cluster.
-
-In the FlinkApiController class, modify the triggerJob() method:
-```java
-public String triggerJob(SpaceCollector collector, String fileType) {
-   // ...
-   if (!validateJarId(flinkJobJarid)) {
-      LOGGER.error("Jar file does not exist");
-      kafkaProducer.sendFailureMessage(collector, fileType, "Jar file does not exist");
-      writeLogToFile(collector.getInputFilePath(), "Jar file does not exist");
-      return "Error: Jar file does not exist";
-   }
-   // ...
-}
-
-private boolean validateJarId(String jarId) {
-   // Add code to validate if the jar file exists on the flink cluster
-   return true; // Replace with the actual implementation
-}
-
-private void writeLogToFile(String inputFilePath, String errorMessage) {
-   String logFilePath = "shared_location/log.txt";
-   try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
-      fileWriter.write("Error: Jar file does not exist - " + inputFilePath);
-      fileWriter.write(System.lineSeparator());
-      fileWriter.flush();
-   } catch (IOException e) {
-      e.printStackTrace();
-   }
-}
-```
-
-AC5: Non-existent jar id passed to the flink cluster.
-
-In the FlinkApiController class, modify the triggerJob() method:
-```java
-public String triggerJob(SpaceCollector collector, String fileType) {
-   // ...
-   if (!validateJarId(flinkJobXmlJarid)) {
-      LOGGER.error("Jar file does not exist");
-      kafkaProducer.sendFailureMessage(collector, fileType, "Jar file does not exist");
-      writeLogToFile(collector.getInputFilePath(), "Jar file does not exist");
-      return "Error: Jar file does not exist";
-   }
-   // ...
-}
-
-private boolean validateJarId(String jarId) {
-   // Add code to validate if the jar file exists on the flink cluster
-   return true; // Replace with the actual implementation
-}
-
-private void writeLogToFile(String inputFilePath, String errorMessage) {
-   String logFilePath = "shared_location/log.txt";
-   try (FileWriter fileWriter = new FileWriter(logFilePath, true)) {
-      fileWriter.write("Error: Jar file does not exist - " + inputFilePath);
-      fileWriter.write(System.lineSeparator());
-      fileWriter.flush();
-   } catch (IOException e) {
-      e.printStackTrace();
-   }
-}
-```
-
-Note: Replace the "shared_location/log.txt" with the actual path where you want to write the log file. Also, update the logic inside the validation methods (validateTopic, validateJarId) to fit your use case.

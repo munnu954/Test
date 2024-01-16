@@ -1,40 +1,105 @@
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.UUID;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-public class UnifiedAuditMessage {
-    private ProcessType processType;
-    private String inputFilePath;
-    private String URL;
-    private Integer port;
-    private String outputFilePath;
-    private String delimiters;
-    private String fileType;
-    private UUID collectorId;
-    private JobStatus jobStatus;
-    private List<String> exceptions;
-    private LocalDateTime dateReceived;
-    private LocalDateTime dateProcessed;
-    private UUID jobId;
-    private UUID jarId;
-    private Integer numOfRecordsInFile;
-    private Integer numOfRecordsProcessed;
-    private Integer numOfRecordsFailed;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
 
-    // Constructors, getters, setters...
+@SpringBootApplication
+public class Main {
 
-    public UnifiedAuditMessage() {
-        // Initialize or set default values if needed
-        this.dateReceived = LocalDateTime.now();
+    private static String bootstrapServer;
+    private static String outputTopic;
+    private static String auditTopic;
+    private static String path;
+    private static String fileType;
+    private static final Logger logger = LoggerFactory.getLogger(Main.class);
+    private static StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+    private static CsvDataTransformerUtil util = new CsvDataTransformerUtil();
+    private static KafkaPushMessages kafkaPushMessages = new KafkaPushMessages();
+
+    public static void main(String[] args) throws Exception {
+        ParameterTool parameters = ParameterTool.fromArgs(args);
+
+        path = parameters.getRequired("input");
+        outputTopic = parameters.get("outputTopic");
+        auditTopic = parameters.get("auditTopic");
+        fileType = parameters.get("filetype").toUpperCase();
+        bootstrapServer = parameters.get("bootstrapserver");
+
+        logger.info("Start to read and pick the path");
+
+        try {
+            if (!new File(path).exists() && util.isKafkaTopicPresent(outputTopic, bootstrapServer)) {
+                publishAuditMessage(JobStatus.FLINK_JOB_FAILED, "FileNotFoundException- Input file path doesn't exist/Invalid file");
+            } else {
+                String csvRecords = readCsvFile(path);
+
+                if (csvRecords == null || csvRecords.equals("\r\n")) {
+                    throw new NullPointerException("No records found");
+                }
+
+                final DataStream<String> stream = env.fromElements(csvRecords);
+
+                UnifiedAuditMessage auditMessage = new UnifiedAuditMessage();
+                auditMessage.setProcessType(ProcessType.TRANSFORMER);
+                auditMessage.setInputFilePath(path);
+                auditMessage.setJobStatus(JobStatus.FLINK_JOB_SUCCESSFUL);
+
+                final DataStream<String> jsonStream;
+
+                switch (fileType) {
+                    case "GIGAMON":
+                        jsonStream = stream.flatMap(new CsvJsonGigamonTransformer());
+                        break;
+                    default:
+                        jsonStream = stream.flatMap(new CsvtoJsonConversion());
+                        break;
+                }
+
+                jsonStream.sinkTo(callSink());
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            publishAuditMessage(JobStatus.FLINK_JOB_FAILED, "No records found: " + e.getMessage());
+            env.execute();
+        }
     }
 
-    public ProcessType getProcessType() {
-        return processType;
+    public static KafkaSink<String> callSink() {
+        KafkaSink<String> sink = KafkaSink.<String>builder().setBootstrapServers(bootstrapServer)
+                .setRecordSerializer(KafkaRecordSerializationSchema.builder().setTopic(outputTopic)
+                        .setValueSerializationSchema(new SimpleStringSchema()).build())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE).build();
+        return sink;
     }
 
-    public void setProcessType(ProcessType processType) {
-        this.processType = processType;
+    public static String readCsvFile(String filePath) {
+        StringBuilder content = new StringBuilder();
+        String contentString = null;
+        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                content.append(line);
+                content.append(System.lineSeparator());
+            }
+            contentString = content.toString();
+        } catch (Exception e) {
+            logger.error("Error reading CSV file", e);
+        }
+        return contentString;
     }
 
-    // Add other getters and setters as needed...
+    private static void publishAuditMessage(JobStatus jobStatus, String errorMessage) {
+        UnifiedAuditMessage auditMessage = new UnifiedAuditMessage();
+        auditMessage.setProcessType(ProcessType.TRANSFORMER);
+        auditMessage.setInputFilePath(path);
+        auditMessage.setJobStatus(jobStatus);
+        auditMessage.getExceptions().add(errorMessage);
+        auditMessage.setDateReceived(LocalDateTime.now());
+
+        kafkaPushMessages.pushMessageToAuditKafka(auditMessage, jobStatus);
+    }
 }

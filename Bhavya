@@ -1,43 +1,112 @@
-@Test
-public void givenCollectionSuccessful_whenConsume_thenPublishUnifiedAuditMessageWithCollectionSuccessfulJobStatus() throws Exception {
-    // Given
-    SpaceCollector spaceCollector = new SpaceCollector();
-    spaceCollector.setId(123);
-    spaceCollector.setUrl("192.168.1.243");
-    spaceCollector.setPort(8080);
-    spaceCollector.setUserName("custom");
-    spaceCollector.setPassword("sshcolletor");
-    spaceCollector.setInputFilePath("C:/Temp/sampleMeasInfoData.xml");
-    spaceCollector.setOutputFilePath("C:/Temp/output");
+import org.junit.Before;
+import org.junit.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 
-    given(sshExceptionHandler.outputFilepathNotAccessible(spaceCollector)).willReturn(false);
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 
-    // When
-    boolean result = consumerService.consume(spaceCollector);
+import static org.junit.Assert.assertFalse;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
-    // Then
-    assertTrue(result);
-    verify(kafkaProducerService).writeMessage(any(JsonNode.class), eq(""), eq("3459-DEV-COLLECTION-AUDIT-QUEUE"));
-}
+public class CollectorServiceTest {
 
-@Test
-public void givenCollectionNotSuccessful_whenConsume_thenPublishUnifiedAuditMessageWithCollectionFailedJobStatus() throws Exception {
-    // Given
-    SpaceCollector spaceCollector = new SpaceCollector();
-    spaceCollector.setId(123);
-    spaceCollector.setUrl("192.168.1.243");
-    spaceCollector.setPort(8080);
-    spaceCollector.setUserName("custom");
-    spaceCollector.setPassword("sshcolletor");
-    spaceCollector.setInputFilePath("C:/Temp/sampleMeasInfoData.xml");
-    spaceCollector.setOutputFilePath("");
+    @InjectMocks
+    private ConsumerService consumerService;
 
-    given(sshExceptionHandler.outputFilepathNotAccessible(spaceCollector)).willReturn(true);
+    @Mock
+    private SSHService sshService;
 
-    // When
-    boolean result = consumerService.consume(spaceCollector);
+    @Mock
+    private KafkaProducerService kafkaProducerService;
 
-    // Then
-    assertFalse(result);
-    verify(kafkaProducerService).writeMessage(any(JsonNode.class), eq(""), eq("3459-DEV-COLLECTION-AUDIT-QUEUE"));
+    @Mock
+    private CollectorUtil collectorUtil;
+
+    @Value("${ssh-collector.delimiters}")
+    private String delimiters;
+
+    @Value("${ssh-collector.fileType}")
+    private String fileType;
+
+    @Before
+    public void setup() {
+        MockitoAnnotations.initMocks(this);
+    }
+
+    @Test
+    public void givenOutputFilePathNotAccessible() {
+
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setUrl("192.168.1.243");
+        spaceCollector.setPort(8080);
+        spaceCollector.setUserName("custom");
+        spaceCollector.setPassword("sshcolletor");
+        spaceCollector.setInputFilePath("C:/Temp/sampleMeasInfoData.xml");
+        spaceCollector.setOutputFilePath("");
+
+        assertFalse(consumerService.consume(spaceCollector));
+
+        verifyNoInteractions(sshService, kafkaProducerService);
+    }
+
+    @Test
+    public void givenCollectionRequestWhenCollectionSuccessfulThenPublishUnifiedAuditMessage() throws Exception {
+
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setId(1);
+        spaceCollector.setUrl("192.168.1.243");
+        spaceCollector.setPort(8080);
+        spaceCollector.setUserName("custom");
+        spaceCollector.setPassword("sshcolletor");
+        spaceCollector.setInputFilePath("C:/Temp/sampleMeasInfoData.xml");
+        spaceCollector.setOutputFilePath("C:/Temp/output");
+        spaceCollector.setEnabled("Y");
+
+        String dataReceived = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss").format(new Date());
+        String dataProcessed = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss").format(new Date());
+        String unifiedAuditMessage = "{\"inputFilePath\":\"C:/Temp/output/sampleMeasInfoData.xml\",\"id\":1,\"fileType\":\"xml\",\"delimiters\":\"delimiter\",\"url\":\"url\",\"port\":22,\"outputFilePath\":\"outputFilePath\",\"job_status\":\"COLLECTION_SUCCESSFUL\",\"exceptions\":null,\"date_received\":\"" + dataReceived + "\",\"date_processed\":\"" + dataProcessed + "\"}";
+
+        when(collectorUtil.getDateAsString(any(Date.class))).thenReturn(dataReceived, dataProcessed);
+        when(collectorUtil.buildAuditQueueJSON(eq(spaceCollector), eq(dataReceived), eq(dataProcessed), isNull(), eq(JobStatus.COLLECTION_SUCCESSFUL))).thenReturn(unifiedAuditMessage);
+
+        consumerService.consume(spaceCollector);
+
+        verify(sshService, times(1)).retrieveData(eq(spaceCollector));
+        verify(kafkaProducerService, times(1)).writeMessage(eq(unifiedAuditMessage), eq(""), eq("3459-DEV-COLLECTION-AUDIT-QUEUE"));
+    }
+
+    @Test
+    public void givenCollectionRequestWhenCollectionFailedThenPublishUnifiedAuditMessageWithException() throws Exception {
+
+        SpaceCollector spaceCollector = new SpaceCollector();
+        spaceCollector.setId(1);
+        spaceCollector.setUrl("192.168.1.243");
+        spaceCollector.setPort(8080);
+        spaceCollector.setUserName("custom");
+        spaceCollector.setPassword("sshcolletor");
+        spaceCollector.setInputFilePath("C:/Temp/sampleMeasInfoData.xml");
+        spaceCollector.setOutputFilePath("C:/Temp/output");
+        spaceCollector.setEnabled("Y");
+
+        String dataReceived = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss").format(new Date());
+        String dataProcessed = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss").format(new Date());
+        String exceptionMessage = "Exception occurred";
+        String unifiedAuditMessage = "{\"inputFilePath\":\"C:/Temp/output/sampleMeasInfoData.xml\",\"id\":1,\"fileType\":\"xml\",\"delimiters\":\"delimiter\",\"url\":\"url\",\"port\":22,\"outputFilePath\":\"outputFilePath\",\"job_status\":\"COLLECTION_FAILED\",\"exceptions\":\"" + exceptionMessage + "\",\"date_received\":\"" + dataReceived + "\",\"date_processed\":\"" + dataProcessed + "\"}";
+
+        when(collectorUtil.getDateAsString(any(Date.class))).thenReturn(dataReceived, dataProcessed);
+        when(collectorUtil.buildAuditQueueJSON(eq(spaceCollector), eq(dataReceived), eq(dataProcessed), eq(exceptionMessage), eq(JobStatus.COLLECTION_FAILED))).thenReturn(unifiedAuditMessage);
+        doThrow(new Exception(exceptionMessage)).when(sshService).retrieveData(eq(spaceCollector));
+
+        consumerService.consume(spaceCollector);
+
+        verify(sshService, times(1)).retrieveData(eq(spaceCollector));
+        verify(kafkaProducerService, times(1)).writeMessage(eq(unifiedAuditMessage), eq(""), eq("3459-DEV-COLLECTION-AUDIT-QUEUE"));
+    }
 }

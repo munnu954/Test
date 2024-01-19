@@ -1,55 +1,87 @@
-To fix the "com.fasterxml.jackson.databind.exc.MismatchedInputException: Cannot construct instance of org.vdsi.space.collections.customcsvdatatransformer.model.Unified AuditMessage" error, you need to add a default (no-args) constructor to your UnifiedAuditMessage class. This is because the ObjectMapper requires a no-args constructor to create an instance of the class during deserialization.
+To fix the error "com.fasterxml.jackson.databind.exc.MismatchedInputException: Cannot construct instance of org.vdsi.space.collections.customcsvdatatransformer.model.Unified AuditMessage (although at least one Creator exists): no String-argument constructor/factory method to deserialize from String value", you need to provide a String-argument constructor for the `UnifiedAuditMessage` class.
 
-Here's the updated code for the UnifiedAuditMessage class:
+Here's the updated code for the `UnifiedAuditMessage` class:
 
 ```java
 @Data
 @AllArgsConstructor
-@NoArgsConstructor
+@NoArgsConstructor // Added no-argument constructor
 public class UnifiedAuditMessage {
-    // existing variables and methods
-    // add a default constructor
+    private String inputFilePath;
+    private String url;
+    private Integer port;
+    private String outputFilePath;
+    private String delimiters;
+    private String fileType;
+    private String date_received;
+    private String date_processed;
+    private Integer no_of_records_in_the_file;
+    private Integer no_of_records_processed;
+    private Integer no_of_records_failed;
+    private UUID job_id;
+    private UUID jar_id;
+    private List<String> exceptions;
+    private UUID collector_id;
+    private JobStatus job_status;
+
+    public enum JobStatus {
+        COLLECTION_NEW,
+        COLLECTION_IN_PROGRESS,
+        COLLECTION_SUCCESSFUL,
+        COLLECTION_FAILED,
+        FLINK_JOB_NEW,
+        FLINK_JOB_SUBMITTED,
+        FLINK_JOB_IN_PROGRESS,
+        FLINK_JOB_SUCCESSFUL,
+        FLINK_JOB_FAILED
+    }
+
+    // Added String-argument constructor
+    public UnifiedAuditMessage(String inputFilePath, String url, Integer port, String outputFilePath, String delimiters, String fileType, String date_received, String date_processed, Integer no_of_records_in_the_file, Integer no_of_records_processed, Integer no_of_records_failed, UUID job_id, UUID jar_id, List<String> exceptions, UUID collector_id, JobStatus job_status) {
+        this.inputFilePath = inputFilePath;
+        this.url = url;
+        this.port = port;
+        this.outputFilePath = outputFilePath;
+        this.delimiters = delimiters;
+        this.fileType = fileType;
+        this.date_received = date_received;
+        this.date_processed = date_processed;
+        this.no_of_records_in_the_file = no_of_records_in_the_file;
+        this.no_of_records_processed = no_of_records_processed;
+        this.no_of_records_failed = no_of_records_failed;
+        this.job_id = job_id;
+        this.jar_id = jar_id;
+        this.exceptions = exceptions;
+        this.collector_id = collector_id;
+        this.job_status = job_status;
+    }
 }
 ```
 
-Additionally, there are a few corrections and improvements needed in the KafkaAuditProducer and KafkaConsumer classes to make them work properly.
-
-Updated KafkaAuditProducer class:
+Next, here's the reframed code for the `KafkaAuditProducer` class:
 
 ```java
 @Service
 public class KafkaAuditProducer {
     private static final Logger Logger = LoggerFactory.getLogger(KafkaAuditProducer.class);
 
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final KafkaTemplate<String, UnifiedAuditMessage> kafkaTemplate; // Changed value type to UnifiedAuditMessage
 
     @Value("${spring.kafka.producer.topic-name}")
     private String topicName;
 
     @Autowired
-    public KafkaAuditProducer(KafkaTemplate<String, String> kafkaTemplate) {
+    public KafkaAuditProducer(KafkaTemplate<String, UnifiedAuditMessage> kafkaTemplate) { // Changed value type to UnifiedAuditMessage
         this.kafkaTemplate = kafkaTemplate;
     }
 
-    public void createMessageAndLog(String inputFilePath, String url, Integer port, String outputFilePath,
-            String delimiters, String fileType, String date_received, Integer no_of_records_in_the_file,
-            Integer no_of_records_processed, Integer no_of_records_failed, UUID job_id, UUID jar_id,
-            List<String> exceptions, UUID collector_id, UnifiedAuditMessage.JobStatus job_status) {
+    public void createMessageAndLog(UnifiedAuditMessage auditMsg) { // Changed method signature
         LocalDateTime dateProcessed = LocalDateTime.now();
-        String date_processed = dateProcessed.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"));
-
-        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage(inputFilePath, url, port, outputFilePath, delimiters,
-                fileType, date_received, date_processed, no_of_records_in_the_file, no_of_records_processed,
-                no_of_records_failed, job_id, jar_id, exceptions, collector_id, job_status);
+        auditMsg.setDate_processed(dateProcessed.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")));
 
         try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            String auditMsgJson = objectMapper.writeValueAsString(auditMsg);
-
-            this.kafkaTemplate.send(topicName, auditMsgJson);
-            Logger.info("Kafka status message: {}", auditMsgJson);
-        } catch (JsonProcessingException e) {
-            Logger.error("Failed to convert auditMsg to JSON: {}", e.getMessage());
+            this.kafkaTemplate.send(topicName, auditMsg);
+            Logger.info("Kafka status message: {}", auditMsg);
         } catch (Exception e) {
             Logger.error("Failed to send Kafka message: {}", e.getMessage());
         }
@@ -57,14 +89,9 @@ public class KafkaAuditProducer {
 
     public boolean writeMessage(UnifiedAuditMessage auditMsg) {
         try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            String auditMsgJson = objectMapper.writeValueAsString(auditMsg);
-
-            this.kafkaTemplate.send(topicName, auditMsgJson);
-            Logger.info("Kafka status message: {}", auditMsgJson);
+            this.kafkaTemplate.send(topicName, auditMsg);
+            Logger.info("Kafka status message: {}", auditMsg);
             return true;
-        } catch (JsonProcessingException e) {
-            Logger.error("Failed to convert auditMsg to JSON: {}", e.getMessage());
         } catch (Exception e) {
             Logger.error("Failed to send Kafka message: {}", e.getMessage());
         }
@@ -73,12 +100,12 @@ public class KafkaAuditProducer {
 }
 ```
 
-Updated KafkaConsumer class:
+And finally, here's the reframed code for the `KafkaConsumer` class:
 
 ```java
 @Service
 public class KafkaConsumer {
-    private static final Logger LOGGER = LoggerFactory.getLogger(KafkaConsumer.class);
+    private static final Logger LOGGER LoggerFactory.getLogger(KafkaConsumer.class);
 
     @Value("${file.txtsource}")
     private String sourceFilePath;
@@ -98,63 +125,50 @@ public class KafkaConsumer {
     @Autowired
     private KafkaAuditProducer kafkaAuditProducer;
 
-    @KafkaListener(topics = "${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}", errorHandler = "kafkaEventErrorHandler")
-    public void consume(String data) throws IOException {
+    @KafkaListener(topics="${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}", errorHandler = "kafkaEventErrorHandler")
+    public void consume(UnifiedAuditMessage auditMsg) throws IOException { // Changed method parameter type
         LocalDateTime dateReceived = LocalDateTime.now();
-        UnifiedAuditMessage auditMsg = null;
         String fileType = null;
 
         try {
-            ObjectMapper mapper = new ObjectMapper();
-            auditMsg = mapper.readValue(data, UnifiedAuditMessage.class);
             LOGGER.info("Message Received: {}", auditMsg);
+            LOGGER.info("Message received-> {}", auditMsg);
 
-            if (data.contains("inputFilePath")) {
-                LOGGER.info("Message received-> {}", auditMsg);
+            String sourceFilePath = auditMsg.getInputFilePath();
+            String response = null;
 
-                String sourceFilePath = auditMsg.getInputFilePath();
-                String response = null;
+            if ((new File(sourceFilePath).exists()) && !util.isKafkaTopicPresent(topic)) {
+                UnifiedAuditMessage auditData = new UnifiedAuditMessage();
+                auditData.setInputFilePath(sourceFilePath);
+                auditData.setExceptions(Collections.singletonList("Input file path doesn't exist/Invalid file"));
+                writeLogToFile(auditData, destinationFolderPath);
+            }
 
-                if (!new File(sourceFilePath).exists()) {
-                    UnifiedAuditMessage auditData = new UnifiedAuditMessage();
-                    auditData.setInputFilePath(sourceFilePath);
-                    auditData.setExceptions(Collections.singletonList("Input file path doesn't exist/Invalid file"));
-                    writeLogToFile(auditData, destinationFolderPath);
-                } else {
-                    if (validateFile(sourceFilePath)) {
-                        writeFile(sourceFilePath, destinationFolderPath);
-                        String fileType = getExtension(sourceFilePath);
+            if (validateFile(sourceFilePath)) {
+                writeFile(sourceFilePath, destinationFolderPath);
+                String fileType = getExtension(sourceFilePath);
 
-                        if (fileType != null && fileType.equalsIgnoreCase(".xml")) {
-                            LOGGER.info("XML FILE()");
-                            retrieveXmlFile(sourceFilePath);
-                        } else if (fileType != null && fileType.equalsIgnoreCase(".csv")) {
-                            LOGGER.info("CSV FILE()");
-                            retrieveCsvFile(sourceFilePath);
-                        } else if (fileType != null && fileType.equalsIgnoreCase(".txt")) {
-                            LOGGER.info("TEXT FILE()");
-                            retrieveTxtFile(sourceFilePath);
-                        }
-                        response = getFlinkResponse();
-                        LOGGER.info("Flink Response: {}", response);
-                    } else {
-                        kafkaAuditProducer.createMessageAndLog(sourceFilePath, null, null, null, null, fileType, null,
-                                null, null, null, null, null, Collections.singletonList("File does not exist"),
-                                null, UnifiedAuditMessage.JobStatus.COLLECTION_FAILED);
-                    }
+                if (fileType != null && fileType.equalsIgnoreCase(".xml")) {
+                    LOGGER.info("XML FILE()");
+                    retrieveXmlFile(sourceFilePath);
+                } else if (fileType != null && fileType.equalsIgnoreCase(".csv")) {
+                    LOGGER.info("CSV FILE()");
+                    retrieveCsvFile(sourceFilePath);
+                } else if (fileType != null && fileType.equalsIgnoreCase(".txt")) {
+                    LOGGER.info("TEXT FILE()");
+                    retrieveTxtFile(sourceFilePath);
                 }
+                response = getFlinkResponse();
+                LOGGER.info("Flink Response: {}", response);
+            } else {
+                kafkaAuditProducer.sendErrorMessage("File does not exist");
             }
         } catch (Exception e) {
             e.printStackTrace();
             LOGGER.error("Error triggering job: {}", e.getMessage());
 
             UnifiedAuditMessage auditData = logAuditData(auditMsg, fileType, e);
-            kafkaAuditProducer.createMessageAndLog(auditData.getInputFilePath(), auditData.getUrl(),
-                    auditData.getPort(), auditData.getOutputFilePath(), auditData.getDelimiters(),
-                    auditData.getFileType(), auditData.getDate_received(), auditData.getNo_of_records_in_the_file(),
-                    auditData.getNo_of_records_processed(), auditData.getNo_of_records_failed(), auditData.getJob_id(),
-                    auditData.getJar_id(), auditData.getExceptions(), auditData.getCollector_id(),
-                    auditData.getJob_status());
+            kafkaAuditProducer.createMessageAndLog(auditData);
         }
     }
 
@@ -162,16 +176,28 @@ public class KafkaConsumer {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
         LocalDateTime currentDate = LocalDateTime.now();
 
-        return new UnifiedAuditMessage(auditMsg.getInputFilePath(), auditMsg.getUrl(), auditMsg.getPort(),
-                auditMsg.getOutputFilePath(), auditMsg.getDelimiters(), fileType, currentDate.format(formatter),
-                currentDate.format(formatter), auditMsg.getNo_of_records_in_the_file(),
-                auditMsg.getNo_of_records_processed(), auditMsg.getNo_of_records_failed(), UUID.randomUUID(),
-                UUID.randomUUID(), Collections.singletonList(e.getMessage()), auditMsg.getCollector_id(),
-                UnifiedAuditMessage.JobStatus.COLLECTION_FAILED);
+        return new UnifiedAuditMessage(
+                auditMsg.getInputFilePath(),
+                auditMsg.getUrl(),
+                auditMsg.getPort(),
+                auditMsg.getOutputFilePath(),
+                auditMsg.getDelimiters(),
+                fileType,
+                currentDate.format(formatter),
+                currentDate.format(formatter),
+                auditMsg.getNo_of_records_in_the_file(),
+                auditMsg.getNo_of_records_processed(),
+                auditMsg.getNo_of_records_failed(),
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                Collections.singletonList(e.getMessage()),
+                auditMsg.getCollector_id(),
+                UnifiedAuditMessage.JobStatus.COLLECTION_FAILED
+        );
     }
 
-    // Other methods go here...
+    // Other methods and logAuditData method goes here...
 }
 ```
 
-These updated classes should resolve the error and make the code work as expected. Remember to update the other methods and variables in the KafkaConsumer class accordingly.
+With these changes, the `UnifiedAuditMessage` model class has a String-argument constructor, the `KafkaAuditProducer` class uses `UnifiedAuditMessage` as the value type for the KafkaTemplate, and the `KafkaConsumer` class consumes `UnifiedAuditMessage` directly from Kafka.

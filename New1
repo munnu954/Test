@@ -1,63 +1,130 @@
-Positive Junit5 Test Scenarios:
+To fix the error, "Error while deserializing Json: java.lang.NullPointerException: Cannot invoke "org.vdsi.space.collections.customcsvdatatransformer.model.UnifiedAuditMessage.getInputFilePath()" because "auditMsg" is null" at this line ObjectMapper mapper = new ObjectMapper(); message = mapper.readValue(data, UnifiedAuditMessage.class);, you can make the following changes:
 
-1. Test Case: Verify successful publishing of failure message to Audit Queue
-   - Given a transform job that throws an error and returns a non-OK status code
-   - When the job is invoked and the failure message is pushed to the Audit Queue
-   - Then validate that the failure message is published successfully to the Audit Queue
-   - And validate that the failure message contains the expected data, such as zero processed records and specific exceptions
+1. In the KafkaConsumer.java class, initialize the "auditMsg" variable before the if condition check. Replace the line "UnifiedAuditMessage auditMsg = null;" with "UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();". This will ensure that the "auditMsg" object is not null.
 
-2. Test Case: Verify logging of failure when publishing to Audit Queue fails
-   - Given a transform job that throws an error and returns a non-OK status code
-   - When the job is invoked and the failure message fails to be pushed to the Audit Queue
-   - Then validate that the failure message is logged in a shared log file
+2. In the catch block of the KafkaConsumer.java class, replace the line "UnifiedAuditMessage auditData = logAuditdata (auditMsg, fileType, e);" with "UnifiedAuditMessage auditData = logAuditData(auditMsg, fileType, e.getMessage());". This will fix the typo and pass the error message instead of the entire exception object.
 
-3. Test Case: Verify logging when input topic is not accessible
-   - Given a transform job with a valid input file and an inaccessible input topic
-   - When the job is invoked and the input topic is not accessible
-   - Then validate that the failure to access the input topic is logged in a shared log file
-   - And validate that the failure message is pushed to the Audit Queue
+3. In the KafkaAuditProducer.java class, update the KafkaTemplate declaration to use the correct types. Replace "private final KafkaTemplate<String, Object> kafkaTemplate;" with "private final KafkaTemplate<String, UnifiedAuditMessage> kafkaTemplate;". This will ensure that the KafkaProducer is using the correct message type.
 
-4. Test Case: Verify logging and failure message when no jars are present on the Flink cluster
-   - Given that there are no jars present as jobs on the Flink cluster
-   - And the FLINK JOBS table has no entries
-   - When the transform job is invoked
-   - Then validate that the failure message is not pushed to the Audit Queue
-   - And validate that the failure message is logged in a shared log file
+4. In the KafkaAuditProducer.java class, update the writeMessage() method to accept a string parameter instead of the UnifiedAuditMessage object. Replace "public boolean writeMessage(UnifiedAuditMessage auditMsg)" with "public boolean writeMessage(String auditMsg)". This will allow passing the error message instead of the entire UnifiedAuditMessage object.
 
-5. Test Case: Verify logging and failure message when a non-existent jar id is passed to the Flink cluster
-   - Given a non-existent jar id of the job
-   - When the transform job is triggered with the non-existent jar id
-   - Then validate that the invocation fails with a non-OK status code
-   - And validate that the failure message is not pushed to the Audit Queue
-   - And validate that the failure message is logged in a shared log file
+Here is the updated code:
 
-Negative Junit5 Test Scenarios:
+KafkaConsumer.java class:
 
-1. Test Case: Verify no publishing of failure message when the job completes successfully
-   - Given a transform job that executes without any errors
-   - When the job is invoked and completes successfully
-   - Then validate that no failure message is pushed to the Audit Queue
+@Service
+public class KafkaConsumer {
+    private static final Logger LOGGER LoggerFactory.getLogger(KafkaConsumer.class);
 
-2. Test Case: Verify no logging of failure when publishing to Audit Queue succeeds
-   - Given a transform job that throws an error and returns a non-OK status code
-   - When the job is invoked and the failure message is successfully pushed to the Audit Queue
-   - Then validate that no failure message is logged in a shared log file
+    @Value("${file.txtsource)")
+    private String sourceFilePath;
+    @Value("${file.destination)")
+    private String destinationFolderPath;
+    @Value("${spring.kafka.producer.topic-name")
+    private String topic;
+    @Autowired
+    private KafkaTopicUtil util;
+    @Autowired
+    FlinkApiController FlinkApi;
+    @Autowired KafkaAuditProducer kafkaAuditProducer;
 
-3. Test Case: Verify no logging when input topic is accessible
-   - Given a transform job with a valid input file and an accessible input topic
-   - When the job is invoked and the input topic is accessible
-   - Then validate that no failure is logged in a shared log file
+    @KafkaListener(topics="${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}", errorHandler = "kafkaEventErrorHandler")
+    public void consume(String data) throws IOException {
+        LocalDataTime dataReceived = LocalDataTime.now();
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+        String fileType = null;
+        
+        try {
+            if (data.contains("inputFilePath")) {
+                ObjectMapper mapper = new ObjectMapper();
+                auditMsg = mapper.readValue(data, UnifiedAuditMessage.class);
+                LOGGER.info("Message Received" + auditMsg);
+                LOGGER.info(String.format("Message received-> %s", auditMsg));
 
-4. Test Case: Verify no logging and failure message when jars are present on the Flink cluster
-   - Given that there are jars present as jobs on the Flink cluster
-   - Or the FLINK JOBS table has entries
-   - When the transform job is invoked
-   - Then validate that no failure message is pushed to the Audit Queue
-   - And validate that no failure message is logged in a shared log file
+                String sourceFilePath = auditMsg.getInputFilePath();
+                String response = null;
 
-5. Test Case: Verify no logging and failure message when a valid jar id is passed to the Flink cluster
-   - Given a valid jar id of the job
-   - When the transform job is triggered with the valid jar id
-   - Then validate that the invocation is successful with a OK status code
-   - And validate that no failure message is pushed to the Audit Queue
-   - And validate that no failure message is logged in a shared log file
+                if ((new File(sourceFilePath).exists()) && !util.isKafkaTopicPresent(topic)) {
+                    UnifiedAuditMessage auditData = new UnifiedAuditMessage();
+                    auditData.setFile_name(sourceFilePath);
+                    auditData.setExceptions("Input file path doesn't exist/Invalid file");
+                    writeLogToFile(auditData, destinationFolderPath);
+                }
+
+                if (validateFile(sourceFilePath)) {
+                    writeFile(sourceFilePath, destinationFolderPath);
+                    fileType = getExtention(sourceFilePath);
+
+                    if (fileType != null && fileType.equalsIgnoreCase(".xml")) {
+                        LOGGER.info("XML FILE()");
+                        retrieveXmlFile(sourceFilePath);
+                    } else if (fileType != null && fileType.equalsIgnoreCase(".csv")) {
+                        LOGGER.info("CSV FILE{}");
+                        retrieveCsvFile(sourceFilePath);
+                    } else if (fileType != null && fileType.equalsIgnoreCase(".txt")) {
+                        LOGGER.info("TEXT FILE{}");
+                        retrieveTxtFile(sourceFilePath);
+                    }
+                    
+                    response = // Code to retrieve Flink response
+                    
+                    LOGGER.info("Flink Response: " + response);
+                    
+                } else {
+                    kafkaAuditProducer.sendErrorMessage("File does not exist");
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            LOGGER.error("Error triggering job", e.getMessage());
+            
+            UnifiedAuditMessage auditData = logAuditData(auditMsg, fileType, e.getMessage());
+            
+            kafkaAuditProducer.createMessageAndLog(auditData.getInputFilePath(), auditData.getUrl(),
+                    auditData.getPort(), auditData.getOutputFilePath(), auditData.getDelimiters(),
+                    auditData.getFileType(), auditData.getDate_received(), auditData.getDate_processed(),
+                    auditData.getNo_of_records_in_the_file(), auditData.getNo_of_records_processed(),
+                    auditData.getNo_of_records_failed(), auditData.getJob_id(), auditData.getJar_id(),
+                    auditData.getExceptions(), auditData.getCollector_id(), auditData.getJob_status());
+        }
+    }
+    
+    public UnifiedAuditMessage logAuditData(UnifiedAuditMessage auditMsg, String fileType, String errorMessage) {
+        DateTimeFormatter formatter = new DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+        LocalDateTime currentDate = LocalDateTime.now();
+        
+        return new UnifiedAuditMessage(auditMsg.getInputFilePath(), auditMsg.getUrl(), auditMsg.getPort(),
+                auditMsg.getOutputFilePath(), auditMsg.getDelimiters(), fileType, currentDate, currentDate,
+                auditMsg.getNo_of_records_in_the_file(), auditMsg.getNo_of_records_processed(),
+                auditMsg.getNo_of_records_failed(), UUID.randomUUID(), UUID.randomUUID(),
+                Collections.singletonList(errorMessage), auditMsg.getCollector_id(),
+                UnifiedAuditMessage.JobStatus.COLLECTION_FAILED);
+    }
+}
+
+KafkaAuditProducer.java class:
+
+@Service
+public class KafkaAuditProducer {
+    private static final Logger Logger = LoggerFactory.getLogger(KafkaAuditProducer.class);
+
+    @Value("${spring.kafka.producer.topic-name}")
+    private String topicName;
+
+    private final KafkaTemplate<String, UnifiedAuditMessage> kafkaTemplate;
+
+    @Autowired
+    public KafkaAuditProducer(KafkaTemplate<String, UnifiedAuditMessage> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate;
+    }
+
+    public boolean writeMessage(String auditMsg) {
+        try {
+            this.kafkaTemplate.send(topicName, auditMsg);
+            Logger.info("Kafka status message {}", auditMsg);
+        } catch (Exception e) {
+            return false;
+        }
+        return true;
+    }
+}

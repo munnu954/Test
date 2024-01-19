@@ -1,16 +1,82 @@
-The error message is telling you that the variable auditQueueJSON is null, so you need to make sure that it is not null before trying to call toString() on it. One way to do this is to check the value of auditQueueJSON before calling toString(), and only call toString() if it is not null. For example:
+To fix the NullPointerException in the ConsumerServiceTest class, you need to properly initialize the `CollectorUtil` and `SpaceCollector` objects. 
 
+Here's the modified version of the ConsumerServiceTest class:
 
-if (auditQueueJSON != null) {
-  verify(kafkaProducerService).writeMessage(auditQueueJSON.toString(), "", "3459-DEV-COLLECTION-AUDIT-QUEUE");
+```java
+@ExtendWith(SpringExtension.class)
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+public class ConsumerServiceTest {
+
+    private SshExceptionHandler sshExceptionHandler = new SshExceptionHandler();
+
+    private static final String TOPIC = "test-topic";
+
+    @Autowired
+    private EmbeddedKafkaBroker embeddedKafkaBroker;
+
+    private SpaceCollector spaceCollector;
+
+    @Autowired
+    private CollectorUtil collectorUtil;
+
+    BlockingQueue<ConsumerRecord<String, String>> records;
+    KafkaMessageListenerContainer<String, String> container;
+
+    @Mock
+    private KafkaProducerService kafkaProducerService;
+
+    @InjectMocks
+    private ConsumerService consumerService;
+
+    @BeforeAll
+    void setup() {
+        Map<String, Object> configs = new HashMap<>(KafkaTestUtils.consumerProps("consumer", "false", embeddedKafkaBroker));
+
+        DefaultKafkaConsumerFactory<String, String> consumerFactory = new DefaultKafkaConsumerFactory<>(configs, new StringDeserializer(), new StringDeserializer());
+
+        ContainerProperties containerProperties = new ContainerProperties(TOPIC);
+
+        container = new KafkaMessageListenerContainer<>(consumerFactory, containerProperties);
+
+        records = new LinkedBlockingQueue<>();
+
+        container.setupMessageListener((MessageListener<String, String>) records::add);
+
+        container.start();
+        ContainerTestUtils.waitForAssignment(container, 1);
+    }
+
+    @AfterAll
+    void tearDown() {
+        container.stop();
+    }
+
+    @Test
+    void givenOutputFilePathNotAccessible() throws Exception {
+        Mockito.when(collectorUtil.getDateAsString(Mockito.any(Date.class))).thenReturn("2021-07-20T12:00:00");
+
+        spaceCollector = new SpaceCollector();
+        spaceCollector.setUrl("192.168.1.243");
+        spaceCollector.setPort(8080);
+        spaceCollector.setUserName("custom");
+        spaceCollector.setPassword("sshcollector");
+        spaceCollector.setInputFilePath("C:/Temp/sampleMeasInfoData.xml");
+        spaceCollector.setOutputFilePath("");
+
+        JsonNode auditQueueJSON = collectorUtil.buildAuditQueueJSON(spaceCollector,
+                collectorUtil.getDateAsString(new Date()), collectorUtil.getDateAsString(new Date()), "", JobStatus.COLLECTION_FAILED);
+        Mockito.when(kafkaProducerService.writeMessage(Mockito.anyString(), Mockito.anyString(), Mockito.anyString())).thenReturn(true);
+
+        boolean result = consumerService.consume(spaceCollector);
+
+        // Assert that the result is true
+        assertTrue(result);
+
+        verify(kafkaProducerService).writeMessage(auditQueueJSON.toString(), "", "3459-DEV-COLLECTION-AUDIT-QUEUE");
+    }
 }
+```
 
+In this modified version, I have added the `@Autowired` annotation to properly inject the `CollectorUtil` bean. I have also properly initialized the `SpaceCollector` object and mocked the `writeMessage` method of the `KafkaProducerService` to return `true`.
 
-Another way to fix the error is to assign a value to auditQueueJSON before calling toString(). For example:
-
-
-auditQueueJSON = kafkaProducerService.readMessage("3459-DEV-COLLECTION-AUDIT-QUEUE");
-verify(kafkaProducerService).writeMessage(auditQueueJSON.toString(), "", "3459-DEV-COLLECTION-AUDIT-QUEUE");
-
-
-I hope this helps
+I hope this helps! Let me know if you have any further questions.

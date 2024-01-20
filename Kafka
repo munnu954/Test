@@ -1,220 +1,50 @@
-To fix the error related to the deserialization of the `UnifiedAuditMessage` object in the `KafkaConsumer` class, you need to make sure that the `UnifiedAuditMessage` class implements the `Serializable` interface. 
+Based on the error message you provided, it seems that the Jackson ObjectMapper is unable to deserialize the incoming JSON string into the `UnifiedAuditMessage` object because it cannot find a String-argument constructor or factory method in the `UnifiedAuditMessage` class.
 
-Here's the updated `UnifiedAuditMessage` class:
+To fix this issue, you need to add a constructor or factory method in the `UnifiedAuditMessage` class that takes a single String argument. Here's an updated version of the `UnifiedAuditMessage` class with a String-argument constructor:
 
 ```java
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class UnifiedAuditMessage implements Serializable {
-    private String inputFilePath;
-    private String url;
-    private Integer port;
-    private String outputFilePath;
-    private String delimiters;
-    private String fileType;
-    private String date_received;
-    private String date_processed;
-    private Integer no_of_records_in_the_file;
-    private Integer no_of_records_processed;
-    private Integer no_of_records_failed;
-    private UUID job_id;
-    private UUID jar_id;
-    private List<String> exceptions;
-    private UUID collector_id;
-    private JobStatus job_status;
-
-    public UnifiedAuditMessage(String inputFilePath, String url, Integer port, String outputFilePath, String delimiters, String fileType, String date_received, String date_processed, Integer no_of_records_in_the_file, Integer no_of_records_processed, Integer no_of_records_failed, UUID job_id, UUID jar_id, List<String> exceptions, UUID collector_id, JobStatus job_status) {
-        this.inputFilePath = inputFilePath;
-        this.url = url;
-        this.port = port;
-        this.outputFilePath = outputFilePath;
-        this.delimiters = delimiters;
-        this.fileType = fileType;
-        this.date_received = date_received;
-        this.date_processed = date_processed;
-        this.no_of_records_in_the_file = no_of_records_in_the_file;
-        this.no_of_records_processed = no_of_records_processed;
-        this.no_of_records_failed = no_of_records_failed;
-        this.job_id = job_id;
-        this.jar_id = jar_id;
-        this.exceptions = exceptions;
-        this.collector_id = collector_id;
-        this.job_status = job_status;
-    }
-
-    public enum JobStatus {
-        COLLECTION_NEW,
-        COLLECTION_IN_PROGRESS,
-        COLLECTION_SUCCESSFUL,
-        COLLECTION_FAILED,
-        FLINK_JOB_NEW,
-        FLINK_JOB_SUBMITTED,
-        FLINK_JOB_IN_PROGRESS,
-        FLINK_JOB_SUCCESSFUL,
-        FLINK_JOB_FAILED
-    }
-}
-```
-
-Now let's reframe the updated code for `KafkaController`, `FlinkApiController`, `KafkaAuditProducer`, `KafkaConsumer`, and `UnifiedAuditMessage` classes.
-
-KafkaController.java:
-```java
-@RestController
-public class KafkaController {
-    @Autowired
-    private KafkaAuditProducer kafkaAuditProducer;
-
-    @PostMapping("/kafkaPush")
-    public boolean writeMessage(@RequestBody UnifiedAuditMessage auditMsg) {
-        return kafkaAuditProducer.writeMessage(auditMsg);
-    }
-}
-```
-
-FlinkApiController.java:
-```java
-@Service
-public class FlinkApiController {
-    // Other parts of the class...
+public class UnifiedAuditMessage {
+    // Existing fields
     
-    @PostMapping
-    public String triggerJob(@RequestBody UnifiedAuditMessage auditMsg, @RequestParam String fileType) {
-        // Rest of the code...
-    }
-    
-    // Rest of the class...
-}
-```
-
-KafkaAuditProducer.java:
-```java
-@Service
-public class KafkaAuditProducer {
-    // Other parts of the class...
-    
-    public void createMessageAndLog(UnifiedAuditMessage auditMsg) {
-        LocalDateTime dateProcessed = LocalDateTime.now();
-        String date_processed = dateProcessed.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"));
-        
-        UnifiedAuditMessage updatedAuditMsg = new UnifiedAuditMessage(
-                auditMsg.getInputFilePath(),
-                auditMsg.getUrl(),
-                auditMsg.getPort(),
-                auditMsg.getOutputFilePath(),
-                auditMsg.getDelimiters(),
-                auditMsg.getFileType(),
-                auditMsg.getDate_received(),
-                date_processed,
-                auditMsg.getNo_of_records_in_the_file(),
-                auditMsg.getNo_of_records_processed(),
-                auditMsg.getNo_of_records_failed(),
-                auditMsg.getJob_id(),
-                auditMsg.getJar_id(),
-                auditMsg.getExceptions(),
-                auditMsg.getCollector_id(),
-                auditMsg.getJob_status()
-        );
-        
+    public UnifiedAuditMessage(String jsonString) {
+        ObjectMapper objectMapper = new ObjectMapper();
         try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            String auditMsgJson = objectMapper.writeValueAsString(updatedAuditMsg);
-            
-            this.kafkaTemplate.send(topicName, auditMsgJson);
-            Logger.info("Kafka status message: {}", auditMsgJson);
+            UnifiedAuditMessage auditMsg = objectMapper.readValue(jsonString, UnifiedAuditMessage.class);
+            this.inputFilePath = auditMsg.inputFilePath;
+            this.url = auditMsg.url;
+            this.port = auditMsg.port;
+            this.outputFilePath = auditMsg.outputFilePath;
+            this.delimiters = auditMsg.delimiters;
+            this.fileType = auditMsg.fileType;
+            // Copy other fields
         } catch (JsonProcessingException e) {
-            Logger.error("Failed to convert auditMsg to JSON: {}", e.getMessage());
-        } catch (Exception e) {
-            Logger.error("Failed to send Kafka message: {}", e.getMessage());
+            // Handle deserialization error
         }
     }
     
-    public boolean writeMessage(UnifiedAuditMessage auditMsg) {
-        try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            String auditMsgJson = objectMapper.writeValueAsString(auditMsg);
-            
-            this.kafkaTemplate.send(topicName, auditMsgJson);
-            Logger.info("Kafka status message: {}", auditMsgJson);
-            return true;
-        } catch (JsonProcessingException e) {
-            Logger.error("Failed to convert auditMsg to JSON: {}", e.getMessage());
-        } catch (Exception e) {
-            Logger.error("Failed to send Kafka message: {}", e.getMessage());
-        }
-        return false;
-    }
-    
-    // Rest of the class...
+    // Other methods
 }
 ```
 
-KafkaConsumer.java:
+In the `KafkaConsumer` class, update the `consume` method to use this new constructor when deserializing the JSON string:
+
 ```java
-@Service
-public class KafkaConsumer {
-    // Other parts of the class...
-    
-    @KafkaListener(topics = "${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}", errorHandler = "kafkaEventErrorHandler")
-    public void consume(String auditMsgJson) throws IOException {
-        try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            UnifiedAuditMessage auditMsg = objectMapper.readValue(auditMsgJson, UnifiedAuditMessage.class);
-            
-            LocalDateTime dateReceived = LocalDateTime.now();
-            String fileType = null;
-            
-            LOGGER.info("Message Received: {}", auditMsg);
-            
-            // Rest of the code...
-        } catch (Exception e) {
-            e.printStackTrace();
-            LOGGER.error("Error triggering job: {}", e.getMessage());
-            
-            UnifiedAuditMessage updatedAuditMsg = logAuditData(auditMsgJson, fileType, e);
-            kafkaAuditProducer.createMessageAndLog(updatedAuditMsg);
+public void consume(String data) throws IOException {
+    // ...
+    try {
+        if (data.contains("inputFilePath")) {
+            ObjectMapper mapper = new ObjectMapper();
+            UnifiedAuditMessage auditMsg = new UnifiedAuditMessage(data); // Use the constructor
+            // ...
         }
+    } catch (Exception e) {
+        // Handle exception
     }
-    
-    private UnifiedAuditMessage logAuditData(String auditMsgJson, String fileType, Exception e) {
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
-        LocalDateTime currentDate = LocalDateTime.now();
-        UnifiedAuditMessage auditMsg = null;
-        
-        try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            auditMsg = objectMapper.readValue(auditMsgJson, UnifiedAuditMessage.class);
-        } catch (Exception ex) {
-            LOGGER.error("Failed to deserialize auditMsg: {}", ex.getMessage());
-        }
-        
-        if (auditMsg != null) {
-            return new UnifiedAuditMessage(
-                    auditMsg.getInputFilePath(),
-                    auditMsg.getUrl(),
-                    auditMsg.getPort(),
-                    auditMsg.getOutputFilePath(),
-                    auditMsg.getDelimiters(),
-                    fileType,
-                    currentDate.format(formatter),
-                    currentDate.format(formatter),
-                    auditMsg.getNo_of_records_in_the_file(),
-                    auditMsg.getNo_of_records_processed(),
-                    auditMsg.getNo_of_records_failed(),
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    Collections.singletonList(e.getMessage()),
-                    auditMsg.getCollector_id(),
-                    UnifiedAuditMessage.JobStatus.COLLECTION_FAILED
-            );
-        } else {
-            return null;
-        }
-    }
-    
-    // Rest of the class...
+    // ...
 }
 ```
 
-Please note that the above updated code assumes that you have imported the necessary dependencies and set up the required configurations for Kafka and Jackson ObjectMapper in your application.
+Make sure to update other parts of your code that rely on the `UnifiedAuditMessage` class accordingly.

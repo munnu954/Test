@@ -1,10 +1,12 @@
-To fix the error related to the deserialization of the `UnifiedAuditMessage` object in the `KafkaConsumer` class, you need to add a string constructor to the `UnifiedAuditMessage` class. Here's the updated `UnifiedAuditMessage` class:
+To fix the error related to the deserialization of the `UnifiedAuditMessage` object in the `KafkaConsumer` class, you need to make sure that the `UnifiedAuditMessage` class implements the `Serializable` interface. 
+
+Here's the updated `UnifiedAuditMessage` class:
 
 ```java
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class UnifiedAuditMessage {
+public class UnifiedAuditMessage implements Serializable {
     private String inputFilePath;
     private String url;
     private Integer port;
@@ -55,7 +57,7 @@ public class UnifiedAuditMessage {
 }
 ```
 
-Now, let's reframe the updated code for `KafkaController`, `FlinkApiController`, `KafkaAuditProducer`, `KafkaConsumer`, and `UnifiedAuditMessage` classes.
+Now let's reframe the updated code for `KafkaController`, `FlinkApiController`, `KafkaAuditProducer`, `KafkaConsumer`, and `UnifiedAuditMessage` classes.
 
 KafkaController.java:
 ```java
@@ -78,7 +80,7 @@ public class FlinkApiController {
     // Other parts of the class...
     
     @PostMapping
-    public String triggerJob(@RequestBody UnifiedAuditMessage auditMsg, String fileType) {
+    public String triggerJob(@RequestBody UnifiedAuditMessage auditMsg, @RequestParam String fileType) {
         // Rest of the code...
     }
     
@@ -155,11 +157,14 @@ public class KafkaConsumer {
     // Other parts of the class...
     
     @KafkaListener(topics = "${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}", errorHandler = "kafkaEventErrorHandler")
-    public void consume(UnifiedAuditMessage auditMsg) throws IOException {
-        LocalDateTime dateReceived = LocalDateTime.now();
-        String fileType = null;
-        
+    public void consume(String auditMsgJson) throws IOException {
         try {
+            ObjectMapper objectMapper = new ObjectMapper();
+            UnifiedAuditMessage auditMsg = objectMapper.readValue(auditMsgJson, UnifiedAuditMessage.class);
+            
+            LocalDateTime dateReceived = LocalDateTime.now();
+            String fileType = null;
+            
             LOGGER.info("Message Received: {}", auditMsg);
             
             // Rest of the code...
@@ -167,37 +172,49 @@ public class KafkaConsumer {
             e.printStackTrace();
             LOGGER.error("Error triggering job: {}", e.getMessage());
             
-            UnifiedAuditMessage auditData = logAuditData(auditMsg, fileType, e);
-            kafkaAuditProducer.createMessageAndLog(auditData);
+            UnifiedAuditMessage updatedAuditMsg = logAuditData(auditMsgJson, fileType, e);
+            kafkaAuditProducer.createMessageAndLog(updatedAuditMsg);
         }
     }
     
-    private UnifiedAuditMessage logAuditData(UnifiedAuditMessage auditMsg, String fileType, Exception e) {
+    private UnifiedAuditMessage logAuditData(String auditMsgJson, String fileType, Exception e) {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
         LocalDateTime currentDate = LocalDateTime.now();
+        UnifiedAuditMessage auditMsg = null;
         
-        return new UnifiedAuditMessage(
-                auditMsg.getInputFilePath(),
-                auditMsg.getUrl(),
-                auditMsg.getPort(),
-                auditMsg.getOutputFilePath(),
-                auditMsg.getDelimiters(),
-                fileType,
-                currentDate.format(formatter),
-                currentDate.format(formatter),
-                auditMsg.getNo_of_records_in_the_file(),
-                auditMsg.getNo_of_records_processed(),
-                auditMsg.getNo_of_records_failed(),
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                Collections.singletonList(e.getMessage()),
-                auditMsg.getCollector_id(),
-                UnifiedAuditMessage.JobStatus.COLLECTION_FAILED
-        );
+        try {
+            ObjectMapper objectMapper = new ObjectMapper();
+            auditMsg = objectMapper.readValue(auditMsgJson, UnifiedAuditMessage.class);
+        } catch (Exception ex) {
+            LOGGER.error("Failed to deserialize auditMsg: {}", ex.getMessage());
+        }
+        
+        if (auditMsg != null) {
+            return new UnifiedAuditMessage(
+                    auditMsg.getInputFilePath(),
+                    auditMsg.getUrl(),
+                    auditMsg.getPort(),
+                    auditMsg.getOutputFilePath(),
+                    auditMsg.getDelimiters(),
+                    fileType,
+                    currentDate.format(formatter),
+                    currentDate.format(formatter),
+                    auditMsg.getNo_of_records_in_the_file(),
+                    auditMsg.getNo_of_records_processed(),
+                    auditMsg.getNo_of_records_failed(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    Collections.singletonList(e.getMessage()),
+                    auditMsg.getCollector_id(),
+                    UnifiedAuditMessage.JobStatus.COLLECTION_FAILED
+            );
+        } else {
+            return null;
+        }
     }
     
     // Rest of the class...
 }
 ```
 
-Make sure to update the remaining parts of the classes based on your requirements and handle any additional dependencies or configurations in your application.
+Please note that the above updated code assumes that you have imported the necessary dependencies and set up the required configurations for Kafka and Jackson ObjectMapper in your application.

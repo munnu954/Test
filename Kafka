@@ -1,6 +1,9 @@
-To fix the "com.fasterxml.jackson.databind.exc.MismatchedInputException" error, you need to add a default (no-argument) constructor to the UnifiedAuditMessage class. Here's the updated code:
+To fix the error "com.fasterxml.jackson.databind.exc.MismatchedInputException" while deserializing the JSON message to the UnifiedAuditMessage class, you need to add a String-argument constructor to the UnifiedAuditMessage class.
 
-UnifiedAuditMessage.java:-
+Here's the updated code for the UnifiedAuditMessage class:
+
+UnifiedAuditMessage.java:
+
 ```java
 @Data
 @AllArgsConstructor
@@ -23,6 +26,10 @@ public class UnifiedAuditMessage {
     private UUID collector_id;
     private JobStatus job_status;
 
+    public UnifiedAuditMessage(String inputFilePath) {
+        this.inputFilePath = inputFilePath;
+    }
+
     public enum JobStatus {
         COLLECTION_NEW,
         COLLECTION_IN_PROGRESS,
@@ -34,14 +41,15 @@ public class UnifiedAuditMessage {
         FLINK_JOB_SUCCESSFUL,
         FLINK_JOB_FAILED
     }
-    
-    // Add a default constructor
-    public UnifiedAuditMessage() {
-    }
 }
 ```
 
-KafkaController.java:-
+Additionally, you need to update the KafkaController and KafkaAuditProducer classes to pass the inputFilePath while creating the UnifiedAuditMessage object.
+
+Here's the updated code for KafkaController and KafkaAuditProducer:
+
+KafkaController.java:
+
 ```java
 @RestController
 public class KafkaController {
@@ -49,142 +57,26 @@ public class KafkaController {
     private KafkaAuditProducer kafkaAuditProducer;
 
     @PostMapping("/kafkaPush")
-    public Boolean writeMessage(@RequestBody UnifiedAuditMessage auditMsg) {
+    public Boolean writeMessage(@RequestBody String inputFilePath) {
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage(inputFilePath);
         kafkaAuditProducer.writeMessage(auditMsg);
         return true;
     }
 }
 ```
 
-KafkaConsumer class: 
-```java
-@Service
-public class KafkaConsumer {
-    // ...
-    
-    @Autowired 
-    private KafkaAuditProducer kafkaAuditProducer;
+KafkaAuditProducer.java:
 
-    @KafkaListener(topics="${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}", errorHandler = "kafkaEventErrorHandler")
-    public void consume(String data) throws IOException {
-        LocalDateTime dateReceived = LocalDateTime.now();
-        UnifiedAuditMessage auditMsg = null;
-        String fileType = null;
-        
-        try {
-            if(data.contains("inputFilePath")) {
-                ObjectMapper mapper = new ObjectMapper();
-                auditMsg = mapper.readValue(data, UnifiedAuditMessage.class);
-                LOGGER.info("Message Received: {}", auditMsg);
-                LOGGER.info("Message received-> {}", auditMsg);
-                
-                String sourceFilePath = auditMsg.getInputFilePath();
-                String response = null;
-                
-                if((new File(sourceFilePath).exists()) && !util.isKafkaTopicPresent(topic)) {
-                    UnifiedAuditMessage auditData = new UnifiedAuditMessage();
-                    auditData.setInputFilePath(sourceFilePath);
-                    auditData.setExceptions(Collections.singletonList("Input file path doesn't exist/Invalid file"));
-                    writeLogToFile(auditData, destinationFolderPath);
-                }
-                
-                if(validateFile(sourceFilePath)) {
-                    writeFile(sourceFilePath, destinationFolderPath);
-                    String fileType = getExtension(sourceFilePath);
-                    
-                    if(fileType != null && fileType.equalsIgnoreCase(".xml")) {
-                        LOGGER.info("XML FILE()");
-                        retrieveXmlFile(sourceFilePath);
-                    } else if(fileType != null && fileType.equalsIgnoreCase(".csv")) {
-                        LOGGER.info("CSV FILE()");
-                        retrieveCsvFile(sourceFilePath);
-                    } else if(fileType != null && fileType.equalsIgnoreCase(".txt")) {
-                        LOGGER.info("TEXT FILE()");
-                        retrieveTxtFile(sourceFilePath);
-                    }
-                    response = getFlinkResponse();
-                    LOGGER.info("Flink Response: {}", response);
-                } else {
-                    kafkaAuditProducer.sendErrorMessage("File does not exist");
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-            LOGGER.error("Error triggering job: {}", e.getMessage());
-            
-            UnifiedAuditMessage auditData = logAuditData(auditMsg, fileType, e);
-            kafkaAuditProducer.createMessageAndLog(auditData);
-        }
-    }
-    
-    public UnifiedAuditMessage logAuditData(UnifiedAuditMessage auditMsg, String fileType, Exception e) {
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
-        LocalDateTime currentDate = LocalDateTime.now();
-      
-        return new UnifiedAuditMessage(
-                auditMsg.getInputFilePath(),
-                auditMsg.getUrl(),
-                auditMsg.getPort(),
-                auditMsg.getOutputFilePath(),
-                auditMsg.getDelimiters(),
-                fileType,
-                currentDate.format(formatter),
-                currentDate.format(formatter),
-                auditMsg.getNo_of_records_in_the_file(),
-                auditMsg.getNo_of_records_processed(),
-                auditMsg.getNo_of_records_failed(),
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                Collections.singletonList(e.getMessage()),
-                auditMsg.getCollector_id(),
-                UnifiedAuditMessage.JobStatus.COLLECTION_FAILED
-        );
-    }
-    
-    // Other methods and logAuditData method goes here...
-}
-```
-
-KafkaAuditProducer class:
 ```java
 @Service
 public class KafkaAuditProducer {
-    private static final Logger Logger = LoggerFactory.getLogger(KafkaAuditProducer.class);
-    
-    private final KafkaTemplate<String, String> kafkaTemplate;
-
-    @Value("${spring.kafka.producer.topic-name}")
-    private String topicName;
-
-    @Autowired
-    public KafkaAuditProducer(KafkaTemplate<String, String> kafkaTemplate) {
-        this.kafkaTemplate = kafkaTemplate;
-    }
-
-    public void createMessageAndLog(UnifiedAuditMessage auditMsg) {
-        LocalDateTime dateProcessed = LocalDateTime.now();
-        String date_processed = dateProcessed.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"));
-        
-        auditMsg.setDate_processed(date_processed);
-        
-        try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            String auditMsgJson = objectMapper.writeValueAsString(auditMsg);
-            
-            this.kafkaTemplate.send(topicName, auditMsgJson);
-            Logger.info("Kafka status message: {}", auditMsgJson);
-        } catch (JsonProcessingException e) {
-            Logger.error("Failed to convert auditMsg to JSON: {}", e.getMessage());
-        } catch (Exception e) {
-            Logger.error("Failed to send Kafka message: {}", e.getMessage());
-        }
-    }
+    // ...
 
     public boolean writeMessage(UnifiedAuditMessage auditMsg) {
         try {
             ObjectMapper objectMapper = new ObjectMapper();
             String auditMsgJson = objectMapper.writeValueAsString(auditMsg);
-            
+
             this.kafkaTemplate.send(topicName, auditMsgJson);
             Logger.info("Kafka status message: {}", auditMsgJson);
             return true;
@@ -198,16 +90,4 @@ public class KafkaAuditProducer {
 }
 ```
 
-FlinkApiController.java:
-```java
-@Service
-public class FlinkApiController {
-    // ...
-    
-    public String triggerJob(UnifiedAuditMessage auditMsg, String fileType) {
-        // ...
-    }
-}
-```
-
-Note: There were several syntax errors and missing method implementations in the provided code snippets, so I made assumptions and corrected them. Please review the changes and modify them accordingly to match your requirements.
+Make sure to recompile and execute the code with these updated changes.

@@ -1,9 +1,66 @@
-To implement AC1 and AC2, you can create a method in the FlinkApiController class called "updateJobStatus" that takes the auditMsg as a parameter. 
+Here are the updated classes:
 
-Here is the updated code:
+JobStatus class:
+```java
+public enum JobStatus {
+    COLLECTION_NEW,
+    COLLECTION_IN_PROGRESS,
+    COLLECTION_SUCCESSFUL,
+    COLLECTION_FAILED,
+    FLINK_JOB_NEW,
+    FLINK_JOB_SUBMITTED,
+    FLINK_JOB_IN_PROGRESS,
+    FLINK_JOB_SUCCESSFUL,
+    FLINK_JOB_FAILED
+}
+```
 
-FlinkApiController.java:
+KafkaAuditProducer class:
+```java
+@Service
+public class KafkaAuditProducer {
+    private static final Logger Logger = LoggerFactory.getLogger(KafkaAuditProducer.class);
 
+    @Value("${spring.kafka.producer.topic-name}")
+    private String topicName;
+
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+
+    @Autowired
+    public KafkaAuditProducer(KafkaTemplate<String, Object> kafkaTemplate) {
+        this.kafkaTemplate = kafkaTemplate;
+    }
+
+    public String sendMessage(UnifiedAuditMessage auditMsg) {
+        Logger.info(String.format("Message sent %s", auditMsg));
+        kafkaTemplate.send(topicName, auditMsg);
+        return "Message sent successfully";
+    }
+
+    public void createMessageAndLog(String inputFilePath, String url, Integer port, String outputFilePath, String delimiters, String fileType, String date_received,
+                                    Integer no_of_records_in_the_file, Integer no_of_records_processed, Integer no_of_records_failed, List<String> exceptions,
+                                    String job_id, String jar_id, String collector_id, JobStatus jobStatus) {
+        LocalDateTime dateProcessed = LocalDateTime.now();
+        String date_processed = dateProcessed.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"));
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage(inputFilePath, url, port, outputFilePath, delimiters, fileType, date_received,
+                date_processed, no_of_records_in_the_file, no_of_records_processed, no_of_records_failed, job_id, jar_id, collector_id, exceptions);
+        auditMsg.setJob_status(jobStatus.toString());
+
+        try {
+            ObjectMapper objectMapper = new ObjectMapper();
+            String auditMsgJson = objectMapper.writeValueAsString(auditMsg); 
+            this.kafkaTemplate.send(topicName, auditMsgJson);
+            Logger.info("Kafka status message {}", auditMsgJson);
+        } catch (JsonProcessingException e) {
+            Logger.error("Failed to convert auditMsg to JSON: {}", e.getMessage());
+        } catch (Exception e) { 
+            Logger.error("Failed to send Kafka message: {}", e.getMessage());
+        }
+    }
+}
+```
+
+FlinkApiController class:
 ```java
 @Service
 public class FlinkApiController {
@@ -14,22 +71,22 @@ public class FlinkApiController {
     @Value("${flink.job.csv.jarid}")
     private String flinkJobJarid;
 
-    @Value("${flink.job.csv.program-args}")
+    @Value("${flink.job.csv.program-args)")
     private String programArgs;
 
     @Value("${flink.job.txt.jarid}")
     private String flinkJobtxtJarid;
 
-    @Value("${flink.job.xml.program-args}")
+    @Value("${flink.job.xml.program-args)")
     private String programXmlArgs;
 
     @Value("${flink.job.xml.jarid}")
     private String flinkJobXmlJarid;
 
-    @Value("${log.directory.path}")
+    @Value("${log.directory.path)")
     private String logFolderPath;
 
-    private KafkaConsumer KafkaConsumer = new KafkaConsumer();
+    private KafkaConsumer KafkaConsumer = new KafkaConsumer ();
     @Autowired
     private KafkaAuditProducer kafkaAuditProducer;
     HttpHeaders headers = new HttpHeaders();
@@ -37,102 +94,64 @@ public class FlinkApiController {
     private static final Logger LOGGER = LoggerFactory.getLogger(FlinkApiController.class);
 
     @PostMapping
-    public String triggerJob(UnifiedAuditMessage auditMsg, String fileType) {
-
+    public String trigger Job(UnifiedAuditMessage auditMsg, String fileType) {
         RestTemplate restTemplate = new RestTemplate();
         LOGGER.info("TRIGGER JOB::::");
         HttpEntity<String> request = null;
-        try {
-            String jobSubmitUrl = null;
-            if (programArgs != null && !programArgs.isEmpty()) {
-                headers.setContentType(MediaType.APPLICATION_JSON);
+        String jobSubmitUrl = null;
+        if (programArgs != null && !programArgs.isEmpty()) {
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            JSONObject requestBody = new JSONObject();
 
-                JSONObject requestBody = new JSONObject();
-                try {
-                    if (fileType.equalsIgnoreCase(".csv")) {
-                        requestBody.put("programArgs", programArgs.replace("input", auditMsg.getInputFilePath()));
-                        jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
+            try {
+                if (fileType.equalsIgnoreCase(".csv")) {
+                    requestBody.put("programArgs", programArgs.replace("input", auditMsg.getInputFilePath()));
+                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
 
-                    } else if (fileType.equalsIgnoreCase(".xml")) {
-                        LOGGER.info("XML FLINK TRIGGER::");
+                } else if (fileType.equalsIgnoreCase(".xml")) {
+                    LOGGER.info("XML FLINK TRIGGER::");
+                    programXmlArgs = programXmlArgs.replace("|filePath|", auditMsg.getInputFilePath());
+                    programXmlArgs = programXmlArgs.replace(" |primaryKey|", "");
+                    requestBody.put("programArgs", programXmlArgs);
+                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobXmlJarid + "/run";
+                    LOGGER.info("jobSubmitUrl:" + jobSubmitUrl);
+                    LOGGER.info("requestBody::" + requestBody.toString());
+                } else if (fileType.equalsIgnoreCase(".txt")) {
+                    LOGGER.info("TEXT FLINK TRIGGER::");
+                    requestBody.put("programArgs", programArgs.replace("|input|", auditMsg.getInputFilePath()));
+                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobtxtJarid + "/run";
+                }
 
-                        programXmlArgs = programXmlArgs.replace("|filePath|", auditMsg.getInputFilePath());
-                        programXmlArgs = programXmlArgs.replace(" |primaryKey|", "");
-                        requestBody.put("programArgs", programXmlArgs);
-                        jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobXmlJarid + "/run";
-                        LOGGER.info("jobSubmitUrl:" + jobSubmitUrl);
-                        LOGGER.info("requestBody::" + requestBody.toString());
+                request = new HttpEntity<String>(requestBody.toString(), headers);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
 
-                    } else if (fileType.equalsIgnoreCase(".txt")) {
-                        LOGGER.info("TEXT FLINK TRIGGER::");
+        // Trigger the submitted jar
+        ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
+        LOGGER.info("response: {}" + response);
 
-                        requestBody.put("programArgs", programArgs.replace("|input|", auditMsg.getInputFilePath()));
+        if (response != null && response.getStatusCode() == HttpStatus.OK) {
+            String jobID = response.getBody();
+            LOGGER.info("Flink Job ID: {}", jobID);
 
-                        jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobtxtJarid + "/run";
-
+            try {
+                JsonNode jsonNode = restTemplate.getForObject(flinkApiUrl + jobID, JsonNode.class);
+                while (true) {
+                    if (jsonNode.get("state").textValue().equals("FINISHED")
+                            || jsonNode.get("state").textValue().equals("CANCELED")
+                            || jsonNode.get("state").textValue().equals("FAILED")
+                            || jsonNode.get("state").textValue().equals("SUSPENDED")) {
+                        break;
                     }
-
-                    request = new HttpEntity<String>(requestBody.toString(), headers);
+                    Thread.sleep(100);
                 }
-
-                // Trigger the submitted jar
-                ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
-                LOGGER.info("response: {}", response);
-
-                if (response != null && response.getStatusCode() == HttpStatus.OK) {
-                    updateJobStatus(auditMsg);
-                    return "Job submitted";
-                } else {
-                    LOGGER.info("Not Ok!!");
-                    updateJobStatus(auditMsg);
-                    kafkaAuditProducer.createMessageAndLog(auditMsg.getInputFilePath(), auditMsg.getUrl(),
-                            auditMsg.getPort(), auditMsg.getOutputFilePath(), auditMsg.getDelimiters(), fileType,
-                            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()),
-                            auditMsg.getNo_of_records_in_the_file(), auditMsg.getNo_of_records_processed(),
-                            auditMsg.getNo_of_records_failed(), auditMsg.getExceptions(), auditMsg.getJob_id(),
-                            auditMsg.getJar_id(), auditMsg.getCollector_id());
-                    KafkaConsumer.writeLogToFile(auditMsg, fileType, response, logFolderPath);
+                JobStatus jobStatus = JobStatus.FLINK_JOB_FAILED;
+                if (jsonNode.get("state").textValue().equals("FINISHED")) {
+                    jobStatus = JobStatus.FLINK_JOB_SUBMITTED;
                 }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-            LOGGER.error("Error triggering job", e.getMessage());
-            kafkaAuditProducer.createMessageAndLog(auditMsg.getInputFilePath(), auditMsg.getUrl(), auditMsg.getPort(),
-                    auditMsg.getOutputFilePath(), auditMsg.getDelimiters(), fileType,
-                    new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()),
-                    auditMsg.getNo_of_records_in_the_file(), auditMsg.getNo_of_records_processed(),
-                    auditMsg.getNo_of_records_failed(), auditMsg.getJob_id(), auditMsg.getJar_id(),
-                    auditMsg.getCollector_id(), auditMsg.getExceptions());
-            KafkaConsumer.writeLogToFile(auditMsg, fileType, logFolderPath);
-        }
-        return "Job is not triggered";
-    }
-
-    private void updateJobStatus(UnifiedAuditMessage auditMsg) {
-        try {
-            RestTemplate restTemplate = new RestTemplate();
-            JsonNode jsonNode = restTemplate.getForObject(flinkApiUrl + jobID, JsonNode.class);
-
-            while (true) {
-                if (jsonNode.get("state").textValue().equals("FINISHED") ||
-                        jsonNode.get("state").textValue().equals("CANCELED") ||
-                        jsonNode.get("state").textValue().equals("FAILED") ||
-                        jsonNode.get("state").textValue().equals("SUSPENDED")) {
-                    break;
-                }
-                Thread.sleep(100);
-            }
-
-            if (jsonNode.get("state").textValue().equals("FINISHED")) {
-                auditMsg.setJob_status(JobStatus.FLINK_JOB_SUBMITTED.toString());
-            } else {
-                auditMsg.setJob_status(JobStatus.FLINK_JOB_FAILED.toString());
-            }
-        } catch (Exception e) {
-            LOGGER.error("Error updating job status", e.getMessage());
-        }
-    }
-}
-```
-
-Hope this helps!
+                kafkaAuditProducer.createMessageAndLog(auditMsg.getInputFilePath(), auditMsg.getUrl(), auditMsg.getPort(),
+                        auditMsg.getOutputFilePath(), auditMsg.getDelimiters(), fileType, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()),
+                        auditMsg.getNo_of_records_in_the_file(), auditMsg.getNo_of_records_processed(), auditMsg.getNo_of_records_failed(),
+                        auditMsg.getExceptions(), auditMsg.getJob_id(), auditMsg.getJar_id(), auditMsg.getCollector_id(), jobStatus

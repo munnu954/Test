@@ -1,183 +1,110 @@
-UnifiedAuditMessage.java:-
+Here is an example of how the positive and negative Junit5 test cases for the FlinkApiController class could be written:
+
 ```java
-import com.fasterxml.jackson.annotation.JsonAutoDetect;
-import lombok.AllArgsConstructor;
-import lombok.Data;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestTemplate;
 
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.UUID;
+import static org.mockito.Mockito.*;
 
-@Data
-@AllArgsConstructor
-@JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY)
-public class UnifiedAuditMessage {
-    private String inputFilePath;
-    private String url;
-    private Integer port;
-    private String outputFilePath;
-    private String delimiters;
-    private String fileType;
-    private LocalDateTime date_received;
-    private LocalDateTime date_processed;
-    private Integer no_of_records_in_the_file;
-    private Integer no_of_records_processed;
-    private Integer no_of_records_failed;
-    private UUID job_id;
-    private UUID jar_id;
-    private List<String> exceptions;
-    private UUID collector_id;
-    private JobStatus job_status;
+@ExtendWith(MockitoExtension.class)
+@SpringBootTest
+@AutoConfigureMockMvc
+public class FlinkApiControllerTest {
 
-    public enum JobStatus {
-        COLLECTION_NEW,
-        COLLECTION_IN_PROGRESS,
-        COLLECTION_SUCCESSFUL,
-        COLLECTION_FAILED,
-        FLINK_JOB_NEW,
-        FLINK_JOB_SUBMITTED,
-        FLINK_JOB_IN_PROGRESS,
-        FLINK_JOB_SUCCESSFUL,
-        FLINK_JOB_FAILED
-    }
-}
-```
+    @Mock
+    private RestTemplate restTemplate;
 
-KafkaAuditProducer class:
-```java
-@Service
-public class KafkaAuditProducer {
-    private static final Logger logger = LoggerFactory.getLogger(KafkaAuditProducer.class);
-    
-    private final KafkaTemplate<String, UnifiedAuditMessage> kafkaTemplate;
-
-    @Value("${spring.kafka.producer.topic-name}")
-    private String topicName;
-
-    @Autowired
-    public KafkaAuditProducer(KafkaTemplate<String, UnifiedAuditMessage> kafkaTemplate) {
-        this.kafkaTemplate = kafkaTemplate;
-    }
-
-    public void writeMessage(UnifiedAuditMessage auditMsg) {
-        try {
-            this.kafkaTemplate.send(topicName, auditMsg);
-            logger.info("Kafka status message sent");
-        } catch (Exception e) {
-            logger.error("Failed to send Kafka message: {}", e.getMessage());
-        }
-    }
-}
-```
-
-KafkaController class:
-```java
-@RestController
-public class KafkaController {
-    @Autowired
+    @Mock
     private KafkaAuditProducer kafkaAuditProducer;
 
-    @PostMapping("/kafkaPush")
-    public ResponseEntity<Boolean> writeMessage(@RequestBody UnifiedAuditMessage auditMsg) {
-        kafkaAuditProducer.writeMessage(auditMsg);
-        return ResponseEntity.ok(true);
+    @InjectMocks
+    private FlinkApiController flinkApiController;
+
+    @Test
+    public void testTriggerJobSuccess() throws Exception {
+        // Given
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+        String fileType = ".csv";
+        String programArgs = "--input=inputPath";
+        String flinkApiUrl = "http://flink-api-url";
+        String flinkJobJarid = "job-jar-id";
+        String jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
+
+        flinkApiController.setFlinkApiUrl(flinkApiUrl);
+        flinkApiController.setFlinkJobJarid(flinkJobJarid);
+        flinkApiController.setProgramArgs(programArgs);
+
+        // Mocking the RestTemplate
+        ResponseEntity<String> responseEntity = new ResponseEntity<>("{\"jobid\": \"job-id\"}", HttpStatus.OK);
+        when(restTemplate.postForEntity(eq(jobSubmitUrl), any(), eq(String.class))).thenReturn(responseEntity);
+
+        // When
+        flinkApiController.triggerJob(auditMsg, fileType);
+
+        // Then
+        // Verify that the KafkaProducer is called with the correct parameters
+        verify(kafkaAuditProducer).createMessageAndLog(eq(auditMsg.getInputFilePath()), eq(auditMsg.getUrl()), eq(auditMsg.getPort()),
+                eq(auditMsg.getOutputFilePath()), eq(auditMsg.getDelimiters()), eq(fileType), anyString(), eq(auditMsg.getNo_of_records_in_the_file()),
+                eq(auditMsg.getNo_of_records_processed()), eq(auditMsg.getNo_of_records_failed()), eq(auditMsg.getJob_id()), eq(auditMsg.getJar_id()),
+                eq(auditMsg.getCollector_id()), eq(auditMsg.getExceptions()), eq(JobStatus.FLINK_JOB_SUBMITTED.toString()));
+
+        // Verify that the RestTemplate is called with the correct parameters
+        MultiValueMap<String, String> expectedHeaders = new LinkedMultiValueMap<>();
+        expectedHeaders.add("Content-Type", "application/json");
+        String expectedRequestBody = "{\"programArgs\":\"--input=inputPath\"}";
+        verify(restTemplate).postForEntity(eq(jobSubmitUrl), eq(expectedHeaders), eq(String.class));
+
+    }
+
+    @Test
+    public void testTriggerJobFailure() throws Exception {
+        // Given
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+        String fileType = ".csv";
+        String programArgs = "--input=inputPath";
+        String flinkApiUrl = "http://flink-api-url";
+        String flinkJobJarid = "job-jar-id";
+        String jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
+
+        flinkApiController.setFlinkApiUrl(flinkApiUrl);
+        flinkApiController.setFlinkJobJarid(flinkJobJarid);
+        flinkApiController.setProgramArgs(programArgs);
+
+        // Mocking the RestTemplate
+        ResponseEntity<String> responseEntity = new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+        when(restTemplate.postForEntity(eq(jobSubmitUrl), any(), eq(String.class))).thenReturn(responseEntity);
+
+        // When
+        flinkApiController.triggerJob(auditMsg, fileType);
+
+        // Then
+        // Verify that the KafkaProducer is called with the correct parameters
+        verify(kafkaAuditProducer).createMessageAndLog(eq(auditMsg.getInputFilePath()), eq(auditMsg.getUrl()), eq(auditMsg.getPort()),
+                eq(auditMsg.getOutputFilePath()), eq(auditMsg.getDelimiters()), eq(fileType), anyString(), eq(auditMsg.getNo_of_records_in_the_file()),
+                eq(auditMsg.getNo_of_records_processed()), eq(auditMsg.getNo_of_records_failed()), eq(auditMsg.getJob_id()), eq(auditMsg.getJar_id()),
+                eq(auditMsg.getCollector_id()), eq(auditMsg.getExceptions()));
+
+        // Verify that the RestTemplate is called with the correct parameters
+        MultiValueMap<String, String> expectedHeaders = new LinkedMultiValueMap<>();
+        expectedHeaders.add("Content-Type", "application/json");
+        String expectedRequestBody = "{\"programArgs\":\"--input=inputPath\"}";
+        verify(restTemplate).postForEntity(eq(jobSubmitUrl), eq(expectedHeaders), eq(String.class));
+
     }
 }
 ```
 
-KafkaConsumer class:
-```java
-@Service
-public class KafkaConsumer {
-    private static final Logger logger = LoggerFactory.getLogger(KafkaConsumer.class);
-    
-    @Value("${file.txtsource}")
-    private String sourceFilePath;
-    
-    @Value("${file.destination}")
-    private String destinationFolderPath;
-    
-    @Autowired
-    private KafkaTopicUtil util;
-    
-    @Autowired
-    private FlinkApiController flinkApi;
-    
-    @Autowired
-    private KafkaAuditProducer kafkaAuditProducer;
-
-    @KafkaListener(topics = "${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}", errorHandler = "kafkaEventErrorHandler")
-    public void consume(UnifiedAuditMessage auditMsg) {
-        LocalDateTime dateReceived = LocalDateTime.now();
-        String fileType = null;
-
-        try {
-            if (auditMsg.getInputFilePath() != null) {
-                logger.info("Message Received: {}", auditMsg);
-
-                String sourceFilePath = auditMsg.getInputFilePath();
-                String response = null;
-
-                if ((new File(sourceFilePath).exists()) && !util.isKafkaTopicPresent(topic)) {
-                    UnifiedAuditMessage auditData = new UnifiedAuditMessage();
-                    auditData.setInputFilePath(sourceFilePath);
-                    auditData.setExceptions(Collections.singletonList("Input file path doesn't exist/Invalid file"));
-                    writeLogToFile(auditData, destinationFolderPath);
-                }
-
-                if (validateFile(sourceFilePath)) {
-                    writeFile(sourceFilePath, destinationFolderPath);
-                    String fileType = getExtension(sourceFilePath);
-
-                    if (fileType != null && fileType.equalsIgnoreCase(".xml")) {
-                        logger.info("XML FILE()");
-                        retrieveXmlFile(sourceFilePath);
-                    } else if (fileType != null && fileType.equalsIgnoreCase(".csv")) {
-                        logger.info("CSV FILE()");
-                        retrieveCsvFile(sourceFilePath);
-                    } else if (fileType != null && fileType.equalsIgnoreCase(".txt")) {
-                        logger.info("TEXT FILE()");
-                        retrieveTxtFile(sourceFilePath);
-                    }
-                    response = getFlinkResponse();
-                    logger.info("Flink Response: {}", response);
-                } else {
-                    kafkaAuditProducer.sendErrorMessage("File does not exist");
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-            logger.error("Error triggering job: {}", e.getMessage());
-            
-            UnifiedAuditMessage auditData = logAuditData(auditMsg, fileType, e);
-            kafkaAuditProducer.createMessageAndLog(auditData);
-        }
-    }
-    
-    public UnifiedAuditMessage logAuditData(UnifiedAuditMessage auditMsg, String fileType, Exception e) {
-        LocalDateTime currentDate = LocalDateTime.now();
-        return new UnifiedAuditMessage(
-                auditMsg.getInputFilePath(),
-                auditMsg.getUrl(),
-                auditMsg.getPort(),
-                auditMsg.getOutputFilePath(),
-                auditMsg.getDelimiters(),
-                fileType,
-                currentDate,
-                currentDate,
-                auditMsg.getNo_of_records_in_the_file(),
-                auditMsg.getNo_of_records_processed(),
-                auditMsg.getNo_of_records_failed(),
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                Collections.singletonList(e.getMessage()),
-                auditMsg.getCollector_id(),
-                UnifiedAuditMessage.JobStatus.COLLECTION_FAILED
-        );
-    }
-
-    // Other methods and logAuditData method goes here...
-}
-```
-
-Note: I couldn't find code snippets related to some methods like `writeLogToFile`, `validateFile`, `writeFile`, `retrieveXmlFile`, `retrieveCsvFile`, `retrieveTxtFile`, `getFlinkResponse`, `sendErrorMessage`, etc. You will need to provide their implementations.
+Note: This is just an example to illustrate how the test cases could be written. You may need to modify the test cases based on the specific behavior of your application and dependencies.

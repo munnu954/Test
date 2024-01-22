@@ -1,100 +1,62 @@
-To implement JobStatus class and add AC1 and AC2 to the code, you can modify the existing code as follows:
+To add the AC1 and AC2 functionality, you can create a separate Utils class with a method for setting the JobStatus to FLINK_JOB_SUBMITTED or FLINK_JOB_FAILED. Here's an example implementation:
 
-1. Create a new class named JobStatus with the following enum values:
-
-```java
-public enum JobStatus {
-    COLLECTION_NEW,
-    COLLECTION_IN_PROGRESS,
-    COLLECTION_SUCCESSFUL,
-    COLLECTION_FAILED,
-    FLINK_JOB_NEW,
-    FLINK_JOB_SUBMITTED,
-    FLINK_JOB_IN_PROGRESS,
-    FLINK_JOB_SUCCESSFUL,
-    FLINK_JOB_FAILED
-}
-```
-
-2. Create a new class named Utils (or any other name you prefer) to handle setting the JobStatus. Add the following method to set the JobStatus to FLINK_JOB_SUBMITTED:
+Utils.java:
 
 ```java
 public class Utils {
-    public static UnifiedAuditMessage setJobStatusSubmitted(UnifiedAuditMessage auditMsg) {
-        auditMsg.setJob_status(JobStatus.FLINK_JOB_SUBMITTED.name());
-        return auditMsg;
-    }
-    
-    public static UnifiedAuditMessage setJobStatusFailed(UnifiedAuditMessage auditMsg) {
-        auditMsg.setJob_status(JobStatus.FLINK_JOB_FAILED.name());
-        return auditMsg;
+    public static void setJobStatus(UnifiedAuditMessage auditMsg, JobStatus jobStatus) {
+        auditMsg.setJobStatus(jobStatus);
     }
 }
 ```
 
-3. Modify the FlinkApiController class to use the Utils class and set the JobStatus accordingly. Add the following import statement:
+Then, you can use this Utils class in the FlinkApiController class to set the JobStatus accordingly:
+
+FlinkApiController.java:
 
 ```java
-import static your.package.name.Utils.*;
-```
+@Service
+public class FlinkApiController {
 
-Inside the `triggerJob` method, update the code as follows:
+    // ...
 
-```java
-// Trigger the submitted jar
-ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
-LOGGER.info("response: {}"+response);
+    private KafkaConsumer kafkaConsumer = new KafkaConsumer();
+    @Autowired
+    private KafkaAuditProducer kafkaAuditProducer;
+    @Autowired
+    private Utils utils;
 
-if (response != null && response.getStatusCode() != HttpStatus.OK) {
-    return "Job submitted";
-} else {
-    LOGGER.info("Not Ok!!");
+    // ...
 
-    UnifiedAuditMessage auditData = kafkaConsumer.logMetadata(auditMsg, fileType, response);
-    auditData = setJobStatusSubmitted(auditData);
+    public String triggerJob(UnifiedAuditMessage auditMsg, String fileType) {
+        // ...
 
-    kafkaAuditProducer.createMessageAndLog(auditData.getInputFilePath(), auditData.getUrl(), auditData.getPort(),
-            auditData.getOutputFilePath(), auditData.getDelimiters(), fileType,
-            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()),
-            auditData.getNo_of_records_in_the_file(), auditData.getNo_of_records_processed(),
-            auditData.getNo_of_records_failed(), auditData.getJob_id(), auditData.getJar_id(),
-            auditData.getCollector_id(), auditData.getExceptions());
+        if (response != null && response.getStatusCode() != HttpStatus.OK) {
+            // AC1: Transformation job submission is successful
+            utils.setJobStatus(auditMsg, JobStatus.FLINK_JOB_SUBMITTED);
 
-    kafkaConsumer.writeLogToFile(auditData, fileType, response, logFolderPath);
+            return "Job submitted";
+        } else {
+            // AC2: Transformation job submission is NOT successful
+            utils.setJobStatus(auditMsg, JobStatus.FLINK_JOB_FAILED);
+
+            UnifiedAuditMessage auditData = kafkaConsumer.logMetadata(auditMsg, fileType, response);
+            kafkaAuditProducer.createMessageAndLog(auditMsg.getInputFilePath(), auditMsg.getUrl(), auditMsg.getPort(),
+                auditMsg.getOutputFilePath(), auditMsg.getDelimiters(), fileType,
+                new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()),
+                auditMsg.getNo_of_records_in_the_file(), auditMsg.getNo_of_records_processed(),
+                auditMsg.getNo_of_records_failed(), auditMsg.getExceptions(), auditMsg.getJob_id(),
+                auditMsg.getJar_id(), auditMsg.getCollector_id());
+
+            kafkaConsumer.writeLogToFile(auditMsg, fileType, response, logFolderPath);
+        }
+        
+        // ...
+    }
+
+    // ...
 }
 
 ```
 
-4. Update the KafkaConsumer class to use the Utils class and set the JobStatus accordingly. Add the following import statement:
-
-```java
-import static your.package.name.Utils.*;
-```
-
-Inside the `consume` method, update the code as follows:
-
-```java
-// Trigger the submitted jar
-ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
-LOGGER.info("response: {}"+response);
-
-if (response != null && response.getStatusCode() != HttpStatus.OK) {
-    return "Job submitted";
-} else {
-    LOGGER.info("Not Ok!!");
-
-    UnifiedAuditMessage auditData = logMetadata(auditMsg, fileType, response);
-    auditData = setJobStatusFailed(auditData);
-
-    kafkaAuditProducer.createMessageAndLog(auditData.getInputFilePath(), auditData.getUrl(), auditData.getPort(),
-            auditData.getOutputFilePath(), auditData.getDelimiters(), fileType,
-            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()),
-            auditData.getNo_of_records_in_the_file(), auditData.getNo_of_records_processed(),
-            auditData.getNo_of_records_failed(), auditData.getJob_id(), auditData.getJar_id(),
-            auditData.getCollector_id(), auditData.getExceptions());
-
-    utils.buildAuditQueueJSON(JobStatus.FLINK_JOB_FAILED);
-}
-```
-
-Note that you need to replace "your.package.name" with the actual package name where the Utils class is located.
+Hope this helps! Let me know if you have any further questions.

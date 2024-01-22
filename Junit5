@@ -1,213 +1,100 @@
-UnifiedAuditMessage class:-
+To implement JobStatus class and add AC1 and AC2 to the code, you can modify the existing code as follows:
+
+1. Create a new class named JobStatus with the following enum values:
+
 ```java
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-public class UnifiedAuditMessage {
-    @NotBlank
-    private String inputFilePath;
-    @NotBlank
-    private String url;
-    @NotNull
-    private Integer port;
-    @NotBlank
-    private String outputFilePath;
-    @NotBlank
-    private String delimiters;
-    @NotBlank
-    private String fileType;
-    @NotNull
-    private String dateReceived;
-    private String dateProcessed;
-    @NotNull
-    private Integer noOfRecordsInTheFile;
-    @NotNull
-    private Integer noOfRecordsProcessed;
-    @NotNull
-    private Integer noOfRecordsFailed;
-    @NotNull
-    private String jobId;
-    @NotNull
-    private String jarId;
-    private List<String> exceptions;
-    @NotNull
-    private String collectorId;
-    @NotNull
-    private JobStatus jobStatus;
+public enum JobStatus {
+    COLLECTION_NEW,
+    COLLECTION_IN_PROGRESS,
+    COLLECTION_SUCCESSFUL,
+    COLLECTION_FAILED,
+    FLINK_JOB_NEW,
+    FLINK_JOB_SUBMITTED,
+    FLINK_JOB_IN_PROGRESS,
+    FLINK_JOB_SUCCESSFUL,
+    FLINK_JOB_FAILED
 }
 ```
 
-KafkaAuditProducer.java:-
+2. Create a new class named Utils (or any other name you prefer) to handle setting the JobStatus. Add the following method to set the JobStatus to FLINK_JOB_SUBMITTED:
+
 ```java
-@Service
-public class KafkaAuditProducer {
-    private static final Logger Logger = LoggerFactory.getLogger(KafkaAuditProducer.class);
-
-    @Value("${spring.kafka.producer.topic-name}")
-    private String topicName;
-
-    private final KafkaTemplate<String, Object> kafkaTemplate;
-
-    @Autowired
-    public KafkaAuditProducer(KafkaTemplate<String, Object> kafkaTemplate) {
-        this.kafkaTemplate = kafkaTemplate;
+public class Utils {
+    public static UnifiedAuditMessage setJobStatusSubmitted(UnifiedAuditMessage auditMsg) {
+        auditMsg.setJob_status(JobStatus.FLINK_JOB_SUBMITTED.name());
+        return auditMsg;
     }
-
-    public String sendMessage(UnifiedAuditMessage auditMsg) {
-        Logger.info(String.format("Message sent %s", auditMsg));
-        kafkaTemplate.send(topicName, auditMsg);
-        return "Message sent successfully";
-    }
-
-    public void createMessageAndLog(UnifiedAuditMessage auditMsg, JobStatus jobStatus) {
-        LocalDateTime dateProcessed = LocalDateTime.now();
-        String dateProcessedStr = dateProcessed.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"));
-        auditMsg.setDateProcessed(dateProcessedStr);
-        auditMsg.setJobStatus(jobStatus);
-
-        try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            String auditMsgJson = objectMapper.writeValueAsString(auditMsg); 
-            this.kafkaTemplate.send(topicName, auditMsgJson);
-            Logger.info("Kafka status message {}", auditMsgJson);
-        } catch (JsonProcessingException e) {
-            Logger.error("Failed to convert auditMsg to JSON: {}", e.getMessage());
-        } catch (Exception e) { 
-            Logger.error("Failed to send Kafka message: {}", e.getMessage());
-        }
+    
+    public static UnifiedAuditMessage setJobStatusFailed(UnifiedAuditMessage auditMsg) {
+        auditMsg.setJob_status(JobStatus.FLINK_JOB_FAILED.name());
+        return auditMsg;
     }
 }
 ```
 
-FlinkApiController.java:-
+3. Modify the FlinkApiController class to use the Utils class and set the JobStatus accordingly. Add the following import statement:
+
 ```java
-@Service
-public class FlinkApiController {
+import static your.package.name.Utils.*;
+```
 
-    @Value("${flink.api.url}")
-    private String flinkApiUrl;
+Inside the `triggerJob` method, update the code as follows:
 
-    @Value("${flink.job.csv.jarid}")
-    private String flinkJobJarid;
+```java
+// Trigger the submitted jar
+ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
+LOGGER.info("response: {}"+response);
 
-    @Value("${flink.job.csv.program-args}")
-    private String programArgs;
+if (response != null && response.getStatusCode() != HttpStatus.OK) {
+    return "Job submitted";
+} else {
+    LOGGER.info("Not Ok!!");
 
-    @Value("${flink.job.txt.jarid}")
-    private String flinkJobtxtJarid;
+    UnifiedAuditMessage auditData = kafkaConsumer.logMetadata(auditMsg, fileType, response);
+    auditData = setJobStatusSubmitted(auditData);
 
-    @Value("${flink.job.xml.program-args}")
-    private String programXmlArgs;
+    kafkaAuditProducer.createMessageAndLog(auditData.getInputFilePath(), auditData.getUrl(), auditData.getPort(),
+            auditData.getOutputFilePath(), auditData.getDelimiters(), fileType,
+            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()),
+            auditData.getNo_of_records_in_the_file(), auditData.getNo_of_records_processed(),
+            auditData.getNo_of_records_failed(), auditData.getJob_id(), auditData.getJar_id(),
+            auditData.getCollector_id(), auditData.getExceptions());
 
-    @Value("${flink.job.xml.jarid}")
-    private String flinkJobXmlJarid;
+    kafkaConsumer.writeLogToFile(auditData, fileType, response, logFolderPath);
+}
 
-    @Value("${log.directory.path}")
-    private String logFolderPath;
+```
 
-    private KafkaConsumer KafkaConsumer = new KafkaConsumer();
-    
-    private final KafkaAuditProducer kafkaAuditProducer;
-    
-    private final Utils utils;
+4. Update the KafkaConsumer class to use the Utils class and set the JobStatus accordingly. Add the following import statement:
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(FlinkApiController.class);
+```java
+import static your.package.name.Utils.*;
+```
 
-    @Autowired
-    public FlinkApiController(KafkaAuditProducer kafkaAuditProducer, Utils utils) {
-        this.kafkaAuditProducer = kafkaAuditProducer;
-        this.utils = utils;
-    }
+Inside the `consume` method, update the code as follows:
 
-    @PostMapping
-    public String triggerJob(UnifiedAuditMessage auditMsg, String fileType) {
+```java
+// Trigger the submitted jar
+ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
+LOGGER.info("response: {}"+response);
 
-        RestTemplate restTemplate = new RestTemplate();
-        LOGGER.info("TRIGGER JOB::::");
-        HttpHeaders headers = new HttpHeaders();
-        HttpEntity<String> request = null;
-        String jobSubmitUrl = null;
+if (response != null && response.getStatusCode() != HttpStatus.OK) {
+    return "Job submitted";
+} else {
+    LOGGER.info("Not Ok!!");
 
-        if (programArgs != null && !programArgs.isEmpty()) {
-            headers.setContentType(MediaType.APPLICATION_JSON);
+    UnifiedAuditMessage auditData = logMetadata(auditMsg, fileType, response);
+    auditData = setJobStatusFailed(auditData);
 
-            JSONObject requestBody = new JSONObject();
-            try {
-                if (fileType.equalsIgnoreCase(".csv")) {
-                    requestBody.put("programArgs", programArgs.replace("input", auditMsg.getInputFilePath()));
-                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
-                } else if (fileType.equalsIgnoreCase(".xml")) {
-                    LOGGER.info("XML FLINK TRIGGER::");
-                    programXmlArgs = programXmlArgs.replace("|filePath|", auditMsg.getInputFilePath());
-                    programXmlArgs = programXmlArgs.replace(" |primaryKey|", "");
-                    requestBody.put("programArgs", programXmlArgs);
-                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobXmlJarid + "/run";
-                    LOGGER.info("jobSubmitUrl:" + jobSubmitUrl);
-                    LOGGER.info("requestBody::" + requestBody.toString());
-                } else if (fileType.equalsIgnoreCase(".txt")) {
-                    LOGGER.info("TEXT FLINK TRIGGER::");
-                    requestBody.put("programArgs", programArgs.replace("|input|", auditMsg.getInputFilePath()));
-                    jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobtxtJarid + "/run";
-                }
+    kafkaAuditProducer.createMessageAndLog(auditData.getInputFilePath(), auditData.getUrl(), auditData.getPort(),
+            auditData.getOutputFilePath(), auditData.getDelimiters(), fileType,
+            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()),
+            auditData.getNo_of_records_in_the_file(), auditData.getNo_of_records_processed(),
+            auditData.getNo_of_records_failed(), auditData.getJob_id(), auditData.getJar_id(),
+            auditData.getCollector_id(), auditData.getExceptions());
 
-                request = new HttpEntity<>(requestBody.toString(), headers);
-            } catch (JSONException e) {
-                LOGGER.error("Error creating JSON request body: {}", e.getMessage());
-                kafkaAuditProducer.createMessageAndLog(auditMsg, JobStatus.FLINK_JOB_FAILED);
-                return "Job is not triggered";
-            }
-        }
-
-        // Trigger the submitted jar
-        ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
-        LOGGER.info("response: {}", response);
-
-        if (response != null && response.getStatusCode() == HttpStatus.OK) {
-            kafkaAuditProducer.createMessageAndLog(auditMsg, JobStatus.FLINK_JOB_SUBMITTED);
-            return "Job submitted";
-        } else {
-            LOGGER.info("Not OK!!");
-            UnifiedAuditMessage auditData = KafkaConsumer.logMetadata(auditMsg, fileType, response);
-            kafkaAuditProducer.createMessageAndLog(auditMsg, JobStatus.FLINK_JOB_FAILED);
-            kafkaConsumer.writeLogToFile(auditMsg, fileType, response, logFolderPath);
-        }
-        
-        return "Job is not triggered";
-    }
+    utils.buildAuditQueueJSON(JobStatus.FLINK_JOB_FAILED);
 }
 ```
 
-KafkaConsumer.java class:- 
-```java
-@Service
-public class KafkaConsumer {
-    private static final Logger LOGGER LoggerFactory.getLogger(KafkaConsumer.class);
-    
-    @Value("${file.txtsource}")
-    private String sourceFilePath;
-    
-    @Value("${file.destination}")
-    private String destinationFolderPath;
-    
-    @Value("${spring.kafka.producer.topic-name}")
-    private String topic;
-    
-    private final KafkaTopicUtil util;
-    
-    private final FlinkApiController flinkApi;
-
-    private final KafkaAuditProducer kafkaAuditProducer;
-
-    @Autowired
-    public KafkaConsumer(KafkaTopicUtil util, FlinkApiController flinkApi, KafkaAuditProducer kafkaAuditProducer) {
-        this.util = util;
-        this.flinkApi = flinkApi;
-        this.kafkaAuditProducer = kafkaAuditProducer;
-    }
-
-    @KafkaListener(topics = "${spring.kafka.producer.topic-name}", groupId = "${spring.kafka.consumer.group-id}",
-            errorHandler = "kafkaEventErrorHandler")
-    public void consume(String data) throws IOException {
-        LocalDateTime dateReceived = LocalDateTime.now();
-        UnifiedAuditMessage auditMsg = null;
-        String fileType = null
+Note that you need to replace "your.package.name" with the actual package name where the Utils class is located.

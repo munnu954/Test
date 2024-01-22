@@ -1,29 +1,177 @@
-Apologies for the confusion. It seems that the responseBody.get("jobID") is returning null, which is causing the NullPointerException. To handle this, you can check if the jobID node exists in the response body before extracting its value. Here's an updated version of the code:
+Here's the code for the positive and negative JUnit 5 test cases for the FlinkApiController class:
 
-//Trigger the submitted jar
-ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
-LOGGER.info("response: {}", response.getBody());
+```java
+@RunWith(MockitoJUnitRunner.class)
+class FlinkApiControllerTest {
 
-if (response != null && response.getStatusCode() != HttpStatus.OK) {
-    return "Job submitted";
-} else {
-    LOGGER.info("Not Ok!!");
-    UnifiedAuditMessage auditData = kafkaConsumer.logMetadata(auditMsg, fileType, response);
+    @InjectMocks
+    FlinkApiController flinkApiController;
 
-    // Extract and parse the jobID value from the response body
-    ObjectMapper objectMapper = new ObjectMapper();
-    JsonNode responseBody = objectMapper.readTree(response.getBody());
-    JsonNode jobIDNode = responseBody.get("jobID");
-    String jobID = (jobIDNode != null) ? jobIDNode.asText() : null;
+    @Mock
+    RestTemplate restTemplate;
 
-    // Pass the jobID value to the updateJobStatus function
-    updateJobStatus(auditMsg, jobID);
+    @Mock
+    ResponseEntity<String> responseEntity;
 
-    kafkaAuditProducer.createMessageAndLog(auditMsg.getInputFilePath(), auditMsg.getUrl(), auditMsg.getPort(),
-            auditMsg.getOutputFilePath(), auditMsg.getDelimiters(), fileType, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()),
-            auditMsg.getNo_of_records_in_the_file(), auditMsg.getNo_of_records_processed(), auditMsg.getNo_of_records_failed(), auditMsg.getJob_id(), auditMsg.getJar_id(), auditMsg.getCollector_id(), auditMsg.getExceptions());
-    kafkaConsumer.writeLogToFile(auditMsg, fileType, response, logFolderPath);
+    @Mock
+    HttpHeaders headers;
+
+    @Mock
+    KafkaAuditProducer kafkaAuditProducer;
+
+    @Mock
+    KafkaConsumer kafkaConsumer;
+
+    @Mock
+    JsonNode jsonNode;
+
+    @Captor
+    ArgumentCaptor<HttpEntity<String>> requestCaptor;
+
+    @Captor
+    ArgumentCaptor<String> urlCaptor;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.initMocks(this);
+    }
+
+    @Test
+    void testTriggerJob_SuccessfulSubmission() throws Exception {
+        // Given
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+        auditMsg.setInputFilePath("input.csv");
+        String fileType = ".csv";
+        String jobSubmitUrl = "http://example.com";
+        String flinkApiUrl = "http://flink-api.com";
+        String flinkJobJarid = "job-jar-id";
+        String programArgs = "program-args";
+        String requestBodyJson = "{\"programArgs\":\"program-args.input.csv\"}";
+
+        when(restTemplate.postForEntity(eq(jobSubmitUrl), any(HttpEntity.class), eq(String.class))).thenReturn(responseEntity);
+        when(responseEntity.getStatusCode()).thenReturn(HttpStatus.OK);
+        when(responseEntity.getBody()).thenReturn("{\"jobid\":\"job-id\"}");
+        when(flinkApiController.getFlinkApiUrl()).thenReturn(flinkApiUrl);
+        when(flinkApiController.getFlinkJobJarid()).thenReturn(flinkJobJarid);
+        when(flinkApiController.getProgramArgs()).thenReturn(programArgs);
+
+        // When
+        String result = flinkApiController.triggerJob(auditMsg, fileType);
+
+        // Then
+        assertThat(result).isEqualTo("Job submitted");
+        verify(restTemplate).postForEntity(eq(jobSubmitUrl), requestCaptor.capture(), eq(String.class));
+        verify(kafkaAuditProducer).createMessageAndLog(anyString(), anyString(), anyInt(), anyString(), anyString(),
+                anyString(), anyString(), anyInt(), anyInt(), anyInt(), anyString(), anyString(), anyString(), anyString(),
+                anyString());
+        verify(flinkApiController).updateJobStatus(eq(auditMsg), eq("job-id"));
+
+        HttpEntity<String> capturedRequest = requestCaptor.getValue();
+        assertThat(capturedRequest.getBody()).isEqualTo(requestBodyJson);
+        HttpHeaders capturedHeaders = capturedRequest.getHeaders();
+        assertThat(capturedHeaders.getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
+    }
+
+    @Test
+    void testTriggerJob_UnsuccessfulSubmission() throws Exception {
+        // Given
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+        auditMsg.setInputFilePath("input.csv");
+        String fileType = ".csv";
+        String jobSubmitUrl = "http://example.com";
+        String flinkApiUrl = "http://flink-api.com";
+        String flinkJobJarid = "job-jar-id";
+        String programArgs = "program-args";
+
+        when(restTemplate.postForEntity(eq(jobSubmitUrl), any(HttpEntity.class), eq(String.class))).thenReturn(responseEntity);
+        when(responseEntity.getStatusCode()).thenReturn(HttpStatus.INTERNAL_SERVER_ERROR);
+        when(flinkApiController.getFlinkApiUrl()).thenReturn(flinkApiUrl);
+        when(flinkApiController.getFlinkJobJarid()).thenReturn(flinkJobJarid);
+        when(flinkApiController.getProgramArgs()).thenReturn(programArgs);
+        when(kafkaConsumer.logMetadata(eq(auditMsg), eq(fileType), any(ResponseEntity.class))).thenReturn(new UnifiedAuditMessage());
+
+        // When
+        String result = flinkApiController.triggerJob(auditMsg, fileType);
+
+        // Then
+        assertThat(result).isEqualTo("Job is not triggered");
+        verify(restTemplate).postForEntity(eq(jobSubmitUrl), requestCaptor.capture(), eq(String.class));
+        verify(kafkaAuditProducer).createMessageAndLog(anyString(), anyString(), anyInt(), anyString(), anyString(),
+                anyString(), anyString(), anyInt(), anyInt(), anyInt(), anyString(), anyString(), anyString(), anyString(),
+                anyString());
+        verify(flinkApiController).updateJobStatus(eq(auditMsg), eq(null));
+        verify(kafkaConsumer).writeLogToFile(any(UnifiedAuditMessage.class), anyString(), any(ResponseEntity.class), anyString());
+    }
+
+    @Test
+    void testUpdateJobStatus_Finished() throws Exception {
+        // Given
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+        auditMsg.setJobStatus(JobStatus.FLINK_JOB_FAILED.toString());
+        String jobID = "job-id";
+        String flinkApiUrl = "http://flink-api.com";
+
+        when(restTemplate.getForObject(anyString(), eq(JsonNode.class))).thenReturn(jsonNode);
+        when(jsonNode.get("state")).thenReturn(mock(JsonNode.class));
+        when(jsonNode.get("state").textValue()).thenReturn("FINISHED");
+        when(flinkApiController.getFlinkApiUrl()).thenReturn(flinkApiUrl);
+
+        // When
+        flinkApiController.updateJobStatus(auditMsg, jobID);
+
+        // Then
+        assertThat(auditMsg.getJobStatus()).isEqualTo(JobStatus.FLINK_JOB_SUBMITTED.toString());
+        verify(restTemplate, times(2)).getForObject(urlCaptor.capture(), eq(JsonNode.class));
+        List<String> capturedUrls = urlCaptor.getAllValues();
+        assertThat(capturedUrls).containsExactly(flinkApiUrl + "/jobs/" + jobID, flinkApiUrl + "/jobs/" + jobID);
+    }
+
+    @Test
+    void testUpdateJobStatus_Canceled() throws Exception {
+        // Given
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+        auditMsg.setJobStatus(JobStatus.FLINK_JOB_FAILED.toString());
+        String jobID = "job-id";
+        String flinkApiUrl = "http://flink-api.com";
+
+        when(restTemplate.getForObject(anyString(), eq(JsonNode.class))).thenReturn(jsonNode);
+        when(jsonNode.get("state")).thenReturn(mock(JsonNode.class));
+        when(jsonNode.get("state").textValue()).thenReturn("CANCELED");
+        when(flinkApiController.getFlinkApiUrl()).thenReturn(flinkApiUrl);
+
+        // When
+        flinkApiController.updateJobStatus(auditMsg, jobID);
+
+        // Then
+        assertThat(auditMsg.getJobStatus()).isEqualTo(JobStatus.FLINK_JOB_SUBMITTED.toString());
+        verify(restTemplate, times(2)).getForObject(urlCaptor.capture(), eq(JsonNode.class));
+        List<String> capturedUrls = urlCaptor.getAllValues();
+        assertThat(capturedUrls).containsExactly(flinkApiUrl + "/jobs/" + jobID, flinkApiUrl + "/jobs/" + jobID);
+    }
+
+    @Test
+    void testUpdateJobStatus_Failed() throws Exception {
+        // Given
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+        auditMsg.setJobStatus(JobStatus.FLINK_JOB_SUBMITTED.toString());
+        String jobID = "job-id";
+        String flinkApiUrl = "http://flink-api.com";
+
+        when(restTemplate.getForObject(anyString(), eq(JsonNode.class))).thenReturn(jsonNode);
+        when(jsonNode.get("state")).thenReturn(mock(JsonNode.class));
+        when(jsonNode.get("state").textValue()).thenReturn("FAILED");
+        when(flinkApiController.getFlinkApiUrl()).thenReturn(flinkApiUrl);
+
+        // When
+        flinkApiController.updateJobStatus(auditMsg, jobID);
+
+        // Then
+        assertThat(auditMsg.getJobStatus()).isEqualTo(JobStatus.FLINK_JOB_FAILED.toString());
+        verify(restTemplate, times(2)).getForObject(urlCaptor.capture(), eq(JsonNode.class));
+        List<String> capturedUrls = urlCaptor.getAllValues();
+        assertThat(capturedUrls).containsExactly(flinkApiUrl + "/jobs/" + jobID, flinkApiUrl + "/jobs/" + jobID);
+    }
 }
+```
 
-
-By checking if the jobID node exists (jobIDNode != null) before extracting its value, you can avoid the NullPointerException and handle the case where the jobID is not present in the response body.
+Please note that I have made assumptions about the data types and implementations of certain methods and classes since they were not provided in the code snippet. You may need to adjust the test cases according to your actual implementation.

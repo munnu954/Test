@@ -1,45 +1,73 @@
-Positive test case for AC1:
-
 @Test
-public void testTriggerJobSuccessful() {
+public void testTriggerJobSuccessfulAndPublishMessageWithJobSubmittedStatus() throws JSONException {
+
     // Mocking the required dependencies
-    RestTemplate restTemplate = mock(RestTemplate.class);
-    ResponseEntity<String> response = new ResponseEntity<>(HttpStatus.OK);
-    when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class))).thenReturn(response);
 
-    FlinkApiController flinkApiController = new FlinkApiController();
-    flinkApiController.setRestTemplate(restTemplate);
-
-    // Creating a sample UnifiedAuditMessage for testing
+    // Creating a sample Unified AuditMessage for testing 
+    String flinkJobJarid = "b9b4c3b9-5cee-43a9-a911-6a23b9d2ad91_custom-csv-data-transformer-0.0.1-SNAPSHOT-jar-with-dependencies.jar"; 
+    String programArgs = "-input input -fileType csv -bootstarpServer localhost:9092 -Topic COLLECTION-OUTPUT"; 
+    String inputFilePath = "C:/Temp/Device.csv";
+    
     UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
-    auditMsg.setInputFilePath("sample.csv");
+    auditMsg.setInputFilePath(inputFilePath);
 
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON); 
+    
+    HttpEntity<String> request = prepareRequest(auditMsg, programArgs, headers);
+    
+    ResponseEntity<String> responseEntity = new ResponseEntity<>(HttpStatus.FOUND);
+    
+    // Mocking the job submission response as successful
+    when(restTemplate.exchange(eq(jobSubmitUrl), eq(HttpMethod.POST), eq(request), eq(String.class)))
+            .thenReturn(responseEntity);
+    
     // Triggering the job
     String result = flinkApiController.triggerJob(auditMsg, ".csv");
-
+    
     // Asserting the result
     assertEquals("Job submitted", result);
+    
+    // Verifying the new format of Unified Audit Message is published to the queue with job_status FLINK_JOB_SUBMITTED
+    verify(customDataTransformerClient, times(1)).publishNewAuditMessage(inputFilePath, FLINK_JOB_SUBMITTED);
 }
 
-Negative test case for AC2:
-
 @Test
-public void testTriggerJobFailed() {
+public void testTriggerJobUnsuccessfulAndPublishMessageWithJobFailedStatus() throws JSONException {
+
     // Mocking the required dependencies
-    RestTemplate restTemplate = mock(RestTemplate.class);
-    ResponseEntity<String> response = new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
-    when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class))).thenReturn(response);
 
-    FlinkApiController flinkApiController = new FlinkApiController();
-    flinkApiController.setRestTemplate(restTemplate);
-
-    // Creating a sample UnifiedAuditMessage for testing
+    // Creating a sample Unified AuditMessage for testing 
+    String flinkJobJarid = "b9b4c3b9-5cee-43a9-a911-6a23b9d2ad91_custom-csv-data-transformer-0.0.1-SNAPSHOT-jar-with-dependencies.jar"; 
+    String programArgs = "-input input -fileType csv -bootstarpServer localhost:9092 -Topic COLLECTION-OUTPUT"; 
+    String inputFilePath = "C:/Temp/Device.csv";
+    
     UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
-    auditMsg.setInputFilePath("sample.csv");
+    auditMsg.setInputFilePath(inputFilePath);
 
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON); 
+    
+    HttpEntity<String> request = prepareRequest(auditMsg, programArgs, headers);
+    
+    ResponseEntity<String> responseEntity = new ResponseEntity<>(HttpStatus.NOT_FOUND);
+    
+    // Mocking the job submission response as unsuccessful
+    when(restTemplate.exchange(eq(jobSubmitUrl), eq(HttpMethod.POST), eq(request), eq(String.class)))
+            .thenReturn(responseEntity);
+    
     // Triggering the job
     String result = flinkApiController.triggerJob(auditMsg, ".csv");
-
+    
     // Asserting the result
-    assertEquals("Job is not triggered", result);
+    assertEquals("Job submission failed", result);
+    
+    // Verifying the new format of Unified Audit Message is published to the queue with job_status FLINK_JOB_FAILED
+    verify(customDataTransformerClient, times(1)).publishNewAuditMessage(inputFilePath, FLINK_JOB_FAILED);
+}
+
+private HttpEntity<String> prepareRequest(UnifiedAuditMessage auditMsg, String programArgs, HttpHeaders headers) throws JSONException {
+    JSONObject requestBody = new JSONObject();
+    requestBody.put("programArgs", programArgs.replace("input", auditMsg.getInputFilePath()));
+    return new HttpEntity<>(requestBody.toString(), headers);
 }

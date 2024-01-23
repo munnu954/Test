@@ -1,35 +1,17 @@
 @Test
-public void testSuccessfulTransformationJobSubmission() {
-    // Given
+public void testTriggerJobSuccess() {
     UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
-    auditMsg.setJobStatus(JobStatus.FLINK_JOB_SUBMITTED.toString());
-    String jobID = "12345";
-    when(jobIDNode.asText()).thenReturn(jobID);
-    
-    // When
-    customDataTransformerClient.transformJobSubmissionSuccess(auditMsg, jobIDNode);
-    
-    // Then
-    verify(kafkaProducer).publishNewFormatAuditMessage(auditMsg, "3459-DEV-COLLECTION-AUDIT-QUEUE");
-    verify(logger).info("jobID::" + jobID);
-}
-@Test
-public void testFailedTransformationJobSubmission() {
-    // Given
-    UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
-    auditMsg.setJobStatus(JobStatus.FLINK_JOB_FAILED.toString());
-    String jobID = null;
-    when(jobIDNode.asText()).thenReturn(jobID);
-    
-    // When
-    customDataTransformerClient.transformJobSubmissionFailure(auditMsg, jobIDNode);
-    
-    // Then
-    verify(kafkaProducer).publishNewFormatAuditMessage(auditMsg, "3459-DEV-COLLECTION-AUDIT-QUEUE");
-    verify(logger).error("Error triggering job", null);
-    verify(kafkaConsumer).logAuditData(auditMsg, fileType, null);
-    verify(kafkaAuditProducer).createMessageAndLog(auditMsg.getInputFilePath(), auditMsg.getUrl(), auditMsg.getPort(),
-        auditMsg.getOutputFilePath(), auditMsg.getDelimiters(), fileType, new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()),
-        auditMsg.getNo_of_records_in_the_file(), auditMsg.getNo_of_records_processed(), auditMsg.getNo_of_records_failed(), auditMsg.getJob_id(), auditMsg.getJar_id(), auditMsg.getCollector_id(), auditMsg.getExceptions());
-    verify(kafkaConsumer).writeLogToFile(auditData, logFolderPath);
+    String fileType = ".csv";
+    String inputFilePath = "/path/to/input/file";
+    String programArgs = "input=" + inputFilePath;
+    String jobSubmitUrl = "http://flink-api-url/jars/jar-id/run";
+    String responseBody = "{\"jobid\": \"123456789\"}";
+
+    when(kafkaConsumer.logMetadata(auditMsg, fileType, null)).thenReturn(auditMsg);
+    when(restTemplate.postForEntity(jobSubmitUrl, any(), eq(String.class))).thenReturn(new ResponseEntity<>(responseBody, HttpStatus.OK));
+
+    String result = flinkApiController.triggerJob(auditMsg, fileType);
+
+    verify(kafkaAuditProducer, times(1)).createMessageAndLog(inputFilePath, null, null, null, null, fileType, anyString(), anyInt(), anyInt(), anyInt(), anyString(), anyString(), anyList(), eq(JobStatus.FLINK_JOB_SUBMITTED.toString()));
+    assertEquals("Job submitted", result);
 }

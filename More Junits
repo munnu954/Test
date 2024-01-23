@@ -1,152 +1,128 @@
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.util.TestHarnessUtil;
-import org.junit.jupiter.api.*;
+Here is the sample code for the JUnit 5 test cases for the FlinkApiController class:
+
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.http.*;
+import org.springframework.web.client.RestTemplate;
+
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.List;
-
-public class MainTest {
-
-    private static final String INPUT_FILE_PATH = "input.csv";
-    private static final String BOOTSTRAP_SERVER = "localhost:9092";
-    private static final String TOPIC = "testTopic";
-    private static final String OUTPUT_KAFKA_MESSAGE = "{'key1': 'value1', 'key2': 'value2'}";
-
-    private Main main;
-
+public class FlinkApiControllerTest {
+    
+    @InjectMocks
+    private FlinkApiController flinkApiController;
+    
+    @Mock
+    private RestTemplate restTemplate;
+    
+    @Mock
+    private KafkaConsumer kafkaConsumer;
+    
+    @Mock
+    private KafkaAuditProducer kafkaAuditProducer;
+    
+    private UnifiedAuditMessage auditMessage;
+    
     @BeforeEach
     public void setup() {
-        main = new Main();
+        MockitoAnnotations.initMocks(this);
+        
+        flinkApiController.setFlinkApiUrl("http://localhost:8080");
+        flinkApiController.setFlinkJobJarid("test-jar-id");
+        flinkApiController.setProgramArgs("--inputPath input --outputPath output");
+        
+        auditMessage = new UnifiedAuditMessage();
+        // Set audit message properties
+        
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        flinkApiController.setHeaders(headers);
     }
-
-    @AfterEach
-    public void teardown() {
-        deleteIfExists(INPUT_FILE_PATH);
-    }
-
+    
     @Test
-    public void testMainPositive() throws Exception {
-        // Arrange
-        ParameterTool parameterTool = mock(ParameterTool.class);
-        when(parameterTool.get("bootstarpServer")).thenReturn(BOOTSTRAP_SERVER);
-        when(parameterTool.get("Topic")).thenReturn(TOPIC);
-        when(parameterTool.getRequired("input")).thenReturn(INPUT_FILE_PATH);
-        when(parameterTool.get("fileType")).thenReturn("Gigamon");
-
-        StreamExecutionEnvironment env = mock(StreamExecutionEnvironment.class);
-        when(env.fromElements(OUTPUT_KAFKA_MESSAGE)).thenReturn(mock(DataStream.class));
-
-        KafkaSink<String> kafkaSink = mock(KafkaSink.class);
-        when(kafkaSink.setBootstrapServers(BOOTSTRAP_SERVER)).thenReturn(kafkaSink);
-        when(kafkaSink.setRecordSerializer(any())).thenReturn(kafkaSink);
-        when(kafkaSink.setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)).thenReturn(kafkaSink);
-
-        DataStream<String> jsonStream = mock(DataStream.class);
-        when(jsonStream.flatMap(any(CsvtoJsonGigamonTransformer.class))).thenReturn(jsonStream);
-
-        // Act
-        main.overrideStreamExecutionEnvironment(env);
-        main.overrideKafkaSink(kafkaSink);
-        main.testMain(parameterTool, jsonStream);
-
-        // Assert
-        verify(env).execute();
-        verify(jsonStream).sinkTo(kafkaSink);
+    public void testTriggerJob_SuccessfulSubmission() {
+        // Mock successful job submission
+        ResponseEntity<String> response = new ResponseEntity<>("", HttpStatus.OK);
+        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class))).thenReturn(response);
+        
+        String result = flinkApiController.triggerJob(auditMessage, ".csv");
+        
+        // Verify job submission
+        verify(restTemplate).postForEntity(eq("http://localhost:8080/jars/test-jar-id/run"), any(HttpEntity.class), eq(String.class));
+        
+        // Verify Kafka producer method calls
+        verify(kafkaAuditProducer).createMessageAndLog(anyString(), anyString(), anyInt(), anyString(), anyString(), 
+                                                      anyString(), anyString(), anyInt(), anyInt(), anyInt(), anyString(),
+                                                      anyString(), anyString(), anyString(), anyString());
+        
+        // Verify job status update
+        verify(flinkApiController).updateJobStatus(any(UnifiedAuditMessage.class), anyString());
+        
+        // Verify result
+        assertEquals("Job submitted", result);
     }
-
+    
     @Test
-    public void testMainNegative_FileNotFound() throws Exception {
-        // Arrange
-        ParameterTool parameterTool = mock(ParameterTool.class);
-        when(parameterTool.get("bootstarpServer")).thenReturn(BOOTSTRAP_SERVER);
-        when(parameterTool.get("Topic")).thenReturn(TOPIC);
-        when(parameterTool.getRequired("input")).thenReturn(INPUT_FILE_PATH);
-        when(parameterTool.get("fileType")).thenReturn("Gigamon");
-
-        StreamExecutionEnvironment env = mock(StreamExecutionEnvironment.class);
-        when(env.fromElements(OUTPUT_KAFKA_MESSAGE)).thenReturn(mock(DataStream.class));
-
-        KafkaSink<String> kafkaSink = mock(KafkaSink.class);
-        when(kafkaSink.setBootstrapServers(BOOTSTRAP_SERVER)).thenReturn(kafkaSink);
-        when(kafkaSink.setRecordSerializer(any())).thenReturn(kafkaSink);
-        when(kafkaSink.setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)).thenReturn(kafkaSink);
-
-        DataStream<String> jsonStream = mock(DataStream.class);
-        when(jsonStream.flatMap(any(CsvtoJsonGigamonTransformer.class))).thenReturn(jsonStream);
-
-        // Act and Assert
-        Assertions.assertThrows(FileNotFoundException.class, () -> {
-            main.overrideStreamExecutionEnvironment(env);
-            main.overrideKafkaSink(kafkaSink);
-            main.testMain(parameterTool, jsonStream);
-        });
+    public void testTriggerJob_UnsuccessfulSubmission() {
+        // Mock unsuccessful job submission
+        ResponseEntity<String> response = new ResponseEntity<>("", HttpStatus.INTERNAL_SERVER_ERROR);
+        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class))).thenReturn(response);
+        
+        String result = flinkApiController.triggerJob(auditMessage, ".csv");
+        
+        // Verify job submission
+        verify(restTemplate).postForEntity(eq("http://localhost:8080/jars/test-jar-id/run"), any(HttpEntity.class), eq(String.class));
+        
+        // Verify Kafka producer method calls
+        verify(kafkaAuditProducer).createMessageAndLog(anyString(), anyString(), anyInt(), anyString(), anyString(), 
+                                                      anyString(), anyString(), anyInt(), anyInt(), anyInt(), anyString(),
+                                                      anyString(), anyString(), anyString(), anyString());
+        
+        // Verify job status update
+        verify(flinkApiController).updateJobStatus(any(UnifiedAuditMessage.class), anyString());
+        
+        // Verify log writing
+        verify(kafkaConsumer).writeLogToFile(any(UnifiedAuditMessage.class), anyString(), any(ResponseEntity.class), anyString());
+        
+        // Verify result
+        assertEquals("Job is not triggered", result);
     }
-
+    
     @Test
-    public void testReadCSVFilePositive() throws IOException {
-        // Arrange
-        String expectedContent = "content";
-
-        createFile(INPUT_FILE_PATH, expectedContent);
-
-        // Act
-        String actualContent = main.readCSVFile(INPUT_FILE_PATH);
-
-        // Assert
-        Assertions.assertEquals(expectedContent, actualContent);
+    public void testUpdateJobStatus_Finished() {
+        // Mock finished job status
+        JsonNode jsonNode = mock(JsonNode.class);
+        when(jsonNode.get("state")).thenReturn(mock(JsonNode.class));
+        when(jsonNode.get("state").textValue()).thenReturn("FINISHED");
+        
+        when(restTemplate.getForObject(eq("http://localhost:8080/jobs/test-job-id"), eq(JsonNode.class))).thenReturn(jsonNode);
+        
+        flinkApiController.updateJobStatus(auditMessage, "test-job-id");
+        
+        // Verify job status update
+        assertEquals(JobStatus.FLINK_JOB_SUBMITTED.toString(), auditMessage.getJobStatus());
     }
-
+    
     @Test
-    public void testReadCSVFileNegative_FileNotFound() {
-        // Act and Assert
-        Assertions.assertThrows(FileNotFoundException.class, () -> {
-            main.readCSVFile(INPUT_FILE_PATH);
-        });
-    }
-
-    @Test
-    public void testCsvtoJsonConversionPositive() throws Exception {
-        // Arrange
-        String input = "value1, value2";
-        Collector<String> collector = mock(Collector.class);
-
-        // Act
-        main.csvtoJsonConversion().flatMap(input, collector);
-
-        // Assert
-        verify(collector).collect(OUTPUT_KAFKA_MESSAGE);
-    }
-
-    @Test
-    public void testCsvtoJsonConversionNegative() throws Exception {
-        // Arrange
-        String input = ""; // invalid input
-        Collector<String> collector = mock(Collector.class);
-
-        // Act
-        main.csvtoJsonConversion().flatMap(input, collector);
-
-        // Assert
-        verify(collector, never()).collect(anyString());
-    }
-
-    private void createFile(String filePath, String content) throws IOException {
-        Path path = Paths.get(filePath);
-        Files.write(path, content.getBytes());
-    }
-
-    private void deleteIfExists(String filePath) {
-        File file = new File(filePath);
-        if (file.exists()) {
-            file.delete();
-        }
+    public void testUpdateJobStatus_Failed() {
+        // Mock failed job status
+        JsonNode jsonNode = mock(JsonNode.class);
+        when(jsonNode.get("state")).thenReturn(mock(JsonNode.class));
+        when(jsonNode.get("state").textValue()).thenReturn("FAILED");
+        
+        when(restTemplate.getForObject(eq("http://localhost:8080/jobs/test-job-id"), eq(JsonNode.class))).thenReturn(jsonNode);
+        
+        flinkApiController.updateJobStatus(auditMessage, "test-job-id");
+        
+        // Verify job status update
+        assertEquals(JobStatus.FLINK_JOB_FAILED.toString(), auditMessage.getJobStatus());
     }
 }
+```
+
+Please note that you need to modify the test cases according to your actual implementation and dependencies.

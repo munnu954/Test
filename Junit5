@@ -1,50 +1,120 @@
-@ExtendWith(MockitoExtension.class)
+Sure! Here's an implementation of the JUnit5 test cases for AC1 and AC2:
+
+```java
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestTemplate;
+
 class FlinkApiControllerTest {
-
-    @InjectMocks
-    private FlinkApiController flinkApiController;
-
-    @Mock
-    private KafkaAuditProducer kafkaAuditProducer;
-
-    @Mock
-    private KafkaConsumer kafkaConsumer;
 
     @Mock
     private RestTemplate restTemplate;
 
-    private UnifiedAuditMessage auditMsg;
-    private String fileType;
+    @Mock
+    private KafkaAuditProducer kafkaAuditProducer;
 
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-        auditMsg = new UnifiedAuditMessage();
-        fileType = ".csv";
+    @InjectMocks
+    private FlinkApiController flinkApiController;
+
+    @Captor
+    private ArgumentCaptor<HttpEntity<String>> requestCaptor;
+
+    public FlinkApiControllerTest() {
+        MockitoAnnotations.initMocks(this);
+    }
+
+    @Test
+    void testTriggerJob_SuccessfulSubmission() throws Exception {
+        // given
+        UnifiedAuditMessage auditMsg = createUnifiedAuditMessage();
+        ResponseEntity<String> response = new ResponseEntity<>(createResponseJson("job-id"), HttpStatus.OK);
+
+        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class))).thenReturn(response);
+
+        // when
+        flinkApiController.triggerJob(auditMsg, ".csv");
+
+        // then
+        verify(kafkaAuditProducer).createMessageAndLog(
+                eq(auditMsg.getInputFilePath()), eq(auditMsg.getUrl()), eq(auditMsg.getPort()),
+                eq(auditMsg.getOutputFilePath()), eq(auditMsg.getDelimiters()), eq(".csv"), anyString(),
+                eq(auditMsg.getNo_of_records_in_the_file()), eq(auditMsg.getNo_of_records_processed()),
+                eq(auditMsg.getNo_of_records_failed()), eq(auditMsg.getJob_id()), eq(auditMsg.getJar_id()),
+                eq(auditMsg.getCollector_id()), eq(auditMsg.getExceptions()), eq("FLINK_JOB_SUBMITTED")
+        );
+
+        verify(restTemplate).postForEntity(anyString(), requestCaptor.capture(), eq(String.class));
+
+        HttpEntity<String> request = requestCaptor.getValue();
+        HttpHeaders headers = request.getHeaders();
+        String requestBody = request.getBody();
+
+        assertThat(headers.getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
+        assertThat(requestBody).contains("programArgs", "input", auditMsg.getInputFilePath());
+    }
+
+    @Test
+    void testTriggerJob_UnsuccessfulSubmission() throws Exception {
+        // given
+        UnifiedAuditMessage auditMsg = createUnifiedAuditMessage();
+        ResponseEntity<String> response = new ResponseEntity<>(createResponseJson("job-id"), HttpStatus.BAD_REQUEST);
+
+        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class))).thenReturn(response);
+
+        // when
+        flinkApiController.triggerJob(auditMsg, ".csv");
+
+        // then
+        verify(kafkaAuditProducer).createMessageAndLog(
+                eq(auditMsg.getInputFilePath()), eq(auditMsg.getUrl()), eq(auditMsg.getPort()),
+                eq(auditMsg.getOutputFilePath()), eq(auditMsg.getDelimiters()), eq(".csv"), anyString(),
+                eq(auditMsg.getNo_of_records_in_the_file()), eq(auditMsg.getNo_of_records_processed()),
+                eq(auditMsg.getNo_of_records_failed()), eq(auditMsg.getJob_id()), eq(auditMsg.getJar_id()),
+                eq(auditMsg.getCollector_id()), eq(auditMsg.getExceptions())
+        );
+
+        verify(restTemplate).postForEntity(anyString(), requestCaptor.capture(), eq(String.class));
+        verify(kafkaAuditProducer).writeLogToFile(eq(auditMsg), eq(".csv"), eq(response), eq(logFolderPath));
+
+        HttpEntity<String> request = requestCaptor.getValue();
+        HttpHeaders headers = request.getHeaders();
+        String requestBody = request.getBody();
+
+        assertThat(headers.getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
+        assertThat(requestBody).contains("programArgs", "input", auditMsg.getInputFilePath());
+    }
+
+    private UnifiedAuditMessage createUnifiedAuditMessage() {
+        LocalDateTime now = LocalDateTime.now();
+
+        return new UnifiedAuditMessage(
+                "inputFilePath", "collectorId", "url", 12345, "outputFilePath", "delimiters",
+                ".csv", "dateReceived", now.toString(), 10, 5, 2,
+                Collections.singletonList("exception1"), "jobId", "jarId", "jobStatus"
+        );
+    }
+
+    private String createResponseJson(String jobId) {
+        return "{\"jobid\":\"" + jobId + "\",\"state\":\"RUNNING\"}";
     }
 }
+```
 
-@Test
-@DisplayName("AC1: Transformation job submission is successful")
-void testTriggerJobSuccess() throws Exception {
-    // Given
-    String jobId = "123";
-    String jobStatus = JobStatus.FLINK_JOB_SUBMITTED.toString();
-    when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class)))
-            .thenReturn(new ResponseEntity<>(createJobResponse(jobId), HttpStatus.OK));
-
-    // When
-    String result = flinkApiController.triggerJob(auditMsg, fileType);
-
-    // Then
-    verify(kafkaAuditProducer, times(1))
-            .createMessageAndLog(anyString(), anyString(), anyInt(), anyString(), anyString(), anyString(),
-                    anyString(), anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString(), anyString(),
-                    eq(jobStatus));
-    verifyNoMoreInteractions(kafkaAuditProducer);
-    assertEquals("Job submitted", result);
-}
-
-private String createJobResponse(String jobId) {
-    return "{\"jobid\":\"" + jobId + "\"}";
-}
+Note: In the test cases, you need to set the relevant values for the `UnifiedAuditMessage` object and the `logFolderPath` variable according to your requirements. Also, make sure to import required libraries and classes for the test cases to compile and run successfully.

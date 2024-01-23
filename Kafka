@@ -1,17 +1,121 @@
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+Here is an example of how you can write the JUnit test cases for the FlinkApiController class:
 
-// ...
+```java
+@RunWith(MockitoJUnitRunner.class)
+public class FlinkApiControllerTest {
 
-// Parse the response body to extract the jobID
-ObjectMapper objectMapper = new ObjectMapper();
-JsonNode responseBody = objectMapper.readTree(response.getBody());
-JsonNode jobIDNode = responseBody.get("jobID");
+    @InjectMocks
+    private FlinkApiController flinkApiController;
 
-if (jobIDNode != null && !jobIDNode.isNull()) {
-    String jobID = jobIDNode.asText();
-    // Pass the jobID to the updateJobStatus function
-    updateJobStatus(auditMsg, jobID);
-} else {
-    throw new IllegalStateException("Invalid response: jobID is null");
+    @Mock
+    private RestTemplate restTemplate;
+
+    @Mock
+    private ResponseEntity<String> successResponse;
+
+    @Mock
+    private ResponseEntity<String> failureResponse;
+
+    @Mock
+    private KafkaAuditProducer kafkaAuditProducer;
+
+    @Mock
+    private KafkaConsumer kafkaConsumer;
+
+    @Before
+    public void setup() {
+        MockitoAnnotations.initMocks(this);
+    }
+
+    @Test
+    public void testTriggerJob_SuccessfulSubmission() {
+        // Prepare test data
+        String fileType = ".csv";
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+
+        // Mock external dependencies
+        Mockito.when(restTemplate.postForEntity(Mockito.anyString(), Mockito.any(), Mockito.eq(String.class)))
+                .thenReturn(successResponse);
+        Mockito.when(successResponse.getStatusCode()).thenReturn(HttpStatus.OK);
+        Mockito.when(successResponse.getBody()).thenReturn("{\"jobid\":\"12345\"}");
+
+        // Execute the method
+        String result = flinkApiController.triggerJob(auditMsg, fileType);
+
+        // Verify the results
+        Mockito.verify(kafkaAuditProducer).createMessageAndLog(Mockito.anyString(), Mockito.anyString(),
+                Mockito.anyInt(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString(),
+                Mockito.anyString(), Mockito.isNull(), Mockito.isNull(), Mockito.isNull(),
+                Mockito.anyString(), Mockito.anyString(), Mockito.isNull(), Mockito.isNull(),
+                Mockito.isNull());
+        Mockito.verify(flinkApiController).updateJobStatus(auditMsg, "12345");
+        Assert.assertEquals("Job submitted", result);
+    }
+
+    @Test
+    public void testTriggerJob_FailedSubmission() {
+        // Prepare test data
+        String fileType = ".csv";
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+
+        // Mock external dependencies
+        Mockito.when(restTemplate.postForEntity(Mockito.anyString(), Mockito.any(), Mockito.eq(String.class)))
+                .thenReturn(failureResponse);
+        Mockito.when(failureResponse.getStatusCode()).thenReturn(HttpStatus.INTERNAL_SERVER_ERROR);
+
+        // Execute the method
+        String result = flinkApiController.triggerJob(auditMsg, fileType);
+
+        // Verify the results
+        Mockito.verify(kafkaAuditProducer).createMessageAndLog(Mockito.anyString(), Mockito.anyString(),
+                Mockito.anyInt(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString(),
+                Mockito.anyString(), Mockito.isNull(), Mockito.isNull(), Mockito.isNull(),
+                Mockito.anyString(), Mockito.anyString(), Mockito.isNull(), Mockito.isNull(),
+                Mockito.isNull());
+        Mockito.verify(flinkApiController, Mockito.never()).updateJobStatus(Mockito.any(), Mockito.anyString());
+        Assert.assertEquals("Job is not triggered", result);
+    }
+
+    @Test
+    public void testUpdateJobStatus_Success() throws Exception {
+        // Prepare test data
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+        String jobID = "12345";
+        JsonNode successJsonNode = new ObjectMapper().readTree("{\"state\":\"FINISHED\"}");
+
+        // Mock external dependencies
+        Mockito.when(restTemplate.getForObject(Mockito.anyString(), Mockito.eq(JsonNode.class)))
+                .thenReturn(successJsonNode);
+
+        // Execute the method
+        flinkApiController.updateJobStatus(auditMsg, jobID);
+
+        // Verify the results
+        Mockito.verify(flinkApiController).updateJobStatus(auditMsg, jobID);
+        Assert.assertEquals(JobStatus.FLINK_JOB_SUBMITTED.toString(), auditMsg.getJobStatus());
+    }
+
+    @Test
+    public void testUpdateJobStatus_Failure() throws Exception {
+        // Prepare test data
+        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+        String jobID = "12345";
+        JsonNode failureJsonNode = new ObjectMapper().readTree("{\"state\":\"FAILED\"}");
+
+        // Mock external dependencies
+        Mockito.when(restTemplate.getForObject(Mockito.anyString(), Mockito.eq(JsonNode.class)))
+                .thenReturn(failureJsonNode);
+
+        // Execute the method
+        flinkApiController.updateJobStatus(auditMsg, jobID);
+
+        // Verify the results
+        Mockito.verify(flinkApiController).updateJobStatus(auditMsg, jobID);
+        Assert.assertEquals(JobStatus.FLINK_JOB_FAILED.toString(), auditMsg.getJobStatus());
+    }
 }
+```
+
+In the above code, we have used Mockito to mock the external dependencies (RestTemplate, ResponseEntity, KafkaAuditProducer, KafkaConsumer) and verify the interactions with them. We also assert the expected results based on the test scenarios.
+
+Note that you might need to modify and add more test cases based on your specific requirements and edge cases.

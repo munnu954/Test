@@ -1,76 +1,91 @@
-To fix the error, you need to modify your test code to properly initialize and use the mocks. Here's the updated test code:
+Sure! Here's an example of how you can write JUnit 5 test cases for the given acceptance criteria:
 
 ```java
-@RunWith(MockitoJUnitRunner.class)
-public class FlinkApiControllerTest {
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.test.util.ReflectionTestUtils;
 
-    @Mock
-    private RestTemplate restTemplate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Collections;
+import java.util.List;
+
+@SpringBootTest
+public class KafkaAuditProducerTest {
 
     @Mock
     private KafkaTemplate<String, Object> kafkaTemplate;
-    
+
     @InjectMocks
-    private FlinkApiController flinkApiController;
+    private KafkaAuditProducer kafkaAuditProducer;
 
-    @Before
-    public void setUp() {
-        MockitoAnnotations.initMocks(this);
+    @Captor
+    private ArgumentCaptor<String> topicCaptor;
+
+    @Captor
+    private ArgumentCaptor<Object> messageCaptor;
+
+    @Value("${spring.kafka.producer.topic-name}")
+    private String topicName;
+
+    @BeforeEach
+    public void setup() {
+        MockitoAnnotations.openMocks(this);
+        ReflectionTestUtils.setField(kafkaAuditProducer, "topicName", topicName);
     }
 
     @Test
-    public void triggerJob_SubmissionSuccessful_PublishNewFormat() {
-        // Arrange
+    public void testSendMessage_Success() {
         UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
-        auditMsg.setInputFilePath("input/file.csv");
-        String fileType = ".csv";
-        String programArgs = "--input-file input/file.csv";
-        String jobID = "job123";
+        auditMsg.setJobStatus(JobStatus.FLINK_JOB_SUBMITTED.toString());
 
-        ResponseEntity<String> response = new ResponseEntity<>(HttpStatus.OK);
+        String expectedResult = "Message sent successfully";
 
-        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class))).thenReturn(response);
-        when(restTemplate.getForObject(anyString(), eq(JsonNode.class))).thenReturn(createJobStatusJsonNode("FINISHED"));
+        Assertions.assertDoesNotThrow(() -> {
+            String actualResult = kafkaAuditProducer.sendMessage(auditMsg);
 
-        // Act
-        flinkApiController.triggerJob(auditMsg, fileType);
+            Mockito.verify(kafkaTemplate).send(topicCaptor.capture(), messageCaptor.capture());
+            List<String> topics = topicCaptor.getAllValues();
+            List<Object> messages = messageCaptor.getAllValues();
 
-        // Assert
-        verify(kafkaTemplate, times(1)).send(eq("3459-DEV-COLLECTION-AUDIT-QUEUE"), eq(auditMsg));
+            Assertions.assertEquals(topicName, topics.get(0));
+            Assertions.assertEquals(auditMsg, messages.get(0));
+
+            Assertions.assertEquals(expectedResult, actualResult);
+        });
     }
 
     @Test
-    public void triggerJob_SubmissionNotSuccessful_PublishNewFormat() {
-        // Arrange
+    public void testCreateMessageAndLog_Success() {
         UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
-        auditMsg.setInputFilePath("input/file.csv");
-        String fileType = ".csv";
-        String programArgs = "--input-file input/file.csv";
+        auditMsg.setJobStatus(JobStatus.FLINK_JOB_SUBMITTED.toString());
 
-        ResponseEntity<String> response = new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
+        Assertions.assertDoesNotThrow(() -> {
+            kafkaAuditProducer.createMessageAndLog("inputFilePath", "url", 8080, "outputFilePath",
+                    "|", ".csv", "2022-01-01", 10, 5, 2,
+                    "job_id", "jar_id", "collector_id", Collections.emptyList(), "jobStatus");
 
-        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class))).thenReturn(response);
+            Mockito.verify(kafkaTemplate).send(topicCaptor.capture(), messageCaptor.capture());
+            List<String> topics = topicCaptor.getAllValues();
+            List<Object> messages = messageCaptor.getAllValues();
 
-        // Act
-        flinkApiController.triggerJob(auditMsg, fileType);
-
-        // Assert
-        verify(kafkaTemplate, times(1)).send(eq("3459-DEV-COLLECTION-AUDIT-QUEUE"), eq(auditMsg));
-    }
-
-    private JsonNode createJobStatusJsonNode(String state) throws JsonProcessingException {
-        ObjectMapper objectMapper = new ObjectMapper();
-        ObjectNode jsonNode = objectMapper.createObjectNode();
-        jsonNode.put("state", state);
-        return jsonNode;
+            Assertions.assertEquals(topicName, topics.get(0));
+            Assertions.assertEquals(auditMsg, messages.get(0));
+        });
     }
 }
 ```
 
-Changes made in the code:
-- Added `@RunWith(MockitoJUnitRunner.class)` to enable Mockito annotations.
-- Updated `@BeforeEach` to `@Before` as it is JUnit 4.
-- Updated `verify` statements to use `eq(auditMsg)` instead of `any(UnifiedAuditMessage.class)`.
-- Added `throws JsonProcessingException` to `createJobStatusJsonNode` method signature to handle the potential exception when creating the JSON node.
+Note: You may need to update the test cases based on your specific requirements and the dependencies used in the code.
 
-Note: Make sure you have the required dependencies (such as Mockito, JUnit, and Jackson ObjectMapper) added to your project for the test to work properly.
+Make sure to include all the necessary dependencies for testing, such as the Mockito and JUnit 5 dependencies.

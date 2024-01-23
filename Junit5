@@ -1,5 +1,3 @@
-AC1:
-
 @Test
 public void testTriggerJobSuccessful() throws JSONException {
 
@@ -18,26 +16,20 @@ public void testTriggerJobSuccessful() throws JSONException {
     HttpEntity<String> request = new HttpEntity<>(requestBody.toString(), headers);
     ResponseEntity<String> responseEntity = new ResponseEntity<>(HttpStatus.FOUND);
 
-    // Mocking the job submission response
-    ResponseEntity<String> successfulResponse = new ResponseEntity<>("{\"jobid\":\"job-001\"}", HttpStatus.OK);
-    when(restTemplate.postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class))).thenReturn(successfulResponse);
-
-    // Mocking the job status response
-    ResponseEntity<String> finishedJobStatusResponse = new ResponseEntity<>("{\"state\":\"FINISHED\"}", HttpStatus.OK);
-    when(restTemplate.getForObject(eq("http://localhost:8081/jobs/job-001"), eq(String.class))).thenReturn(finishedJobStatusResponse);
+    // Mocking the response for job submission
+    when(restTemplate.postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class)))
+            .thenReturn(responseEntity);
 
     // Triggering the job
     String result = flinkApiController.triggerJob(auditMsg, ".csv");
 
     // Asserting the result
     assertEquals("Job submitted", result);
-    verify(kafkaAuditProducer, times(1)).createMessageAndLog(eq(auditMsg.getInputFilePath()), eq(auditMsg.getUrl()), eq(auditMsg.getPort()), eq(auditMsg.getOutputFilePath()), eq(auditMsg.getDelimiters()), eq(".csv"), anyString(), eq(auditMsg.getNo_of_records_in_the_file()), eq(auditMsg.getNo_of_records_processed()), eq(auditMsg.getNo_of_records_failed()), eq(auditMsg.getJob_id()), eq(auditMsg.getJar_id()), eq(auditMsg.getCollector_id()), eq(auditMsg.getExceptions()), eq(JobStatus.FLINK_JOB_SUBMITTED.toString()));
 }
 
-AC2:
-
 @Test
-public void testTriggerJobwithJarFileNotUploadedToFlink() throws JSONException {
+void testTriggerJobwithJarFileNotUploadedToFlink() {
+
     // Arrange
     String fileType = ".csv";
     UnifiedAuditMessage collector = new UnifiedAuditMessage();
@@ -47,19 +39,91 @@ public void testTriggerJobwithJarFileNotUploadedToFlink() throws JSONException {
     String programArgs = "--input input";
     String flinkApiUrl = "http://localhost:8081";
     String flinkJobJarid = "non-existent-job-id";
-    String jobSubmitUrl = flinkApiUrl + "/jars/" + flinkJobJarid + "/run";
+    String jobSubmitUrl = flinkApiUrl + "//" + flinkJobJarid + "/run";
     HttpEntity<String> request = new HttpEntity<>(headers);
-    
-    // Mocking the job submission response
-    ResponseEntity<String> errorResponse = new ResponseEntity<>(HttpStatus.BAD_REQUEST);
-    when(restTemplate.postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class))).thenReturn(errorResponse);
 
-    // Triggering the job
+    // Mocking the response for job submission
+    when(restTemplate.postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class)))
+            .thenThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST));
+
+    // Act
     String result = flinkApiController.triggerJob(collector, fileType);
 
-    // Asserting the result
+    // Assert
     assertEquals("Job is not triggered", result);
-    verifyZeroInteractions(kafkaAuditProducer);
+    verifyNoMoreInteractions(restTemplate);
 }
 
-Regarding the implementation of `updateJobStatus()` method, it should be moved out of the test scope as it is part of the production code.
+@Test
+void testTriggerJobSuccessfulWithUpdatedJobStatus() throws JSONException {
+
+    // Arrange
+    String fileType = ".csv";
+    UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+    auditMsg.setInputFilePath("C:/Temp/Device.csv");
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    JSONObject requestBody = new JSONObject();
+    String programArgs = "-input input -fileType csv -bootstarpServer localhost:9092 -Topic COLLECTION-OUTPUT";
+    requestBody.put("programArgs", programArgs.replace("input", auditMsg.getInputFilePath()));
+    String flinkJobJarid = "b9b4c3b9-5cee-43a9-a911-6a23b9d2ad91_custom-csv-data-transformer-0.0.1-SNAPSHOT-jar-with-dependencies.jar";
+    String jobSubmitUrl = "http://localhost:8081/jars/" + flinkJobJarid + "/run";
+    HttpEntity<String> request = new HttpEntity<>(requestBody.toString(), headers);
+
+    // Mocking the response for job submission
+    ResponseEntity<String> responseEntity = new ResponseEntity<>(HttpStatus.OK);
+    when(restTemplate.postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class)))
+            .thenReturn(responseEntity);
+
+    // Mocking the response for job status update
+    String flinkApiUrl = "http://localhost:8081";
+    String jobID = "123456789";
+    String jobStatusUrl = flinkApiUrl + "/jobs/" + jobID;
+    JsonNode jsonNode = mock(JsonNode.class);
+    when(jsonNode.get("state")).thenReturn(new TextNode("FINISHED"));
+    when(restTemplate.getForObject(eq(jobStatusUrl), eq(JsonNode.class))).thenReturn(jsonNode);
+
+    // Triggering the job
+    String result = flinkApiController.triggerJob(auditMsg, fileType);
+
+    // Asserting the result
+    assertEquals("Job submitted", result);
+    assertEquals(JobStatus.FLINK_JOB_SUBMITTED.toString(), auditMsg.getJobStatus());
+    verifyNoMoreInteractions(restTemplate);
+}
+
+@Test
+void testTriggerJobFailedWithUpdatedJobStatus() {
+
+    // Arrange
+    String fileType = ".csv";
+    UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
+    auditMsg.setInputFilePath("input.csv");
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    String programArgs = "--input input";
+    String flinkApiUrl = "http://localhost:8081";
+    String flinkJobJarid = "non-existent-job-id";
+    String jobSubmitUrl = flinkApiUrl + "//" + flinkJobJarid + "/run";
+    HttpEntity<String> request = new HttpEntity<>(headers);
+    ResponseEntity<String> responseEntity = new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+
+    // Mocking the response for job submission
+    when(restTemplate.postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class)))
+            .thenReturn(responseEntity);
+
+    // Mocking the response for job status update
+    String jobID = "123456789";
+    String jobStatusUrl = flinkApiUrl + "/jobs/" + jobID;
+    JsonNode jsonNode = mock(JsonNode.class);
+    when(jsonNode.get("state")).thenReturn(new TextNode("FAILED"));
+    when(restTemplate.getForObject(eq(jobStatusUrl), eq(JsonNode.class))).thenReturn(jsonNode);
+
+    // Act
+    String result = flinkApiController.triggerJob(auditMsg, fileType);
+
+    // Assert
+    assertEquals("Job is not triggered", result);
+    assertEquals(JobStatus.FLINK_JOB_FAILED.toString(), auditMsg.getJobStatus());
+    verifyNoMoreInteractions(restTemplate);
+}

@@ -1,52 +1,72 @@
-import static org.mockito.Mockito.times;
+Certainly! Here's an example of how you can write positive and negative JUnit 5 test cases for the given AC1 and AC2:
 
-@RunWith(MockitoJUnitRunner.class)
-public class KafkaAuditProducerTest {
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+public class FlinkApiControllerTest {
 
     @Mock
-    private KafkaTemplate<String, Object> kafkaTemplate;
+    private FlinkJobService flinkJobService;
 
     @InjectMocks
-    private KafkaAuditProducer kafkaAuditProducer;
-
-    @Value("${spring.kafka.producer.topic-name}")
-    private String topicName;
+    private FlinkApiController flinkApiController;
 
     @Captor
-    private ArgumentCaptor<String> topicCaptor;
+    private ArgumentCaptor<UnifiedAuditMessage> unifiedAuditMessageCaptor;
 
-    @Captor
-    private ArgumentCaptor<Object> messageCaptor;
-
-    @Before
+    @BeforeEach
     public void setup() {
         MockitoAnnotations.initMocks(this);
-        ReflectionTestUtils.setField(kafkaAuditProducer, "topicName", topicName);
     }
 
     @Test
-    public void testSendMessage_Success() {
-        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
-        auditMsg.setJobStatus(JobStatus.FLINK_JOB_SUBMITTED.toString());
+    public void givenUnifiedAuditMessage_whenTransformationJobSubmissionIsSuccessful_thenPublishNewFormatWithJobStatusSubmitted() throws JsonProcessingException {
+        // Arrange
+        UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
+        unifiedAuditMessage.setQueueName("3459-DEV-COLLECTION-AUDIT-QUEUE");
 
-        String expectedResult = "Message sent successfully";
+        when(flinkJobService.submitJob(any(UnifiedAuditMessage.class))).thenReturn(true);
 
-        kafkaAuditProducer.sendMessage(auditMsg);
+        // Act
+        flinkApiController.transformAndPublishUnifiedAuditMessage(unifiedAuditMessage);
 
-        // Verify the method was called
-        verify(kafkaTemplate, times(1)).send(eq(topicName), eq(auditMsg));
+        // Assert
+        verify(flinkJobService, times(1)).submitJob(unifiedAuditMessageCaptor.capture());
+        UnifiedAuditMessage transformedMessage = unifiedAuditMessageCaptor.getValue();
+        assertEquals("3459-DEV-COLLECTION-AUDIT-QUEUE", transformedMessage.getQueueName());
+        assertEquals("FLINK_JOB_SUBMITTED", transformedMessage.getJobStatus());
     }
 
     @Test
-    public void testCreateMessageAndLog_Success() {
-        UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
-        auditMsg.setJobStatus(JobStatus.FLINK_JOB_SUBMITTED.toString());
+    public void givenUnifiedAuditMessage_whenTransformationJobSubmissionIsNotSuccessful_thenPublishNewFormatWithJobStatusFailed() throws JsonProcessingException {
+        // Arrange
+        UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
+        unifiedAuditMessage.setQueueName("3459-DEV-COLLECTION-AUDIT-QUEUE");
 
-        kafkaAuditProducer.createMessageAndLog("inputFilePath", "url", 8080, "outputFilePath",
-                "|", ".csv", "2022-01-01", 10, 5, 2,
-                "job_id", "jar_id", "collector_id", Collections.emptyList(), "jobStatus");
+        when(flinkJobService.submitJob(any(UnifiedAuditMessage.class))).thenReturn(false);
 
-        // Verify the method was called
-        verify(kafkaTemplate, times(1)).send(eq(topicName), eq(auditMsg));
+        // Act
+        flinkApiController.transformAndPublishUnifiedAuditMessage(unifiedAuditMessage);
+
+        // Assert
+        verify(flinkJobService, times(1)).submitJob(unifiedAuditMessageCaptor.capture());
+        UnifiedAuditMessage transformedMessage = unifiedAuditMessageCaptor.getValue();
+        assertEquals("3459-DEV-COLLECTION-AUDIT-QUEUE", transformedMessage.getQueueName());
+        assertEquals("FLINK_JOB_FAILED", transformedMessage.getJobStatus());
     }
 }
+
+
+In the above example, we are using Mockito to mock the FlinkJobService dependency. We then define the behavior of the submitJob method in the respective test cases using when and thenReturn. After invoking the method under test (transformAndPublishUnifiedAuditMessage), we use verify to ensure that the submitJob method was called with the expected parameters.
+
+Note: You may need to modify the test case code according to your actual implementation and dependencies.

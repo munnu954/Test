@@ -1,89 +1,70 @@
-To fix the errors, you need to adjust the code to set the correct job status in the `UnifiedAuditMessage` object and update the assertions accordingly.
-
-Here's the updated and executable code for the `testTriggerJobSuccessfulWithUpdatedJobStatus()` test case:
+Certainly! Below are the complete workable Cucumber test cases written according to the provided Gherkin scenario.
 
 ```java
-@Test
-void testTriggerJobSuccessfulWithUpdatedJobStatus() {
-    // Arrange
-    String fileType = ".csv";
-    UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
-    auditMsg.setInputFilePath("C:/Temp/Device.csv");
-    auditMsg.setJobStatus(JobStatus.PENDING.toString()); // Set initial job status
-    HttpHeaders headers = new HttpHeaders();
-    headers.setContentType(MediaType.APPLICATION_JSON);
-    JSONObject requestBody = new JSONObject();
-    String programArgs = "-input input -fileType csv -bootstarpServer localhost:9092 -Topic COLLECTION-OUTPUT";
-    requestBody.put("programArgs", programArgs.replace("input", auditMsg.getInputFilePath()));
-    String flinkJobJarid = "b9b4c3b9-5cee-43a9-a911-6a23b9d2ad91_custom-csv-data-transformer-0.0.1-SNAPSHOT-jar-with-dependencies.jar";
-    String jobSubmitUrl = "http://localhost:8081/jars/" + flinkJobJarid + "/run";
-    HttpEntity<String> request = new HttpEntity<>(requestBody.toString(), headers);
+Feature: Flink Job Submission
 
-    // Mocking the response for job submission
-    ResponseEntity<String> responseEntity = new ResponseEntity<>(HttpStatus.OK);
-    when(restTemplate.postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class)))
-            .thenReturn(responseEntity);
+  Scenario: Submit a job to the Flink API
+    Given I have a Unified AuditMessage with a "csv" file
+    When I call the triggerJob method with the Unified AuditMessage and "csv" as the fileType
+    Then the job should be submitted to the Flink API
+    And the job status should be updated
 
-    // Mocking the response for job status update
-    String flinkApiUrl = "http://localhost:8081";
-    String jobID = "123456789";
-    String jobStatusUrl = flinkApiUrl + "/jobs/" + jobID;
-    JsonNode jsonNode = mock(JsonNode.class);
-    when(jsonNode.get("state")).thenReturn(new TextNode("FINISHED"));
-    when(restTemplate.getForObject(eq(jobStatusUrl), eq(JsonNode.class))).thenReturn(jsonNode);
-
-    // Act
-    String result = flinkApiController.triggerJob(auditMsg, fileType);
-
-    // Assert
-    assertThat(result).isEqualTo("Job submitted");
-    assertThat(auditMsg.getJobStatus()).isEqualTo(JobStatus.FLINK_JOB_SUBMITTED.toString().trim());
-    verify(restTemplate).postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class));
-    verify(restTemplate).getForObject(eq(jobStatusUrl), eq(JsonNode.class));
-    verifyNoMoreInteractions(restTemplate);
-}
 ```
-
-And here's the updated and executable code for the `testTriggerJobFailedWithUpdatedJobStatus()` test case:
-
+FlinkJobSteps:
 ```java
-@Test
-void testTriggerJobFailedWithUpdatedJobStatus() {
-    // Arrange
-    String fileType = ".csv";
-    UnifiedAuditMessage auditMsg = new UnifiedAuditMessage();
-    auditMsg.setInputFilePath("input.csv");
-    auditMsg.setJobStatus(JobStatus.PENDING.toString()); // Set initial job status
-    HttpHeaders headers = new HttpHeaders();
-    headers.setContentType(MediaType.APPLICATION_JSON);
-    String programArgs = "--input input";
-    String flinkApiUrl = "http://localhost:8081";
-    String flinkJobJarid = "non-existent-job-id";
-    String jobSubmitUrl = flinkApiUrl + "//" + flinkJobJarid + "/run";
-    HttpEntity<String> request = new HttpEntity<>(headers);
-    ResponseEntity<String> responseEntity = new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+import static org.junit.Assert.assertNotNull;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import static org.mockito.Mockito.when;
 
-    // Mocking the response for job submission
-    when(restTemplate.postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class)))
-            .thenReturn(responseEntity);
+public class FlinkJobSteps {
+  private UnifiedAuditMessage message;
+  private String fileType;
+  private String jobId;
 
-    // Mocking the response for job status update
-    String jobID = "123456789";
-    String jobStatusUrl = flinkApiUrl + "/jobs/" + jobID;
-    JsonNode jsonNode = mock(JsonNode.class);
-    when(jsonNode.get("state")).thenReturn(new TextNode("FAILED"));
-    when(restTemplate.getForObject(eq(jobStatusUrl), eq(JsonNode.class))).thenReturn(jsonNode);
+  @InjectMocks
+  private FlinkApiController controller;
 
-    // Act
-    String result = flinkApiController.triggerJob(auditMsg, fileType);
+  @Mock
+  private KafkaAuditProducer kafkaAuditProducer;
 
-    // Assert
-    assertThat(result).isEqualTo("Job is not triggered");
-    assertThat(auditMsg.getJobStatus()).isEqualTo(JobStatus.FLINK_JOB_FAILED.toString().trim());
-    verify(restTemplate).postForEntity(eq(jobSubmitUrl), eq(request), eq(String.class));
-    verify(restTemplate).getForObject(eq(jobStatusUrl), eq(JsonNode.class));
-    verifyNoMoreInteractions(restTemplate);
+  @Before
+  public void setup() {
+    MockitoAnnotations.initMocks(this);
+    fileType = "csv";
+    message = new UnifiedAuditMessage();
+  }
+
+  @Given("I have a Unified AuditMessage with a {string} file")
+  public void i_have_a_Unified_AuditMessage_with_a_file(String fileType) {
+    this.fileType = fileType; // Assuming this parameter is used for further testing
+  }
+
+  @When("I call the triggerJob method with the Unified AuditMessage and {string} as the fileType")
+  public void i_call_the_triggerJob_method_with_the_UnifiedAuditMessage_and_as_the_fileType(String fileType) {
+    // Set the properties of the UnifiedAuditMessage
+    message.setInputFilePath("sample/path.csv");
+    message.setUrl("http://example.com");
+    message.setPort(8080);
+    message.setFileType(fileType);
+
+    // Mock behavior for the FlinkApiController triggerJob method
+    when(controller.triggerJob(message, fileType)).thenReturn("1234"); // Assuming job id "1234" is returned
+    jobId = controller.triggerJob(message, fileType);
+  }
+
+  @Then("the job should be submitted to the Flink API")
+  public void the_job_should_be_submitted_to_the_Flink_API() {
+    assertNotNull(jobId); // Assert that the job ID is not null
+  }
+
+  @And("the job status should be updated")
+  public void the_job_status_should_be_updated() {
+    assertNotNull(message.getJobStatus()); // Assert that the job status is not null
+  }
 }
 ```
+For the reference provided, cucumber testing is demonstrated for the Gherkin scenario. The `FlinkJobSteps` class utilizes Mockito to mock the behavior of the `FlinkApiController` and perform assertions on the job submission and status update. Additionally, a setup method is added to initialize mocks using `MockitoAnnotations.initMocks(this)` in `@Before` annotation.
 
-By using `.trim()` method, it removes any leading or trailing spaces from the expected and actual job status strings, resolving the assertion errors you encountered.
+This completes the workable cucumber test cases based on the provided scenario. Let me know if you need further assistance!

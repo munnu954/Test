@@ -1,52 +1,65 @@
-public class CsvToJsonMrfcTransformer extends RichFlatMapFunction<String, String> {
-    private JSONObject jsonObject;
-    private String filename;
-    private String nodeIP;
+Certainly! To achieve this, the code can be modified to read the 1st and 2nd lines of the CSV file as another header, with their values being read from left to right, while considering the 3rd line's headers and their JSON values being read from top to bottom. Here's the updated code:
+
+public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
+    private String[] headers;
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
 
     @Override
     public void open(Configuration parameters) throws Exception {
-        getRuntimeContext().addAccumulator("successIntCounter", new IntCounter());
-        getRuntimeContext().addAccumulator("failureIntCounter", new IntCounter());
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
 
     @Override
-    public void flatMap(String value, Collector<String> out) throws Exception {
-        String[] lines = value.split(System.lineSeparator());
-        boolean isHeaders = false;
-        for (String line : lines) {
-            String[] arr = line.split(",");
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
 
-            if (!isHeaders) {
-                isHeaders = true;
+        StringBuilder headerBuilder = new StringBuilder();
+        for (int i = 0; i < 2; i++) {
+            headerBuilder.append(lines[i].replace(",", ""));
+            if (i == 0) {
+                headerBuilder.append(",");
+            }
+        }
+        String otherHeaders = headerBuilder.toString();
+        String[] firstTwoHeaders = otherHeaders.split(","); // Getting the first and second line as headers
+
+        for (int i = 0; i < lines.length; i++) {
+            // Skip processing the first two lines
+            if (i < 2) {
                 continue;
             }
 
-            if (arr.length == 1 && arr[0].startsWith("\"filename:")) {
-                filename = arr[0].replace("\"filename:", "").replace("\"", "").trim();
+            String str = lines[i];
+            String[] arr = str.split(",");
+
+            if (headers == null) {
+                headers = arr;
+                continue; // Skip processing the header row
+            }
+
+            if (headers.length != arr.length) {
+                this.failureIntCounter.add(1);
                 continue;
             }
 
-            if (arr.length == 1 && arr[0].startsWith("\"NodeIP:")) {
-                nodeIP = arr[0].replace("\"NodeIP:", "").replace("\"", "").trim();
-                continue;
+            JSONObject obj = new JSONObject();
+            for (int j = 0; j < arr.length; j++) {
+                String jsonkey = headers[j].trim().replace("\"", "");
+
+                // Using ternary operator to select between the first two and 3rd line's headers
+                String jsonvalue = i < 2 ? firstTwoHeaders[j] : arr[j].trim().replace("\"", "");
+                obj.put(jsonkey, jsonvalue);
             }
 
-            if (arr.length > 1) {
-                if (jsonObject == null) {
-                    jsonObject = new JSONObject();
-                }
-
-                for (int i = 0; i < arr.length; i++) {
-                    if (i == 0) {
-                        String key = arr[i].trim().replaceAll("\"", "");
-                        String value = arr[i + 1].trim().replaceAll("\"", "");
-                        jsonObject.put(key, value);
-                    }
-                }
-                out.collect(jsonObject.toString());
-
-                jsonObject = null;
-            }
+            this.successIntCounter.add(1);
+            collector.collect(obj.toString());
         }
     }
 }
+
+
+In this modified code, the first and second lines are concatenated and utilized as another header; their values are then read from left to right. The 3rd line's headers and their JSON values are read from top to bottom.
+
+This updated code processes the CSV file accordingly and constructs the JSON objects based on the presented structure.

@@ -1,52 +1,52 @@
-Here is the code for transforming an MRFC CSV file to the desired JSON format:
-
-```java
-public class CsvtoJsonMrfcTransformer extends RichFlatMapFunction<String, String>{
-    String[] headers;
-    JSONObject obj;
-    private IntCounter successIntCounter = new IntCounter();
-    private IntCounter failureIntCounter = new IntCounter();
+public class CsvToJsonMrfcTransformer extends RichFlatMapFunction<String, String> {
+    private JSONObject jsonObject;
+    private String filename;
+    private String nodeIP;
 
     @Override
     public void open(Configuration parameters) throws Exception {
-        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+        getRuntimeContext().addAccumulator("successIntCounter", new IntCounter());
+        getRuntimeContext().addAccumulator("failureIntCounter", new IntCounter());
     }
 
     @Override
     public void flatMap(String value, Collector<String> out) throws Exception {
         String[] lines = value.split(System.lineSeparator());
+        boolean isHeaders = false;
         for (String line : lines) {
             String[] arr = line.split(",");
-            if (headers == null) {
-                headers = arr;
-            } else {
-                obj = getJSONObject(headers, arr);
-                if (obj != null) {
-                    this.successIntCounter.add(1);
-                    out.collect(obj.toString());
-                } else {
-                    this.failureIntCounter.add(1);
+
+            if (!isHeaders) {
+                isHeaders = true;
+                continue;
+            }
+
+            if (arr.length == 1 && arr[0].startsWith("\"filename:")) {
+                filename = arr[0].replace("\"filename:", "").replace("\"", "").trim();
+                continue;
+            }
+
+            if (arr.length == 1 && arr[0].startsWith("\"NodeIP:")) {
+                nodeIP = arr[0].replace("\"NodeIP:", "").replace("\"", "").trim();
+                continue;
+            }
+
+            if (arr.length > 1) {
+                if (jsonObject == null) {
+                    jsonObject = new JSONObject();
                 }
+
+                for (int i = 0; i < arr.length; i++) {
+                    if (i == 0) {
+                        String key = arr[i].trim().replaceAll("\"", "");
+                        String value = arr[i + 1].trim().replaceAll("\"", "");
+                        jsonObject.put(key, value);
+                    }
+                }
+                out.collect(jsonObject.toString());
+
+                jsonObject = null;
             }
         }
     }
-
-    JSONObject getJSONObject(String[] headerArr, String[] dataArr) throws JSONException {
-        if (headerArr.length != dataArr.length) {
-            return null;
-        }
-
-        JSONObject obj = new JSONObject();
-        for (int i = 0; i < headerArr.length; i++) {
-            String header = headerArr[i].trim().replace("\"", "");
-            String data = dataArr[i].trim().replace("\"", "");
-            obj.put(header, data);
-        }
-
-        return obj;
-    }
 }
-```
-
-You can use the `CsvtoJsonMrfcTransformer` class in a Flink pipeline to transform an MRFC CSV file to the desired JSON format. Make sure to set the appropriate input and output types in your pipeline according to your use case.

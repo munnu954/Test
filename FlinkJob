@@ -1,9 +1,5 @@
-public static class CsvToJsonMRFCFileTransformer extends RichFlatMapFunction<String, String> {
-
-    String[] headers;
-    JSONObject commonObj;
-    int index = 0;
-
+public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
+    private List<String> headerList = new ArrayList<>();
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
 
@@ -14,50 +10,45 @@ public static class CsvToJsonMRFCFileTransformer extends RichFlatMapFunction<Str
     }
 
     @Override
-    public void flatMap(String value, Collector<String> out) throws Exception {
-        String[] lines = value.split(System.lineSeparator());
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
+        int lineCount = 0;
+
         for (String line : lines) {
-            String[] arr;
-            if (index < 3) {
-                arr = line.split(",");
-                if (headers == null && index == 2) {
-                    headers = arr;
-                    index++;
-                    continue;
-                } else if (commonObj == null && index == 1) {
-                    commonObj = getJSONObject(headers, arr, null);
-                }
-            }
-
-            if (headers != null && index > 2) {
-                arr = line.split(",");
-                if (headers.length == arr.length) {
-                    JSONObject obj = getJSONObject(headers, arr, commonObj);
-                    this.successIntCounter.add(1);
-                    out.collect(obj.toString());
-                } else {
+            if (lineCount == 0 || lineCount == 1) {
+                String[] headerValues = line.split(",");
+                headerList.addAll(Arrays.asList(headerValues));
+            } else if (lineCount == 2) {
+                String[] headers = line.split(",");
+                if (headerList.size() != headers.length) {
                     this.failureIntCounter.add(1);
+                    continue;
                 }
+
+                for (int i = 0; i < headers.length; i++) {
+                    JSONObject obj = new JSONObject();
+                    obj.put(headerList.get(i), headers[i].trim().replace("\"", ""));
+                    this.successIntCounter.add(1);
+                    collector.collect(obj.toString());
+                }
+            } else {
+                String[] arr = line.split(",");
+                if (headerList.size() != arr.length) {
+                    this.failureIntCounter.add(1);
+                    continue;
+                }
+
+                JSONObject obj = new JSONObject();
+                for (int j = 0; j < arr.length; j++) {
+                    String jsonkey = headerList.get(j).trim().replace("\"", "");
+                    String jsonvalue = arr[j].trim().replace("\"", "");
+                    obj.put(jsonkey, jsonvalue);
+                }
+
+                this.successIntCounter.add(1);
+                collector.collect(obj.toString());
             }
-
-            index++;
+            lineCount++;
         }
     }
-
-    JSONObject getJSONObject(String[] headerArr, String[] dataArr, JSONObject commonJSON) throws JSONException {
-        JSONObject obj;
-        if (commonJSON == null) {
-            obj = new JSONObject();
-        } else {
-            obj = new JSONObject(commonJSON.toString());
-        }
-        for (int i = 0; i < dataArr.length; i++) {
-            String jsonkey = headerArr[i].trim().replace("\"", "");
-            String jsonValue = dataArr[i].trim().replace("\"", "");
-            obj.put(jsonkey, jsonValue);
-        }
-        return obj;
-    }
-
 }
-```

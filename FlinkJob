@@ -1,54 +1,63 @@
-AI 🤖:
-Sure, here is the modified code:
+public static class CsvToJsonMRFCFileTransformer extends RichFlatMapFunction<String, String> {
 
+    String[] headers;
+    JSONObject commonObj;
+    int index = 0;
 
-public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction {
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
 
-  private String[] headers;
-  private IntCounter successIntCounter = new IntCounter();
-  private IntCounter failureIntCounter = new IntCounter();
-
-  @Override
-  public void open(Configuration parameters) throws Exception {
-    getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-    getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
-  }
-
-  @Override
-  public void flatMap(String s, Collector collector) throws Exception {
-    String[] lines = s.split(System.lineSeparator());
-    for (int i = 0; i < lines.length; i++) {
-      String str = lines[i];
-      String[] arr = str.split(",");
-
-      if (i == 0) {
-        headers = arr; // Store the header row for key names
-        continue; // Skip processing the header row
-      }
-
-      if (headers == null || headers.length != arr.length) {
-        this.failureIntCounter.add(1);
-        continue;
-      }
-
-      JSONObject obj = new JSONObject();
-      for (int j = 0; j < arr.length; j++) {
-        String jsonkey = headers[j].trim().replace("\"", "");
-        String jsonvalue = arr[j].trim().replace("\"", "");
-        obj.put(jsonkey, jsonvalue);
-      }
-
-      String[] jsonValues = lines[2].split(",");
-      for (int j = 0; j < jsonValues.length; j++) {
-        String jsonValue = jsonValues[j].trim().replace("\"", "");
-        obj.put(headers[j], jsonValue);
-      }
-
-      this.successIntCounter.add(1);
-      collector.collect(obj.toString());
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
-  }
+
+    @Override
+    public void flatMap(String value, Collector<String> out) throws Exception {
+        String[] lines = value.split(System.lineSeparator());
+        for (String line : lines) {
+            String[] arr;
+            if (index < 3) {
+                arr = line.split(",");
+                if (headers == null && index == 2) {
+                    headers = arr;
+                    index++;
+                    continue;
+                } else if (commonObj == null && index == 1) {
+                    commonObj = getJSONObject(headers, arr, null);
+                }
+            }
+
+            if (headers != null && index > 2) {
+                arr = line.split(",");
+                if (headers.length == arr.length) {
+                    JSONObject obj = getJSONObject(headers, arr, commonObj);
+                    this.successIntCounter.add(1);
+                    out.collect(obj.toString());
+                } else {
+                    this.failureIntCounter.add(1);
+                }
+            }
+
+            index++;
+        }
+    }
+
+    JSONObject getJSONObject(String[] headerArr, String[] dataArr, JSONObject commonJSON) throws JSONException {
+        JSONObject obj;
+        if (commonJSON == null) {
+            obj = new JSONObject();
+        } else {
+            obj = new JSONObject(commonJSON.toString());
+        }
+        for (int i = 0; i < dataArr.length; i++) {
+            String jsonkey = headerArr[i].trim().replace("\"", "");
+            String jsonValue = dataArr[i].trim().replace("\"", "");
+            obj.put(jsonkey, jsonValue);
+        }
+        return obj;
+    }
+
 }
-
-
-This code first stores the header row in the headers variable. Then, it iterates through the remaining rows, and for each row, it creates a new JSONObject object. The JSONObject object is populated with the key-value pairs from the header row and the current row. Finally, the JSONObject object is converted to a string and collected by the Collector.
+```

@@ -1,8 +1,10 @@
-Sure, here is the updated code:
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.metrics.IntCounter;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
 
 public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
-
-    private String[] headers;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
 
@@ -13,33 +15,39 @@ public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String
     }
 
     @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
+    public void flatMap(String s, Collector<String> collector) {
         String[] lines = s.split(System.lineSeparator());
         String[] headerRow = lines[2].split(","); // Here, we are picking the 3rd line as the headers
 
-        // Process line 1 and line 2 as separate fields
-        String systemId = lines[0].substring(lines[0].indexOf("#") + 1).trim();
-        String nodeIP = lines[1].substring(lines[1].indexOf("#") + 1).trim();
-
+        // Process line 1 and line 2 dynamically
         JSONObject obj = new JSONObject();
-        obj.put("SystemId", systemId);
-        obj.put("NodeIP", nodeIP);
+        for (int i = 0; i < 2; i++) {
+            String line = lines[i].trim();
+            if (line.startsWith("#")) {
+                String[] parts = line.split(":");
+                if (parts.length == 2) {
+                    String key = parts[0].substring(1).trim(); // Removing #
+                    String value = parts[1].trim();
+                    obj.put(key, value);
+                }
+            }
+        }
 
         for (int i = 3; i < lines.length; i++) { // Start from the 4th line (index 3) as data lines
             String[] data = lines[i].split(",");
             if (headerRow.length == data.length) {
+                JSONObject dataObj = new JSONObject();
                 for (int j = 0; j < data.length; j++) {
                     String jsonkey = headerRow[j].trim().replace("\"", "");
                     String jsonvalue = data[j].trim().replace("\"", "");
-                    obj.put(jsonkey, jsonvalue);
+                    dataObj.put(jsonkey, jsonvalue);
                 }
+                obj.append("DATA", dataObj);
                 this.successIntCounter.add(1);
-                collector.collect(obj.toString());
             } else {
                 this.failureIntCounter.add(1);
             }
         }
+        collector.collect(obj.toString());
     }
 }
-
-I have removed the hardcoding of the SystemId and NodeIP jsonkeys and replaced them with variables. This will allow you to process the data without having to hardcode the values

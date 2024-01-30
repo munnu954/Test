@@ -1,50 +1,47 @@
+public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
+    private String[] headers;
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
 
-public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction {
-
-  private String[] headers;
-  private IntCounter successIntCounter = new IntCounter();
-  private IntCounter failureIntCounter = new IntCounter();
-
-  @Override
-  public void open(Configuration parameters) throws Exception {
-    getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-    getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
-  }
-
-  @Override
-  public void flatMap(String s, Collector collector) throws Exception {
-    String[] lines = s.split(System.lineSeparator());
-    JSONObject jsonObject = new JSONObject();
-
-    for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-      String line = lines[lineIndex];
-      String[] arr = line.split(",");
-
-      if (lineIndex < 3) {
-        // Process the 1st, 2nd, and 3rd lines as headers
-        if (lineIndex == 0) {
-          headers = arr;
-        } else if (lineIndex == 1) {
-          for (int j = 0; j < arr.length; j++) {
-            jsonObject.put(arr[j], "");
-          }
-        } else if (lineIndex == 2) {
-          for (int j = 0; j < arr.length; j++) {
-            jsonObject.put(headers[j], arr[j]);
-          }
-        }
-      } else {
-        if (headers == null || headers.length != arr.length) {
-          this.failureIntCounter.add(1);
-          continue;
-        }
-
-        for (int j = 0; j < arr.length; j++) {
-          jsonObject.put(headers[j], arr[j]);
-        }
-        this.successIntCounter.add(1);
-        collector.collect(jsonObject.toString());
-      }
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
-  }
+
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
+        JSONObject jsonObject = new JSONObject();
+
+        for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            String line = lines[lineIndex];
+            String[] arr = line.split(",");
+
+            if (lineIndex == 2) {
+                headers = arr; // Store the header row for key names
+            } else if (lineIndex > 2) {
+                if (headers == null || headers.length != arr.length) {
+                    this.failureIntCounter.add(1);
+                    continue;
+                }
+
+                JSONObject obj = new JSONObject();
+                for (int j = 0; j < arr.length; j++) {
+                    String jsonkey = headers[j].trim().replace("\"", "");
+                    String jsonvalue = arr[j].trim().replace("\"", "");
+                    obj.put(jsonkey, jsonvalue);
+                }
+
+                this.successIntCounter.add(1);
+                jsonObject.append("data", obj); // Append the transformed JSON object to the main JSON object
+            } else {
+                for (int j = 0; j < arr.length; j++) {
+                    String jsonvalue = arr[j].trim().replace("\"", "");
+                    jsonObject.put(jsonvalue, new ArrayList<>());
+                }
+            }
+        }
+        collector.collect(jsonObject.toString());
+    }
 }

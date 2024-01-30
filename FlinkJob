@@ -1,48 +1,54 @@
-To reframe the code to generate the desired transformed JSON, you can modify the flatMap function as follows:
+To reframe the code to generate a single transformed JSON, you can modify the code as follows:
 
 ```java
-@Override
-public void flatMap(String s, Collector<String> collector) throws Exception {
-    String[] lines = s.split(System.lineSeparator());
-    JSONObject jsonObject = new JSONObject();
+public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
+    private String[] headers;
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
 
-    for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-        String line = lines[lineIndex];
-        String[] arr = line.split(",");
-
-        if (lineIndex < 3) {
-            // Process the 1st, 2nd, and 3rd lines as headers
-            if (lineIndex == 0) {
-                jsonObject.put("SystemId", Arrays.asList(arr).get(0).replace("[# SystemId: ", "").replace("]", ""));
-            } else if (lineIndex == 1) {
-                jsonObject.put("NodeIP", Arrays.asList(arr));
-            } else if (lineIndex == 2) {
-                headers = arr; // Store the header row for key names
-            }
-        } else {
-            if (headers == null || headers.length != arr.length) {
-                this.failureIntCounter.add(1);
-                continue;
-            }
-
-            JSONObject obj = new JSONObject();
-            for (int j = 0; j < arr.length; j++) {
-                String jsonkey = headers[j].trim().replace("\"", "");
-                String jsonvalue = arr[j].trim().replace("\"", "");
-                obj.put(jsonkey, jsonvalue);
-            }
-            this.successIntCounter.add(1);
-            jsonObject.putAll(obj);
-        }
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
-    collector.collect(jsonObject.toString());
+
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
+        JSONObject jsonObject = new JSONObject();
+
+        for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            String line = lines[lineIndex];
+            String[] arr = line.split(",");
+
+            if (lineIndex == 0) {
+                jsonObject.put("SystemId", arr[0].substring(arr[0].indexOf(":") + 1).trim());
+                jsonObject.put("NodeIP", arr[1].substring(arr[1].indexOf(":") + 1).trim());
+            } else if (lineIndex == 2) {
+                headers = arr;
+            } else if (lineIndex > 2) {
+                if (headers == null || headers.length != arr.length) {
+                    this.failureIntCounter.add(1);
+                    continue;
+                }
+
+                JSONObject obj = new JSONObject();
+                for (int j = 0; j < arr.length; j++) {
+                    String jsonkey = headers[j].trim().replace("\"", "");
+                    String jsonvalue = arr[j].trim().replace("\"", "");
+                    obj.put(jsonkey, jsonvalue);
+                }
+                jsonObject.putAll(obj);
+                this.successIntCounter.add(1);
+            }
+        }
+        collector.collect(jsonObject.toString());
+    }
 }
 ```
 
-The modified code includes the following changes:
-1. In the 1st line processing, the "SystemId" key is extracted from the 1st line and added to the `jsonObject` using the `put` method.
-2. In the 2nd line processing, the "NodeIP" key is added to the `jsonObject` using the `put` method.
-3. In the 4th line processing, the `obj` JSONObject is not converted to a string, instead, its key-value pairs are added to the `jsonObject` using the `putAll` method.
-4. The final `jsonObject` is collected and emitted as the transformed JSON string.
-
-Now, the output will be a single JSON object with all the keys and values combined as required.
+Here's how the code has been modified:
+- The `SystemId` and `NodeIP` fields are extracted from the first line and added to the `jsonObject` directly.
+- The `headers` are stored when the lineIndex is 2, just like before.
+- For any lineIndex greater than 2, the columns are processed and added directly to the `jsonObject`.
+- Finally, only one `collector.collect(jsonObject.toString());` statement is needed to emit the final transformed JSON.

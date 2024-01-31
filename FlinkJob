@@ -1,41 +1,61 @@
+import org.apache.flink.api.common.accumulators.IntCounter;
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
 
-public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction {
+public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
+    private String[] headers;
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
+    private boolean headerProcessed = false;
 
-  private String[] headers;
-  private IntCounter successIntCounter = new IntCounter();
-  private IntCounter failureIntCounter = new IntCounter();
-
-  @Override
-  public void open(Configuration parameters) throws Exception {
-    getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-    getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
-  }
-
-  @Override
-  public void flatMap(String s, Collector collector) throws Exception {
-    String[] lines = s.split(System.lineSeparator());
-    for (int i = 0; i < lines.length; i++) {
-      String str = lines[i];
-      String[] arr = str.split(",");
-
-      if (i == 0) {
-        headers = arr; // Store the header row for key names
-        continue; // Skip processing the header row
-      }
-
-      if (headers == null || headers.length != arr.length) {
-        this.failureIntCounter.add(1);
-        continue;
-      }
-
-      JSONObject obj = new JSONObject();
-      for (int j = 0; j < arr.length; j++) {
-        String jsonkey = headers[j].trim().replace("\"", "");
-        String jsonvalue = arr[j].trim().replace("\"", "");
-        obj.put(jsonkey, jsonvalue);
-      }
-
-      collector.collect(obj.toString());
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
-  }
+
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
+        for (int i = 0; i < lines.length; i++) {
+            if (i == 0 && !headerProcessed) {
+                processHeader(lines[i]);
+                headerProcessed = true;
+                continue;
+            }
+            String str = lines[i];
+            String[] arr = str.split(",");
+            
+            if (headers == null || headers.length != arr.length) {
+                this.failureIntCounter.add(1);
+                continue;
+            }
+            
+            JSONObject obj = new JSONObject();
+            for (int j = 0; j < arr.length; j++) {
+                String jsonkey = headers[j].trim().replace("\"", "");
+                String jsonvalue = arr[j].trim().replace("\"", "");
+                obj.put(jsonkey, jsonvalue);
+            }
+            
+            this.successIntCounter.add(1);
+            collector.collect(obj.toString());
+        }
+    }
+
+    private void processHeader(String line) {
+        JSONObject obj = new JSONObject();
+        if (line.startsWith("# SystemId:")) {
+            String[] tokens = line.split(":");
+            obj.put(tokens[0].trim().replace("#", ""), tokens[1].trim());
+            collector.collect(obj.toString());
+        } else if (line.startsWith("# NodeIP:")) {
+            String[] tokens = line.split(":");
+            String[] values = tokens[1].split(",");
+            obj.put(tokens[0].trim().replace("#", ""), values);
+            collector.collect(obj.toString());
+        }
+    }
 }

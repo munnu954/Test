@@ -1,10 +1,80 @@
+Based on your request, I have updated the code to add the FILENAME parameter to the JSON object in the CsvtoJsonMRFCnTransformer class. Below is the updated code:
 
+Main.java class:-
+```java
+public class Main {
+    private static String bootstarpServer;
+    private static String topic;
+    private static String path;
+    private static String filename;
+    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
+
+    public static void main(String[] args) throws Exception {
+        UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
+        ParameterTool parameters = ParameterTool.fromArgs(args);
+        bootstarpServer = parameters.get("bootstarpServer");
+        topic = parameters.get("Topic");
+        filename = parameters.get("FILENAME");
+        LOGGER.info("Start to read and pick the path");
+        
+        static StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        final DataStream<String> stream = env.fromElements(readCSVFile(path));
+        
+        KafkaSink<String> sink = KafkaSink.<String>builder()
+            .setBootstrapServers(bootstarpServer)
+            .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                .setTopic(topic)
+                .setValueSerializationSchema(new SimpleStringSchema())
+                .build())
+            .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+            .build();
+
+        final DataStream<String> jsonStream;
+        String fileType = parameters.get("fileType");
+        switch (fileType) {
+            case "Gigamon":
+                jsonStream = stream.flatMap(new CsvtoJsonGigamonTransformer());
+                break;
+            case "MRFC":
+                jsonStream = stream.flatMap(new CsvtoJsonMRFCnTransformer(filename));
+                break;
+            default:
+                jsonStream = stream.flatMap(new CsvtoJsonTransformer());
+                break;
+        }
+        
+        jsonStream.sinkTo(sink);
+        env.execute();
+    }
+
+    public static String readCSVFile(String filePath) {
+        StringBuilder content = new StringBuilder();
+        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                content.append(line);
+                content.append(System.LineSeparator());
+            }
+        } catch (Exception e) {
+            LOGGER.error("Error in readCSVFile: ", e);
+        }
+        return content.toString();
+    }
+}
+```
+
+CsvtoJsonMRFCnTransformer:-
+```java
 public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
-
     private String[] headers;
+    private String filename;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
-
+    
+    public CsvtoJsonMRFCnTransformer(String filename) {
+        this.filename = filename;
+    }
+    
     @Override
     public void open(Configuration parameters) throws Exception {
         getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
@@ -14,29 +84,37 @@ public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String
     @Override
     public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-        for (int i = 0; i < lines.length; i++) {
+        String systemIdLine = lines[0];
+        String nodeIpLine = lines[1];
+        String systemId = systemIdLine.substring(systemIdLine.indexOf(":") + 1).trim();
+        String nodeIp = nodeIpLine.substring(nodeIpLine.indexOf(":") + 1).trim();
+        headers = lines[2].split(",");
+        
+        for (int i = 3; i < lines.length; i++) {
             String str = lines[i];
             String[] arr = str.split(",");
-
-            if (i == 0) {
-                headers = arr; // Store the header row for key names
-                continue; // Skip processing the header row
-            }
-
-            if (headers == null || headers.length != arr.length) {
+            
+            if (headers == null || headers.length != arr.length{
                 this.failureIntCounter.add(1);
                 continue;
             }
-
+            
             JSONObject obj = new JSONObject();
+            obj.put("#SystemId", systemId);
+            obj.put("#NodeIP", nodeIp);
+            obj.put("FILENAME", filename);
+            
             for (int j = 0; j < arr.length; j++) {
-                String jsonkey = headers[j].trim().replace("\"", "");
-                String jsonvalue = arr[j].trim().replace("\"", "");
+                String jsonkey = headers[j].trim().replace(""‌, "");
+                String jsonvalue = arr[j].trim().replace(""‌, "");
                 obj.put(jsonkey, jsonvalue);
             }
-
+            
             this.successIntCounter.add(1);
             collector.collect(obj.toString());
         }
     }
 }
+```
+
+Please note that the updated code assumes that you pass the FILENAME parameter correctly while running the program and the filePath variable in the readCSVFile() method is set correctly before calling the method.

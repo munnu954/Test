@@ -2,68 +2,90 @@ import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.api.common.accumulators.IntCounter;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.util.Collector;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonInclude;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.node.ObjectNode;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 public class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
-    private String[] headers;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
+    private String[] headers;
 
     @Override
-    public void open(Configuration parameters) throws Exception {
+    public void open(Configuration parameters) {
         getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
         getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
 
     @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
+    public void flatMap (String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-        ObjectMapper mapper = new ObjectMapper();
+        JSONObject obj = new JSONObject();
+        boolean headerProcessed = false;
 
-        // Process the first two lines; assuming headers are present and should be ignored
-        for (int i = 0; i < 2; i++) {
-            String line = lines[i];
-            String[] parts = line.split(":");
-            
-            ObjectNode obj = mapper.createObjectNode();
-            String jsonKey = parts[0].trim().replace("#", "");
+        for (String line : lines) {
+            String[] arr = line.split(",");
 
-            if (i == 0) { // Line 1 processing
-                obj.put(jsonKey, parts[1].trim());
-            } else if (i == 1) { // Line 2 processing
-                String[] values = parts[1].split(",");
-                for (int j = 0; j < values.length; j++) {
-                    obj.putArray(jsonKey).add(values[j].trim());
+            if (headers == null || headers.length != arr.length) {
+                this.failureIntCounter.add(1);
+                continue;
+            }
+
+            if (!headerProcessed) {
+                handleHeaderLine(arr); // Process line 1 and line 2 to set keys
+                headerProcessed = true;
+                continue;
+            }
+
+            for (int j = 0; j < arr.length; j++) {
+                String jsonkey = headers[j].trim().replace("\"", "");
+                String jsonvalue = arr[j].trim().replace("\"", "");
+                obj.put(jsonkey, jsonvalue);
+            }
+
+            this.successIntCounter.add(1);
+        }
+
+        collector.collect(obj.toString());
+    }
+
+    private void handleHeaderLine(String[] arr) {
+        for (int i = 0; i < arr.length; i++) {
+            if (i == 0) {
+                String key = getKeyString(arr[i]);
+                if (key != null) {
+                    obj.put(key, getValueString(arr[i+1]));
+                }
+            } else if (i == 1) {
+                String key = getKeyString(arr[i]);
+                if (key != null) {
+                    obj.put(key, jsonArrayFromString(arr[i+1]));
                 }
             }
-            
-            this.successIntCounter.add(1);
-            collector.collect(obj.toString());
         }
-        
-        // Process remaining lines (from line 3 onwards)
-        for (int i = 2; i < lines.length; i++) {
-            headers = arr; // Store the header row for key names
-                continue; // Skip processing the header row
-            }
-            
-            if (headers == null || headers.length != arr.length) {
-                this.failureIntCounter.add(1);
-                continue;
-            }
-            
-            JSONObject obj = new JSONObject();
-            for (int j = 0; j < arr.length; j++) {
-                String jsonkey = headers[j].trim().replace("\"", "");
-                String jsonvalue = arr[j].trim().replace("\"", "");
-                obj.put(jsonkey, jsonvalue);
-            }
-            
-            this.successIntCounter.add(1);
-            collector.collect(obj.toString());
-        }
-    }
+    }
+
+    private String getKeyString(String str) {
+        if (str.contains("SystemId")) {
+            return "SystemId";
+        } else if (str.contains("NodeIP")) {
+            return "NodeIP";
+        }
+        return null;
+    }
+
+    private String getValueString(String str) {
+        // Process values as needed
+        return str;
+    }
+
+    private JSONArray jsonArrayFromString(String str) {
+        String[] values = str.split(",");
+        JSONArray jsonArray = new JSONArray();
+        for (String val : values) {
+            val = val.trim();
+            // Additional processing if necessary
+            jsonArray.put(val);
+        }
+        return jsonArray;
+    }
 }

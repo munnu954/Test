@@ -2,55 +2,61 @@ public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String
     private String[] headers;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
-    
+
     @Override
     public void open(Configuration parameters) throws Exception {
         getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
         getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
-    
+
     @Override
     public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-        String systemIdHeader = null;
-        String nodeIPHeader = null;
-        String systemIdValue = null;
-        String nodeIPValue = null;
-        
-        for (int i = 0; i < lines.length; i++) {
+
+        // Add line1 as header
+        JSONObject line1Obj = new JSONObject();
+        String[] line1Arr = lines[0].split(": ");
+        String line1JsonKey = line1Arr[0];
+        String line1JsonValue = line1Arr[1].trim();
+        line1Obj.put(line1JsonKey, line1JsonValue);
+
+        // Add line2 as header
+        JSONObject line2Obj = new JSONObject();
+        String[] line2Arr = lines[1].split(": ");
+        String line2JsonKey = line2Arr[0].replace("# ", "");
+        String[] line2JsonValues = line2Arr[1].split(",");
+        for (int k = 0; k < line2JsonValues.length; k++) {
+            String line2JsonKeyElement = line2JsonKey + "_" + (k + 1);
+            line2Obj.put(line2JsonKeyElement.trim(), line2JsonValues[k].trim());
+        }
+
+        for (int i = 2; i < lines.length; i++) {
             String str = lines[i];
             String[] arr = str.split(",");
-            
-            if (i == 0) {
-                systemIdHeader = arr[0].trim().replace("#", "");
-				systemIdValue = arr[1].trim();
-                continue;
-            } else if (i == 1) {
-                nodeIPHeader = arr[0].trim().replace("#", "");
-				nodeIPValue = arr[1].trim();
-                continue;
-            } else if (i == 2) {
+
+            if (i == 2) {
                 headers = arr; // Store the header row for key names
                 continue; // Skip processing the header row
             }
-            
+
             if (headers == null || headers.length != arr.length) {
                 this.failureIntCounter.add(1);
                 continue;
             }
-            
+
             JSONObject obj = new JSONObject();
-            obj.put(systemIdHeader, systemIdValue);
-            obj.put(nodeIPHeader, nodeIPValue);
-            
-            for (int j = 2; j < arr.length; j++) {
-                String jsonkey = headers[j-2].trim().replace("\"", "");
-                String jsonvalue = arr[j].trim().replace("\"", "");
-                obj.put(jsonkey, jsonvalue);
+            for (int j = 0; j < arr.length; j++) {
+                String jsonKey = headers[j].trim().replace("\"", "");
+                String jsonValue = arr[j].trim().replace("\"", "");
+                obj.put(jsonKey, jsonValue);
             }
-            
+
             this.successIntCounter.add(1);
             collector.collect(obj.toString());
         }
+
+        // Add the header lines in one go
+        collector.collect(line1Obj.toString());
+        collector.collect(line2Obj.toString());
     }
 }

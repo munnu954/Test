@@ -1,80 +1,53 @@
-import org.apache.flink.api.java.utils.ParameterTool;
-import org.apache.flink.metrics.MetricGroup;
-import org.apache.flink.metrics.reporter.MetricReporter;
-import org.apache.flink.runtime.executiongraph.ExecutionGraphTest;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.testutils.AbstractTestBase;
+import static org.junit.Assert.*;
+
+import org.apache.flink.api.java.DataSet;
+import org.apache.flink.api.java.ExecutionEnvironment;
+import org.apache.flink.api.java.tuple.Tuple;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.core.fs.FileSystem;
+import org.apache.flink.core.fs.Path;
+import org.apache.flink.test.util.AbstractTestBase;
 import org.junit.Before;
 import org.junit.Test;
 
-import static org.junit.Assert.*;
+public class CsvToJsonConversionTest extends AbstractTestBase {
+	private ExecutionEnvironment env;
 
-public class MainTest extends AbstractTestBase {
+	@Before
+	public void setUp() throws Exception {
+		env = ExecutionEnvironment.getExecutionEnvironment();
+	}
 
-    private ParameterTool parameterTool;
+	@Test
+	public void testCsvToJsonConversion_Success() throws Exception {
+		// Arrange
+		String csvContent = "SystemId:SOLKTXE1100.101\nNodeIP:,2607:f160:8a03:a03a:c0:10f::,2607:f160:8a03:a03a:c0:10f:0:1,2607:f160:8a03:a03a:c0:10f:0:2,2607:f160:8a03:a03a:c0:10f:0:3\nHeader1,Header2,Header3,Header4\nValue1,Value2,Value3,Value4";
+		
+		DataSet<String> csvDataSet = env.fromElements(csvContent);
+		DataSet<String> jsonDataSet = csvDataSet.flatMap(new CsvtoJsonConversion.CsvToJsonMRFCnTransformer("test.csv"));
+		
+		// Act
+		String jsonResult = jsonDataSet.collect().get(0);
+		
+		// Assert
+		String expectedResult = "{\"#SystemId\":\"SOLKTXE1100.101\",\"#NodeIP\":\"\",\"FILENAME\":\"test.csv\",\"Header1\":\"Value1\",\"Header2\":\"Value2\",\"Header3\":\"Value3\",\"Header4\":\"Value4\"}";
+		assertEquals(expectedResult, jsonResult);
+	}
 
-    @Before
-    public void setup() {
-        parameterTool = ParameterTool.fromArgs(
-                "--auditTopic", "auditTopic",
-                "--bootstrapServer", "bootstrapServer",
-                "--outputTopic", "outputTopic",
-                "--fileType", "MRFC",
-                "--filePath", "filePath",
-                "--flink_url", "flinkURL",
-                "--delimiters", "delimiters"
-        );
-        ExecutionGraphTest.Environment.setAsContext(StreamExecutionEnvironment.createLocalEnvironmentWithWebUI());
-    }
+	@Test
+	public void testCsvToJsonConversion_InvalidHeaders_FailureCounterIncrements() throws Exception {
+		// Arrange
+		String csvContent = "SystemId:SOLKTXE1100.101\nNodeIP:,2607:f160:8a03:a03a:c0:10f::\nHeader1,Header2,Header3,Header4\nValue1,Value2,Value3"; // Missing a value
+		
+		DataSet<String> csvDataSet = env.fromElements(csvContent);
+		DataSet<String> jsonDataSet = csvDataSet.flatMap(new CsvtoJsonConversion.CsvToJsonMRFCnTransformer("test.csv"));
+		
+		// Act
+		String jsonResult = jsonDataSet.collect().get(0);
 
-    @Test
-    public void testMain() throws Exception {
-        Main.main(parameterTool.toArgs());
-        assertTrue(ExecutionGraphTest.Environment.getExecutionEnvironment().isRunning());
-    }
-
-    @Test(expected = NullPointerException.class)
-    public void testMainNoRecordsFound() throws Exception {
-        parameterTool = ParameterTool.fromArgs(
-                "--auditTopic", "auditTopic",
-                "--bootstrapServer", "bootstrapServer",
-                "--outputTopic", "outputTopic",
-                "--fileType", "MRFC",
-                "--filePath", "filePath",
-                "--flink_url", "flinkURL",
-                "--delimiters", "delimiters"
-        );
-        Main.main(parameterTool.toArgs());
-    }
-    
-    @Test
-    public void testCsvToJsonMRFCnTransformer() throws Exception {
-        String csvData = "Header1,Header2,Header3\nValue1,Value2,Value3\n";
-        Main.CsvtoJsonMRFCnTransformer transformer = new Main.CsvtoJsonMRFCnTransformer("fileName");
-        transformer.flatMap(csvData, new Collector<String>() {
-            @Override
-            public void collect(String s) {
-                assertEquals("{\"#SystemId\":\"systemId\",\"#NodeIP\":\"nodeIp\",\"FILENAME\":\"fileName\",\"Header1\":\"Value1\",\"Header2\":\"Value2\",\"Header3\":\"Value3\"}", s);
-            }
-
-            @Override
-            public void close() {}
-        });
-        assertEquals(1, transformer.successIntCounter.getLocalValue());
-    }
-
-    @Test
-    public void testCsvToJsonMRFCnTransformerWithMissingHeaders() throws Exception {
-        String csvData = "Header1,Header2\nValue1,Value2,Value3\n";
-        Main.CsvtoJsonMRFCnTransformer transformer = new Main.CsvtoJsonMRFCnTransformer("fileName");
-        transformer.flatMap(csvData, new Collector<String>() {
-            @Override
-            public void collect(String s) {}
-
-            @Override
-            public void close() {}
-        });
-        assertEquals(0, transformer.successIntCounter.getLocalValue());
-        assertEquals(1, transformer.failureIntCounter.getLocalValue());
-    }
+		// Assert
+		String expectedResult = "{\"#SystemId\":\"SOLKTXE1100.101\",\"#NodeIP\":\"\"}";
+		assertEquals(expectedResult, jsonResult);
+		assertEquals(1, env.getLastJobExecutionResult().getAccumulatorResult("failureIntCounter"));
+	}
 }

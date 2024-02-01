@@ -1,128 +1,149 @@
-Here is the sample code for the JUnit 5 test cases for the FlinkApiController class:
-
-```java
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.http.*;
-import org.springframework.web.client.RestTemplate;
-
-import static org.mockito.ArgumentMatchers.*;
+import org.apache.flink.api.common.accumulators.IntCounter;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.util.StreamCollector;
+import org.json.JSONObject;
+import org.junit.Before;
+import org.junit.Test;
+import org.mockito.*;
+import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
 
-public class FlinkApiControllerTest {
+public class MainTest {
+    @Mock
+    private ParameterTool parameterTool;
+    
+    @Mock
+    private StreamExecutionEnvironment env;
+    
+    @Mock
+    private DataStream<String> stream;
+    
+    @Mock
+    private DataStream<String> jsonStream;
     
     @InjectMocks
-    private FlinkApiController flinkApiController;
+    private UnifiedAuditMessage unifiedAuditMessage;
     
-    @Mock
-    private RestTemplate restTemplate;
+    @Spy
+    private ByteArrayOutputStream outContent = new ByteArrayOutputStream();
     
-    @Mock
-    private KafkaConsumer kafkaConsumer;
+    @Spy
+    private ByteArrayOutputStream errContent = new ByteArrayOutputStream();
     
-    @Mock
-    private KafkaAuditProducer kafkaAuditProducer;
-    
-    private UnifiedAuditMessage auditMessage;
-    
-    @BeforeEach
-    public void setup() {
+    @Before
+    public void setUp() {
         MockitoAnnotations.initMocks(this);
+        System.setOut(new PrintStream(outContent));
+        System.setErr(new PrintStream(errContent));
+    }
+
+    // Positive test case for MRFC file transformation
+    @Test
+    public void testMRFCFileTransformation_Positive() throws Exception {
+        // Arrange
+        String csvRecords = "SystemId: SOLKTXE1100.101\r\n" +
+                             "NodeIP: \r\n" +
+                             "header1,header2,header3\r\n" +
+                             "value1,value2,value3\r\n";
+        when(ParameterTool.fromArgs(ArgumentMatchers.any(String[].class))).thenReturn(parameterTool);
+        when(parameterTool.get("auditTopic")).thenReturn("audit_topic");
+        when(parameterTool.get("bootstrapServer")).thenReturn("bootstrap_server");
+        when(parameterTool.get("outputTopic")).thenReturn("output_topic");
+        when(parameterTool.get("fileType").toUpperCase()).thenReturn("MRFC");
+        when(parameterTool.get("filePath")).thenReturn("file_path");
+        when(parameterTool.get("flink_url")).thenReturn("flink_url");
+        when(parameterTool.get("delimiters")).thenReturn(",");
+        when(StreamExecutionEnvironment.getExecutionEnvironment()).thenReturn(env);
+        when(env.fromElements(csvRecords)).thenReturn(stream);
+        when(stream.flatMap(any(CsvtoJsonMRFCnTransformer.class))).thenReturn(jsonStream);
         
-        flinkApiController.setFlinkApiUrl("http://localhost:8080");
-        flinkApiController.setFlinkJobJarid("test-jar-id");
-        flinkApiController.setProgramArgs("--inputPath input --outputPath output");
-        
-        auditMessage = new UnifiedAuditMessage();
-        // Set audit message properties
-        
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        flinkApiController.setHeaders(headers);
+        // Act
+        Main.main(new String[]{});
+
+        // Assert
+        verify(env, times(1)).execute();
+        assertEquals("{}", outContent.toString()); // Verify that the JSON content is empty in this case
     }
     
+    // Negative test case for MRFC file transformation with missing headers
     @Test
-    public void testTriggerJob_SuccessfulSubmission() {
-        // Mock successful job submission
-        ResponseEntity<String> response = new ResponseEntity<>("", HttpStatus.OK);
-        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class))).thenReturn(response);
+    public void testMRFCFileTransformation_Negative_MissingHeaders() throws Exception {
+        // Arrange
+        String csvRecords = "SystemId: SOLKTXE1100.101\r\n" +
+                             "NodeIP: \r\n" +
+                             "header1,header2,header3\r\n" +
+                             "value1,value2\r\n"; // Missing one header
+        when(ParameterTool.fromArgs(ArgumentMatchers.any(String[].class))).thenReturn(parameterTool);
+        when(parameterTool.get("auditTopic")).thenReturn("audit_topic");
+        when(parameterTool.get("bootstrapServer")).thenReturn("bootstrap_server");
+        when(parameterTool.get("outputTopic")).thenReturn("output_topic");
+        when(parameterTool.get("fileType").toUpperCase()).thenReturn("MRFC");
+        when(parameterTool.get("filePath")).thenReturn("file_path");
+        when(parameterTool.get("flink_url")).thenReturn("flink_url");
+        when(parameterTool.get("delimiters")).thenReturn(",");
+        when(StreamExecutionEnvironment.getExecutionEnvironment()).thenReturn(env);
+        when(env.fromElements(csvRecords)).thenReturn(stream);
+        when(stream.flatMap(any(CsvtoJsonMRFCnTransformer.class))).thenReturn(jsonStream);
         
-        String result = flinkApiController.triggerJob(auditMessage, ".csv");
-        
-        // Verify job submission
-        verify(restTemplate).postForEntity(eq("http://localhost:8080/jars/test-jar-id/run"), any(HttpEntity.class), eq(String.class));
-        
-        // Verify Kafka producer method calls
-        verify(kafkaAuditProducer).createMessageAndLog(anyString(), anyString(), anyInt(), anyString(), anyString(), 
-                                                      anyString(), anyString(), anyInt(), anyInt(), anyInt(), anyString(),
-                                                      anyString(), anyString(), anyString(), anyString());
-        
-        // Verify job status update
-        verify(flinkApiController).updateJobStatus(any(UnifiedAuditMessage.class), anyString());
-        
-        // Verify result
-        assertEquals("Job submitted", result);
+        // Act
+        Main.main(new String[]{});
+
+        // Assert
+        verify(env, times(0)).execute(); // ExecutionEnvironment should not be executed
+        assertEquals("No records found", errContent.toString().trim()); // Verify the correct error message
     }
     
+    // Positive test case for CsvtoJsonConversion transformer
     @Test
-    public void testTriggerJob_UnsuccessfulSubmission() {
-        // Mock unsuccessful job submission
-        ResponseEntity<String> response = new ResponseEntity<>("", HttpStatus.INTERNAL_SERVER_ERROR);
-        when(restTemplate.postForEntity(anyString(), any(HttpEntity.class), eq(String.class))).thenReturn(response);
+    public void testCsvtoJsonConversionTransformer_Positive() throws Exception {
+        // Arrange
+        String csvRecords = "header1,header2,header3\r\n" +
+                            "value1,value2,value3\r\n";
+        when(ParameterTool.fromArgs(ArgumentMatchers.any(String[].class))).thenReturn(parameterTool);
+        when(parameterTool.get("auditTopic")).thenReturn("audit_topic");
+        when(parameterTool.get("bootstrapServer")).thenReturn("bootstrap_server");
+        when(parameterTool.get("outputTopic")).thenReturn("output_topic");
+        when(parameterTool.get("fileType").toUpperCase()).thenReturn("OTHER");
+        when(parameterTool.get("filePath")).thenReturn("file_path");
+        when(parameterTool.get("flink_url")).thenReturn("flink_url");
+        when(parameterTool.get("delimiters")).thenReturn(",");
+        when(StreamExecutionEnvironment.getExecutionEnvironment()).thenReturn(env);
+        when(env.fromElements(csvRecords)).thenReturn(stream);
+        when(stream.flatMap(any(CsvtoJsonConversion.class))).thenReturn(jsonStream);
         
-        String result = flinkApiController.triggerJob(auditMessage, ".csv");
-        
-        // Verify job submission
-        verify(restTemplate).postForEntity(eq("http://localhost:8080/jars/test-jar-id/run"), any(HttpEntity.class), eq(String.class));
-        
-        // Verify Kafka producer method calls
-        verify(kafkaAuditProducer).createMessageAndLog(anyString(), anyString(), anyInt(), anyString(), anyString(), 
-                                                      anyString(), anyString(), anyInt(), anyInt(), anyInt(), anyString(),
-                                                      anyString(), anyString(), anyString(), anyString());
-        
-        // Verify job status update
-        verify(flinkApiController).updateJobStatus(any(UnifiedAuditMessage.class), anyString());
-        
-        // Verify log writing
-        verify(kafkaConsumer).writeLogToFile(any(UnifiedAuditMessage.class), anyString(), any(ResponseEntity.class), anyString());
-        
-        // Verify result
-        assertEquals("Job is not triggered", result);
+        // Act
+        Main.main(new String[]{});
+
+        // Assert
+        verify(env, times(1)).execute();
+        assertEquals("{}", outContent.toString()); // Verify that the JSON content is empty in this case
     }
     
+    // Negative test case for CsvtoJsonConversion transformer with invalid file type
     @Test
-    public void testUpdateJobStatus_Finished() {
-        // Mock finished job status
-        JsonNode jsonNode = mock(JsonNode.class);
-        when(jsonNode.get("state")).thenReturn(mock(JsonNode.class));
-        when(jsonNode.get("state").textValue()).thenReturn("FINISHED");
+    public void testCsvtoJsonConversionTransformer_Negative_InvalidFileType() throws Exception {
+        // Arrange
+        String csvRecords = "header1,header2,header3\r\n" +
+                            "value1,value2,value3\r\n";
+        when(ParameterTool.fromArgs(ArgumentMatchers.any(String[].class))).thenReturn(parameterTool);
+        when(parameterTool.get("auditTopic")).thenReturn("audit_topic");
+        when(parameterTool.get("bootstrapServer")).thenReturn("bootstrap_server");
+        when(parameterTool.get("outputTopic")).thenReturn("output_topic");
+        when(parameterTool.get("fileType").toUpperCase()).thenReturn("INVALID_FILE_TYPE");
+        when(parameterTool.get("filePath")).thenReturn("file_path");
+        when(parameterTool.get("flink_url")).thenReturn("flink_url");
+        when(parameterTool.get("delimiters")).thenReturn(",");
+        when(StreamExecutionEnvironment.getExecutionEnvironment()).thenReturn(env);
+        when(env.fromElements(csvRecords)).thenReturn(stream);
+        when(stream.flatMap(any(CsvtoJsonConversion.class))).thenReturn(jsonStream);
         
-        when(restTemplate.getForObject(eq("http://localhost:8080/jobs/test-job-id"), eq(JsonNode.class))).thenReturn(jsonNode);
-        
-        flinkApiController.updateJobStatus(auditMessage, "test-job-id");
-        
-        // Verify job status update
-        assertEquals(JobStatus.FLINK_JOB_SUBMITTED.toString(), auditMessage.getJobStatus());
-    }
-    
-    @Test
-    public void testUpdateJobStatus_Failed() {
-        // Mock failed job status
-        JsonNode jsonNode = mock(JsonNode.class);
-        when(jsonNode.get("state")).thenReturn(mock(JsonNode.class));
-        when(jsonNode.get("state").textValue()).thenReturn("FAILED");
-        
-        when(restTemplate.getForObject(eq("http://localhost:8080/jobs/test-job-id"), eq(JsonNode.class))).thenReturn(jsonNode);
-        
-        flinkApiController.updateJobStatus(auditMessage, "test-job-id");
-        
-        // Verify job status update
-        assertEquals(JobStatus.FLINK_JOB_FAILED.toString(), auditMessage.getJobStatus());
+        // Act
+        Main.main(new String[]{});
+
+        // Assert
+        verify(env, times(0)).execute(); // ExecutionEnvironment should not be executed
+        assertEquals("Invalid file type", errContent.toString().trim()); // Verify the correct error message
     }
 }
-```
-
-Please note that you need to modify the test cases according to your actual implementation and dependencies.

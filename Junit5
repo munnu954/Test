@@ -1,32 +1,61 @@
-Based on the provided code, it seems that the `path` variable in the `Main` class is null when the `split` method is called. You need to ensure that the value of `path` is properly set before calling `split`.
+To fix the null pointer exception error in your code, you need to properly initialize the `path` variable before calling `split()` on it. Here's an updated version of your code:
 
-To fix the error, you can modify the `testProcessMRFCFile` method to provide a valid value for the `--input` argument.
+```java
+public class Main {
+    private static String bootstarpServer;
+    private static String topic;
+    private static String path;
+    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
 
-Here's the updated code:
+    public static void main(String[] args) throws Exception {
+        UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
+        ParameterTool parameters = ParameterTool.fromArgs(args);
+        bootstarpServer = parameters.get("bootstarpServer");
+        topic = parameters.get("Topic");
+        path = parameters.get("filePath");
+        unifiedAuditMessage.setInputFilePath(path);
+        LOGGER.info("Start to read and pick the path");
+
+        String[] pathArr = path.split("/");
+        String fileName = pathArr[pathArr.length - 1];
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        final DataStream<String> stream = env.fromElements(readCSVFile(path));
+
+        KafkaSink<String> sink = KafkaSink.<String>builder()
+                .setBootstrapServers(bootstarpServer)
+                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                        .setTopic(topic)
+                        .setValueSerializationSchema(new SimpleStringSchema())
+                        .build())
+                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+                .build();
+
+        final DataStream<String> jsonStream;
+        String fileType = parameters.get("fileType");
+        switch (fileType) {
+            case "MRFC":
+                jsonStream = stream.flatMap(new CsvtoJsonMRFCnTransformer(fileName));
+                break;
+            default:
+                jsonStream = stream.flatMap(new CsvtoJsonTransformer());
+                break;
+        }
+
+        jsonStream.sinkTo(sink);
+        env.execute();
+    }
+}
+```
+
+And for your test case:
 
 ```java
 @Test
 public void testProcessMRFCFile() throws Exception {
-    String[] args = {
-        "--input", "C://Temp/SOLKTXE1100_MSCNODELINKPERF.240110-1710.SOLKTXE1100.101",
-        "--bootstrapServer", "localhost:9092",
-        "--outputTopic", "FlinkDemo",
-        "--fileType", "MRFC",
-        "--auditTopic", "3459-DEV-COLLECTION-AUDIT-QUEUE",
-        "--flink_url", "http://localhost:8081",
-        "--delimiters", ","
-    };
-    
-    Main.bootstarpServer = "localhost:9092"; // Set the value of bootstrapServer
-    Main.topic = "FlinkDemo"; // Set the value of topic
-    
-    ParameterTool parameters = ParameterTool.fromArgs(args);
-    Main.path = parameters.get("input"); // Set the value of path
-    
+    String[] args = {"--input", "C://Temp/SOLKTXE1100_MSCNODELINKPERF.240110-1710.SOLKTXE1100.101", "--bootstrapServer", "localhost:9092", "--outputTopic", "FlinkDemo", "--fileType", "MRFC", "--auditTopic", "3459-DEV-COLLECTION-AUDIT-QUEUE", "--flink_url", "http://localhost:8081", "--delimiters", ","};
     Main.main(args);
 }
 ```
 
-Note that you need to set the values of `bootstarpServer` and `topic` in the `Main` class before calling the `main` method. Also, make sure to match the argument names in the `args` array with the ones expected in the `ParameterTool`.
-
-Make sure to adjust the values according to your requirements.
+Make sure to include the `--` prefix before specifying the parameter names in your test case command line arguments.

@@ -1,117 +1,111 @@
-Main.java class:
-```java
-public class Main {
-    private static String bootstarpServer;
-    private static String topic;
-    private static String path;
-    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
+Sure! Here are positive and negative JUnit test cases for the provided code:
 
-    public static void main(String[] args) throws Exception {
-        UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
-        ParameterTool parameters = ParameterTool.fromArgs(args);
-        bootstarpServer = parameters.get("bootstarpServer");
-        topic = parameters.get("Topic");
-        path = parameters.get("filePath");
-        unifiedAuditMessage.setInputFilePath(path);
-        LOGGER.info("Start to read and pick the path");
-        
-        String[] pathArr = path.split("/");
-        String fileName = pathArr[pathArr.length - 1];
-        
-        static StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        final DataStream<String> stream = env.fromElements(readCSVFile(path));
-        
-        KafkaSink<String> sink = KafkaSink.<String>builder()
-                .setBootstrapServers(bootstarpServer)
-                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
-                        .setTopic(topic)
-                        .setValueSerializationSchema(new SimpleStringSchema())
-                        .build())
-                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-                .build();
-        
-        final DataStream<String> jsonStream;
-        String fileType = parameters.get("fileType");
-        switch (fileType) {
-            case "MRFC":
-                jsonStream = stream.flatMap(new CsvtoJsonMRFCnTransformer(fileName));
-                break;
-            default:
-                jsonStream = stream.flatMap(new CsvtoJsonTransformer());
-                break;
-        }
-        
-        jsonStream.sinkTo(sink);
-        env.execute();
+```java
+import org.apache.flink.api.common.functions.RuntimeContext;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.SimpleCounter;
+import org.apache.flink.streaming.api.functions.sink.SinkFunction;
+import org.apache.flink.streaming.util.MockStreamSink;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
+
+import static org.junit.Assert.*;
+
+public class MainTest {
+
+    @Rule
+    public TemporaryFolder tempFolder = new TemporaryFolder();
+
+    @Test
+    public void testReadCSVFilePositive() {
+        // Given
+        String filePath = "src/test/resources/test.csv";
+        String expectedContent = "header1,header2\nvalue1,value2\nvalue3,value4\n";
+
+        // When
+        String content = Main.readCSVFile(filePath);
+
+        // Then
+        assertEquals(expectedContent, content);
     }
 
-    public static String readCSVFile(String filePath) {
-        StringBuilder content = new StringBuilder();
-        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                content.append(line);
-                content.append(System.LineSeparator());
-            }
-        } catch (Exception e) {
-            LOGGER.error("Error in readCSVFile: ", e);
+    @Test(expected = Exception.class)
+    public void testReadCSVFileNegative() {
+        // Given
+        String filePath = "non_existing_file.csv";
+
+        // When
+        Main.readCSVFile(filePath);
+
+        // Then
+        // Exception is expected
+    }
+
+    @Test
+    public void testCsvtoJsonMRFCnTransformerPositive() throws Exception {
+        // Given
+        String fileName = "test.csv";
+        String csvContent = "systemId: 123\nnodeIp: 127.0.0.1\nheader1,header2\nvalue1,value2\nvalue3,value4\n";
+        String expectedJson1 = "{\"#SystemId\":\"123\",\"#NodeIP\":\"127.0.0.1\",\"FILENAME\":\"test.csv\",\"header1\":\"value1\",\"header2\":\"value2\"}";
+        String expectedJson2 = "{\"#SystemId\":\"123\",\"#NodeIP\":\"127.0.0.1\",\"FILENAME\":\"test.csv\",\"header1\":\"value3\",\"header2\":\"value4\"}";
+
+        Main.CsvtoJsonMRFCnTransformer transformer = new Main.CsvtoJsonMRFCnTransformer(fileName);
+        Configuration parameters = new Configuration();
+        transformer.open(parameters);
+
+        // Mock collector
+        MockCollector mockCollector = new MockCollector();
+
+        // When
+        transformer.flatMap(csvContent, mockCollector);
+
+        // Then
+        assertEquals(expectedJson1, mockCollector.collectedStrings.get(0));
+        assertEquals(expectedJson2, mockCollector.collectedStrings.get(1));
+        assertEquals(2, mockCollector.collectedStrings.size());
+
+        // Verify success and failure counters
+        assertEquals(2, transformer.successIntCounter.getLocalValue().intValue());
+        assertEquals(0, transformer.failureIntCounter.getLocalValue().intValue());
+    }
+
+    @Test
+    public void testCsvtoJsonMRFCnTransformerWithIncorrectHeaders() throws Exception {
+        // Given
+        String fileName = "test.csv";
+        String csvContent = "systemId: 123\nnodeIp: 127.0.0.1\nheader1,header2\nvalue1\nvalue3,value4\n";
+
+        Main.CsvtoJsonMRFCnTransformer transformer = new Main.CsvtoJsonMRFCnTransformer(fileName);
+        Configuration parameters = new Configuration();
+        transformer.open(parameters);
+
+        // Mock collector
+        MockCollector mockCollector = new MockCollector();
+
+        // When
+        transformer.flatMap(csvContent, mockCollector);
+
+        // Then
+        assertEquals(1, mockCollector.collectedStrings.size());
+
+        // Verify success and failure counters
+        assertEquals(1, transformer.successIntCounter.getLocalValue().intValue());
+        assertEquals(1, transformer.failureIntCounter.getLocalValue().intValue());
+    }
+
+    private static class MockCollector implements Main.Collector<String> {
+        private final List<String> collectedStrings = new ArrayList<>();
+
+        @Override
+        public void collect(String s) {
+            collectedStrings.add(s);
         }
-        return content.toString();
+
+        @Override
+        public void close() {}
     }
 }
 ```
 
-CsvtoJsonMRFCnTransformer:
-```java
-public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
-    private String[] headers;
-    private String fileName;
-    private IntCounter successIntCounter = new IntCounter();
-    private IntCounter failureIntCounter = new IntCounter();
-    
-    public CsvtoJsonMRFCnTransformer(String fileName) {
-        this.fileName = fileName;
-    }
-    
-    @Override
-    public void open(Configuration parameters) throws Exception {
-        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
-    }
-
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] lines = s.split(System.lineSeparator());
-        String systemIdLine = lines[0];
-        String nodeIpLine = lines[1];
-        String systemId = systemIdLine.substring(systemIdLine.indexOf(":") + 1).trim();
-        String nodeIp = nodeIpLine.substring(nodeIpLine.indexOf(":") + 1).trim();
-        headers = lines[2].split(",");
-        
-        for (int i = 3; i < lines.length; i++) {
-            String str = lines[i];
-            String[] arr = str.split(",");
-            
-            if (headers == null || headers.length != arr.length) {
-                this.failureIntCounter.add(1);
-                continue;
-            }
-            
-            JSONObject obj = new JSONObject();
-            obj.put("#SystemId", systemId);
-            obj.put("#NodeIP", nodeIp);
-            obj.put("FILENAME", fileName);
-            
-            for (int j = 0; j < arr.length; j++) {
-                String jsonkey = headers[j].trim().replace(""‌, "");
-                String jsonvalue = arr[j].trim().replace(""‌, "");
-                obj.put(jsonkey, jsonvalue);
-            }
-            
-            this.successIntCounter.add(1);
-            collector.collect(obj.toString());
-        }
-    }
-}
-
-Could you please write positive and negative Junit Test cases code for the above code, especially focus on FILENAME, NodeIP, SystemId and other headers. The testcases code should be executable and pass 
+Note: In the provided code, the `Collector` interface is not imported. You need to import it or create a test-specific `Collector` interface in your test class. Also, make sure to import the required dependencies for the test to work properly.

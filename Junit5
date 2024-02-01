@@ -1,60 +1,80 @@
-Here is an example of positive and negative JUnit test cases for the given code:
-
-Positive Test Case:
-```java 
-import org.junit.Assert;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.metrics.MetricGroup;
+import org.apache.flink.metrics.reporter.MetricReporter;
+import org.apache.flink.runtime.executiongraph.ExecutionGraphTest;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.testutils.AbstractTestBase;
 import org.junit.Before;
 import org.junit.Test;
 
-public class MainTest {
-   
-    private Main main;
+import static org.junit.Assert.*;
+
+public class MainTest extends AbstractTestBase {
+
+    private ParameterTool parameterTool;
 
     @Before
-    public void setUp() {
-        main = new Main();
+    public void setup() {
+        parameterTool = ParameterTool.fromArgs(
+                "--auditTopic", "auditTopic",
+                "--bootstrapServer", "bootstrapServer",
+                "--outputTopic", "outputTopic",
+                "--fileType", "MRFC",
+                "--filePath", "filePath",
+                "--flink_url", "flinkURL",
+                "--delimiters", "delimiters"
+        );
+        ExecutionGraphTest.Environment.setAsContext(StreamExecutionEnvironment.createLocalEnvironmentWithWebUI());
     }
 
     @Test
-    public void testCsvToJsonConversion() throws Exception {
-        String csvRecords = "SystemId: SOLKTXE1100.101\nNodeIP: \nHeader1,Header2,Header3\nValue1,Value2,Value3";
-        String expectedJson = "{\"#SystemId\":\"SOLKTXE1100.101\",\"#NodeIP\":\"\",\"Header1\":\"Value1\",\"Header2\":\"Value2\",\"Header3\":\"Value3\",\"FILENAME\":\"file.csv\"}";
-
-        String convertedJson = main.convertCsvToJson(csvRecords, "file.csv");
-
-        Assert.assertEquals(expectedJson, convertedJson);
-    }
-    
-    // Other positive test cases can be added for testing various scenarios
-    
-}
-```
-
-Negative Test Case:
-```java 
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-
-public class MainTest {
-   
-    private Main main;
-
-    @Before
-    public void setUp() {
-        main = new Main();
+    public void testMain() throws Exception {
+        Main.main(parameterTool.toArgs());
+        assertTrue(ExecutionGraphTest.Environment.getExecutionEnvironment().isRunning());
     }
 
     @Test(expected = NullPointerException.class)
-    public void testCsvToJsonConversion_InvalidCsvRecords() throws Exception {
-        String csvRecords = null;
-
-        main.convertCsvToJson(csvRecords, "file.csv");
+    public void testMainNoRecordsFound() throws Exception {
+        parameterTool = ParameterTool.fromArgs(
+                "--auditTopic", "auditTopic",
+                "--bootstrapServer", "bootstrapServer",
+                "--outputTopic", "outputTopic",
+                "--fileType", "MRFC",
+                "--filePath", "filePath",
+                "--flink_url", "flinkURL",
+                "--delimiters", "delimiters"
+        );
+        Main.main(parameterTool.toArgs());
     }
     
-    // Other negative test cases can be added for testing various scenarios
-    
-}
-```
+    @Test
+    public void testCsvToJsonMRFCnTransformer() throws Exception {
+        String csvData = "Header1,Header2,Header3\nValue1,Value2,Value3\n";
+        Main.CsvtoJsonMRFCnTransformer transformer = new Main.CsvtoJsonMRFCnTransformer("fileName");
+        transformer.flatMap(csvData, new Collector<String>() {
+            @Override
+            public void collect(String s) {
+                assertEquals("{\"#SystemId\":\"systemId\",\"#NodeIP\":\"nodeIp\",\"FILENAME\":\"fileName\",\"Header1\":\"Value1\",\"Header2\":\"Value2\",\"Header3\":\"Value3\"}", s);
+            }
 
-Note: Make sure to import the necessary libraries and update the test cases with appropriate assertions and input values as per your requirements.
+            @Override
+            public void close() {}
+        });
+        assertEquals(1, transformer.successIntCounter.getLocalValue());
+    }
+
+    @Test
+    public void testCsvToJsonMRFCnTransformerWithMissingHeaders() throws Exception {
+        String csvData = "Header1,Header2\nValue1,Value2,Value3\n";
+        Main.CsvtoJsonMRFCnTransformer transformer = new Main.CsvtoJsonMRFCnTransformer("fileName");
+        transformer.flatMap(csvData, new Collector<String>() {
+            @Override
+            public void collect(String s) {}
+
+            @Override
+            public void close() {}
+        });
+        assertEquals(0, transformer.successIntCounter.getLocalValue());
+        assertEquals(1, transformer.failureIntCounter.getLocalValue());
+    }
+}

@@ -1,73 +1,51 @@
-ChatGPT & Midjourney | AI bot:
-Certainly\! Here's the updated code for Main\.java and CsvtoJsonMRFCnTransformer:
+Here is the updated code with the addition of FILENAME to the JSONOBJECT in CsvtoJsonMRFCnTransformer:
 
-Main\.java:
+Main.java class:-
 ```java
-import org.apache.flink.api.common.functions.RichFlatMapFunction;
-import org.apache.flink.api.common.state.ValueState;
-import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.metrics.Counter;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.api.functions.source.SourceFunction;
-import org.apache.flink.streaming.connectors.kafka.KafkaRecordSerializationSchema;
-import org.apache.flink.streaming.connectors.kafka.KafkaSink;
-import org.apache.flink.streaming.connectors.kafka.internals.KafkaRecordSerializationSchemaWrapper;
-import org.apache.flink.streaming.connectors.kafka.internals.KafkaSinkSemantic;
-import org.apache.flink.streaming.util.serialization.SimpleStringSchema;
-import org.apache.flink.util.Collector;
-
-import java.io.BufferedReader;
-import java.io.FileReader;
-
 public class Main {
     private static String bootstarpServer;
     private static String topic;
     private static String path;
-    private static String filename;
     private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
-
+    
     public static void main(String[] args) throws Exception {
         UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
         ParameterTool parameters = ParameterTool.fromArgs(args);
         bootstarpServer = parameters.get("bootstarpServer");
         topic = parameters.get("Topic");
-        filename = parameters.get("FILENAME");
+        path = parameters.get("filePath");
+        unifiedAuditMessage.setInputFilePath(path);
         LOGGER.info("Start to read and pick the path");
-
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        
+        static StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         final DataStream<String> stream = env.fromElements(readCSVFile(path));
 
         KafkaSink<String> sink = KafkaSink.<String>builder()
-                .setBootstrapServers(bootstarpServer)
-                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
-                        .setTopic(topic)
-                        .setValueSerializationSchema(new SimpleStringSchema())
-                        .build())
-                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-                .build();
+            .setBootstrapServers(bootstarpServer)
+            .setRecordSerializer(KafkaRecordSerializationSchema.builder()
+                .setTopic(topic)
+                .setValueSerializationSchema(new SimpleStringSchema())
+                .build())
+            .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
+            .build();
 
         final DataStream<String> jsonStream;
         String fileType = parameters.get("fileType");
+        
         switch (fileType) {
-            case "Gigamon":
-                jsonStream = stream.flatMap(new CsvtoJsonGigamonTransformer());
-                break;
             case "MRFC":
-                jsonStream = stream.flatMap(new CsvtoJsonMRFCnTransformer(filename));
+                jsonStream = stream.flatMap(new CsvtoJsonMRFCnTransformer(path));
                 break;
             default:
                 jsonStream = stream.flatMap(new CsvtoJsonTransformer());
                 break;
         }
-
+        
         jsonStream.sinkTo(sink);
+        
         env.execute();
     }
-
+    
     public static String readCSVFile(String filePath) {
         StringBuilder content = new StringBuilder();
         try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
@@ -82,25 +60,26 @@ public class Main {
         return content.toString();
     }
 }
+```
 
+CsvtoJsonMRFCnTransformer:-
+```java
 public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
     private String[] headers;
+    private final String filePath;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
-    private String filename;
-
-    public CsvtoJsonMRFCnTransformer(String filename) {
-        this.filename = filename;
+    
+    public CsvtoJsonMRFCnTransformer(String filePath) {
+        this.filePath = filePath;
     }
 
     @Override
     public void open(Configuration parameters) throws Exception {
-        getRuntimeContext().addAccumulato
-
-r("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
         getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
-
+    
     @Override
     public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
@@ -112,19 +91,25 @@ r("successIntCounter", this.successIntCounter);
         for (int i = 3; i < lines.length; i++) {
             String str = lines[i];
             String[] arr = str.split(",");
-            if (headers == null || headers.length != arr.length) {
+            if (headers == null || headers.length != arr.length{
                 this.failureIntCounter.add(1);
                 continue;
             }
             JSONObject obj = new JSONObject();
             obj.put("#SystemId", systemId);
             obj.put("#NodeIP", nodeIp);
-            obj.put("FILENAME", filename); // Add FILENAME parameter to the JSON object
+
+            // Add FILENAME to JSONOBJECT
+            String[] pathArr = filePath.split("/");
+            String filename = pathArr[pathArr.length - 1];
+            obj.put("FILENAME", filename);
+
             for (int j = 0; j < arr.length; j++) {
                 String jsonkey = headers[j].trim().replace(""‌, "");
                 String jsonvalue = arr[j].trim().replace(""‌, "");
                 obj.put(jsonkey, jsonvalue);
             }
+
             this.successIntCounter.add(1);
             collector.collect(obj.toString());
         }
@@ -132,4 +117,4 @@ r("successIntCounter", this.successIntCounter);
 }
 ```
 
-Please note that I have added the `filename` parameter to the constructor of the `CsvtoJsonMRFCnTransformer` class and stored it as an instance variable\. Then, I added the `FILENAME` parameter to the JSON object in the `flatMap` method\.
+Note: Make sure to replace `UnifiedAuditMessage`, `KafkaSink`, `DeliveryGuarantee`, and other dependencies with the actual implementations used in your code.

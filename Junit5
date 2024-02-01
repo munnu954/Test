@@ -1,85 +1,104 @@
-Here are the Positive and Negative JUnit Test Cases:
-
-Positive JUnit Test Case:
+Here is an example of positive and negative JUnit test cases for the given code:
 
 ```java
-import org.apache.flink.api.common.accumulators.IntCounter;
-import org.apache.flink.api.common.functions.util.ListCollector;
-import org.apache.flink.configuration.Configuration;
-import org.junit.Before;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.sink.SinkFunction;
+import org.apache.flink.streaming.api.functions.source.SourceFunction;
+import org.apache.flink.streaming.api.functions.source.SourceFunction.SourceContext;
+import org.junit.Assert;
 import org.junit.Test;
-import static org.junit.Assert.assertEquals;
-import static org.mockito.Mockito.mock;
 
-public class CsvtoJsonMRFCnTransformerTest {
+import java.util.ArrayList;
+import java.util.List;
 
-    private CsvtoJsonMRFCnTransformer transformer;
-
-    @Before
-    public void setUp() {
-        transformer = new CsvtoJsonMRFCnTransformer("test.csv");
-        Configuration params = new Configuration();
-        transformer.open(params);
-    }
+public class MainTest {
 
     @Test
-    public void testCsvToJsonConversion() throws Exception {
-        String csvRecord = "SystemId: SOLKTXE1100.101\n" +
-                "NodeIP: 2607:f160:8a03:a03a:c0:10f:0:11\n" +
-                "header1,header2,header3\n" +
-                "value1,value2,value3\n";
-        
-        ListCollector<String> collector = new ListCollector<>();
-        transformer.flatMap(csvRecord, collector);
+    public void testPositiveCase() throws Exception {
+        // Configure the test environment
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        IntCounter successCounter = transformer.getSuccessIntCounter();
-        IntCounter failureCounter = transformer.getFailureIntCounter();
+        // Create a mock source function that emits a single csv record
+        DataStream<String> sourceStream = env.addSource(new SourceFunction<String>() {
+            private boolean isRunning = true;
 
-        assertEquals(1, successCounter.getLocalValue());
-        assertEquals(0, failureCounter.getLocalValue());
+            @Override
+            public void run(SourceContext<String> ctx) throws Exception {
+                ctx.collect("header1,header2,value1,value2");
+            }
+
+            @Override
+            public void cancel() {
+                isRunning = false;
+            }
+        });
+
+        // Define the expected output from the CSV to JSON transformation
+        List<String> expectedOutput = new ArrayList<>();
+        expectedOutput.add("{\"header1\":\"value1\",\"header2\":\"value2\"}");
+
+        // Create a mock sink function that collects the output
+        List<Tuple2<String, Integer>> actualOutput = new ArrayList<>();
+        SinkFunction<String> sink = new SinkFunction<String>() {
+            @Override
+            public void invoke(String value, Context context) throws Exception {
+                actualOutput.add(new Tuple2<>(value, context.currentWatermark()));
+            }
+        };
+
+        // Execute the pipeline
+        sourceStream.flatMap(new CsvtoJsonConversion())
+                .addSink(sink);
+
+        env.execute();
+
+        // Verify the output
+        Assert.assertEquals(expectedOutput.size(), actualOutput.size());
+        for (int i = 0; i < expectedOutput.size(); i++) {
+            Assert.assertEquals(expectedOutput.get(i), actualOutput.get(i).f0);
+        }
+    }
+
+    @Test(expected = NullPointerException.class)
+    public void testNegativeCase() throws Exception {
+        // Configure the test environment
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // Create a mock source function that emits an empty csv record
+        DataStream<String> sourceStream = env.addSource(new SourceFunction<String>() {
+            private boolean isRunning = true;
+
+            @Override
+            public void run(SourceContext<String> ctx) throws Exception {
+                ctx.collect("");
+            }
+
+            @Override
+            public void cancel() {
+                isRunning = false;
+            }
+        });
+
+        // Create a mock sink function for null records
+        SinkFunction<String> sink = new SinkFunction<String>() {
+            @Override
+            public void invoke(String value, Context context) throws Exception {
+                if (value == null) {
+                    throw new NullPointerException("No records found");
+                }
+            }
+        };
+
+        // Execute the pipeline
+        sourceStream
+                .flatMap(new CsvtoJsonConversion())
+                .addSink(sink);
+
+        env.execute();
     }
 }
 ```
 
-Negative JUnit Test Case:
-
-```java
-import org.apache.flink.api.common.accumulators.IntCounter;
-import org.apache.flink.api.common.functions.util.ListCollector;
-import org.apache.flink.configuration.Configuration;
-import org.junit.Before;
-import org.junit.Test;
-import static org.junit.Assert.assertEquals;
-import static org.mockito.Mockito.mock;
-
-public class CsvtoJsonMRFCnTransformerTest {
-
-    private CsvtoJsonMRFCnTransformer transformer;
-
-    @Before
-    public void setUp() {
-        transformer = new CsvtoJsonMRFCnTransformer("test.csv");
-        Configuration params = new Configuration();
-        transformer.open(params);
-    }
-
-    @Test
-    public void testCsvToJsonConversionWithInvalidRecord() throws Exception {
-        String csvRecord = "SystemId: SOLKTXE1100.101\n" +
-                "NodeIP: 2607:f160:8a03:a03a:c0:10f:0:11\n" +
-                "header1,header2\n" + // invalid headers
-                "value1,value2,value3\n";
-        
-        ListCollector<String> collector = new ListCollector<>();
-        transformer.flatMap(csvRecord, collector);
-
-        IntCounter successCounter = transformer.getSuccessIntCounter();
-        IntCounter failureCounter = transformer.getFailureIntCounter();
-
-        assertEquals(0, successCounter.getLocalValue());
-        assertEquals(1, failureCounter.getLocalValue());
-    }
-}
-```
-
-Note: The test code assumes that the necessary dependencies and imports are available. Additionally, the `ListCollector` class is used for collecting the output in the test cases.
+Note: You may need to import the necessary packages and dependencies according to your project structure. Also, make sure to update the test cases based on your specific requirements and expected behavior.

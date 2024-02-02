@@ -1,120 +1,22 @@
-Sure, here is the updated code with the requested modifications:
-
-Main.java class:
-```java
-public class Main {
-    private static String bootstarpServer;
-    private static String topic;
-    private static String path;
-    private static final Logger LOGGER = LoggerFactory.getLogger(Main.class);
-
-    public static void main(String[] args) throws Exception {
-        UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
-        ParameterTool parameters = ParameterTool.fromArgs(args);
-        bootstarpServer = parameters.get("bootstarpServer");
-        topic = parameters.get("Topic");
-        path = parameters.get("filePath");
-        unifiedAuditMessage.setInputFilePath(path);
-        LOGGER.info("Start to read and pick the path");
-        
-        String[] pathArr = path.split("/");
-        String fileName = pathArr[pathArr.length - 1];
-        
-        static StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        final DataStream<String> stream = env.fromElements(readCSVFile(path));
-        
-        KafkaSink<String> sink = KafkaSink.<String>builder()
-                .setBootstrapServers(bootstarpServer)
-                .setRecordSerializer(KafkaRecordSerializationSchema.builder()
-                        .setTopic(topic)
-                        .setValueSerializationSchema(new SimpleStringSchema())
-                        .build())
-                .setDeliveryGuarantee(DeliveryGuarantee.AT_LEAST_ONCE)
-                .build();
-        
-        final DataStream<String> jsonStream;
-        String fileType = parameters.get("fileType");
-        switch (fileType) {
-            case "MRFC":
-                jsonStream = stream.flatMap(new CsvtoJsonMRFCnTransformer(fileName));
-                break;
-            default:
-                jsonStream = stream.flatMap(new CsvtoJsonTransformer());
-                break;
-        }
-        
-        jsonStream.sinkTo(sink);
-        env.execute();
-    }
-
-    public static String readCSVFile(String filePath) {
-        StringBuilder content = new StringBuilder();
-        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                content.append(line);
-                content.append(System.LineSeparator());
-            }
-        } catch (Exception e) {
-            LOGGER.error("Error in readCSVFile: ", e);
-        }
-        return content.toString();
-    }
-}
-```
-
-CsvtoJsonMRFCnTransformer:
-```java
-public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
-    private String[] headers;
-    private String fileName;
-    private IntCounter successIntCounter = new IntCounter();
-    private IntCounter failureIntCounter = new IntCounter();
+@Then("validate the converted MRFC json content")
+public void validateTheConvertedMRFCJsonContent() throws JSONException {
+    JSONArray jsonArray = new JSONArray(this.jsonFirstRow);
     
-    public CsvtoJsonMRFCnTransformer(String fileName) {
-        this.fileName = fileName;
-    }
+    // Get the 3rd row (index 2) from the JSON array
+    JSONObject thirdRow = jsonArray.getJSONObject(2);
     
-    @Override
-    public void open(Configuration parameters) throws Exception {
-        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
-    }
-
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] lines = s.split(System.lineSeparator());
-        String systemIdLine = lines[0];
-        String nodeIpLine = lines[1];
-        String systemId = systemIdLine.substring(systemIdLine.indexOf(":") + 1).trim();
-        String nodeIp = nodeIpLine.substring(nodeIpLine.indexOf(":") + 1).trim();
-        headers = lines[2].split(",");
-        
-        for (int i = 3; i < lines.length; i++) {
-            String str = lines[i];
-            String[] arr = str.split(",");
-            
-            if (headers == null || headers.length != arr.length) {
-                this.failureIntCounter.add(1);
-                continue;
-            }
-            
-            JSONObject obj = new JSONObject();
-            obj.put("#SystemId", systemId);
-            obj.put("#NodeIP", nodeIp);
-            obj.put("FILENAME", fileName);
-            
-            for (int j = 0; j < arr.length; j++) {
-                String jsonkey = headers[j].trim().replace(""‌, "");
-                String jsonvalue = arr[j].trim().replace(""‌, "");
-                obj.put(jsonkey, jsonvalue);
-            }
-            
-            this.successIntCounter.add(1);
-            collector.collect(obj.toString());
-        }
-    }
+    // Get the 4th row (index 3) from the JSON array
+    JSONObject fourthRow = jsonArray.getJSONObject(3);
+    
+    // Validate IPCQLEN in 3rd row
+    assertEquals(140, thirdRow.getInt("IPCQLEN"));
+    
+    // Validate DESTNODETYPE in 3rd row
+    assertEquals(2, thirdRow.getInt("DESTNODETYPE"));
+    
+    // Validate IPCQLEN in 4th row
+    assertEquals(140, fourthRow.getInt("IPCQLEN"));
+    
+    // Validate DESTNODETYPE in 4th row
+    assertEquals(2, fourthRow.getInt("DESTNODETYPE"));
 }
-```
-
-Note that I added a constructor to CsvtoJsonMRFCnTransformer which takes the fileName as a parameter and stores it in the instance variable. Then, in the `flatMap` method, I added the "FILENAME" key with the fileName value in the JSON object.

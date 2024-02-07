@@ -1,48 +1,66 @@
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-import static org.junit.Assert.assertEquals;
+To handle multiple headers of the CSV file where headers are present in lines 1-11, with JSON keys in column1 and their respective JSON values in column2, and line 12 being empty, you can adjust the CsvtoJsonDRAnTransformer class as follows:
 
-@Given("a csv file with MRFC data")
-public void acsvFileWithMRFCData() throws IOException {
-    this.MRFCFile = MRFCResource.getFile();
+public static class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
+    private List<String> headersList;
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
+    private String fileName;
+
+    public CsvtoJsonDRAnTransformer(String fileName) {
+        this.fileName = fileName;
+        this.headersList = new ArrayList<>();
+    }
+
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+    }
+
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
+
+        // Processing headers from lines 1-11
+        for (int i = 0; i < 11; i++) {
+            String[] headerParts = lines[i].split(",");
+            if (headerParts.length == 2) {
+                String jsonKey = headerParts[0].trim();
+                String jsonValue = headerParts[1].trim();
+                headersList.add(jsonKey + ":" + jsonValue);
+            }
+        }
+
+        // Start processing data from line 13 onwards
+        for (int i = 13; i < lines.length; i++) {
+            String str = lines[i];
+            String[] arr = str.split(",");
+            if (headersList.isEmpty() || headersList.size() != arr.length) {
+                this.failureIntCounter.add(1);
+                continue;
+            }
+
+            JSONObject obj = new JSONObject();
+            obj.put("FILENAME", fileName);
+
+            for (int j = 0; j < arr.length; j++) {
+                String[] headerKeyValue = headersList.get(j).split(":");
+                String jsonKey = headerKeyValue[0].trim();
+                String jsonValue = arr[j].trim();
+                obj.put(jsonKey, jsonValue);
+            }
+
+            this.successIntCounter.add(1);
+            collector.collect(obj.toString());
+        }
+    }
 }
 
-@When("CsvtoJsonMRFCnTransformer is invoked on the csv file")
-public void csvtojsonmrfentransformerIsInvokedOnTheCsvFile() throws Exception {
-    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-    final DataStream<String> stream = env.fromElements(Main.readCSVFile(this.MRFCFile.toPath().toString()));
-    this.MRFCJsonStream = stream.flatMap(new CsvtoJsonConversion.CsvtoJsonMRFCnTransformer(fileName));
-}
 
-@And("the MRFC csv file content is converted to json")
-public void theMRFCCsvFileContentIsConvertedToJson() throws Exception {
-    Iterator<String> iterator = this.MRFCJsonStream.executeAndCollect();
-    this.jsonFirstRow = iterator.next();
-}
+In this updated code snippet:
+- The headersList is used to store the JSON key-value pairs from the header lines.
+- It processes headers from lines 1-11, expecting the format "jsonkey, jsonvalue" where each pair is separated by a comma.
+- The data processing starts from line 13 onwards as specified.
+- The transformation logic now correctly maps each data field with its corresponding key based on the headers extracted previously.
 
-@Then("validate the converted MRFC json content")
-public void validateTheConvertedMRFCJsonContent() throws JSONException {
-    JSONObject firstJson = new JSONObject(jsonFirstRow);
-
-    // Validate the converted MRFC JSON content
-    assertEquals("2024-01-10 17:05:00", firstJson.getString("STARTTIMESTAMP"));
-    assertEquals("2024-01-10 17:10:00", firstJson.getString("STOPTIMESTAMP"));
-    assertEquals(7, firstJson.getInt("GATEWAYNUM"));
-    assertEquals(0, firstJson.getInt("SERVERID"));
-    assertEquals(7, firstJson.getInt("RGN"));
-    assertEquals(10, firstJson.getInt("NBROFSVRAUDIT"));
-    assertEquals(0, firstJson.getInt("NBROFSVRAUDITFAIL"));
-    assertEquals(10, firstJson.getInt("NBROFDNSQUERY"));
-    assertEquals(0, firstJson.getInt("NBROFONSQUERYFAIL"));
-    assertEquals(0, firstJson.getInt("NBROFENUMQUERY"));
-    assertEquals(0, firstJson.getInt("NBROFENUMQUERYFAIL"));
-    assertEquals(0, firstJson.getInt("NBROFDNSARECORDQUERY"));
-    assertEquals(0, firstJson.getInt("NBROFDNSARECORDQUERYFAIL"));
-    assertEquals(0, firstJson.getInt("NBROFDNSAAAARECORDQUERY"));
-    assertEquals(0, firstJson.getInt("NBROFDNSAAAAARECORDQUERYFAIL"));
-    assertEquals(0, firstJson.getInt("NBROFDNSSRVRECORDQUERY"));
-    assertEquals(0, firstJson.getInt("NBROFDNSSRVRECORDQUERYFAIL"));
-    assertEquals(0, firstJson.getInt("NBROFDNSSOARECORDQUERY"));
-    assertEquals(0, firstJson.getInt("NBROFDNSSOARECORDQUERYFAIL"));
-}
+These adjustments should allow the CsvtoJsonDRAnTransformer to properly handle multiple headers with JSON keys and values as specified. Feel free to test this updated code and let me know if you need any further modifications!

@@ -1,14 +1,11 @@
-To handle multiple headers of the CSV file where headers are present in lines 1-11, with JSON keys in column1 and their respective JSON values in column2, and line 12 being empty, you can adjust the CsvtoJsonDRAnTransformer class as follows:
-
 public static class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
-    private List<String> headersList;
+    private List<Map<String, String>> headers;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
     private String fileName;
 
     public CsvtoJsonDRAnTransformer(String fileName) {
         this.fileName = fileName;
-        this.headersList = new ArrayList<>();
     }
 
     @Override
@@ -20,47 +17,51 @@ public static class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String,
     @Override
     public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-
-        // Processing headers from lines 1-11
-        for (int i = 0; i < 11; i++) {
-            String[] headerParts = lines[i].split(",");
-            if (headerParts.length == 2) {
-                String jsonKey = headerParts[0].trim();
-                String jsonValue = headerParts[1].trim();
-                headersList.add(jsonKey + ":" + jsonValue);
-            }
-        }
-
-        // Start processing data from line 13 onwards
+        parseHeaders(lines);
+        
         for (int i = 13; i < lines.length; i++) {
             String str = lines[i];
             String[] arr = str.split(",");
-            if (headersList.isEmpty() || headersList.size() != arr.length) {
+            
+            if (headers == null || headers.size() != arr.length) {
                 this.failureIntCounter.add(1);
                 continue;
             }
-
+            
             JSONObject obj = new JSONObject();
             obj.put("FILENAME", fileName);
-
+            
             for (int j = 0; j < arr.length; j++) {
-                String[] headerKeyValue = headersList.get(j).split(":");
-                String jsonKey = headerKeyValue[0].trim();
-                String jsonValue = arr[j].trim();
-                obj.put(jsonKey, jsonValue);
+                Map<String, String> headerMap = headers.get(j);
+                String jsonkey = headerMap.get("jsonkey");
+                String jsonvalue = headerMap.get("jsonvalue");
+                String value = arr[j].trim().replace(jsonvalue, "");
+                
+                obj.put(jsonkey, value);
             }
-
+            
             this.successIntCounter.add(1);
             collector.collect(obj.toString());
         }
     }
+    
+    private void parseHeaders(String[] lines) {
+        headers = new ArrayList<>();
+        
+        for (int i = 1; i <= 11; i++) {
+            String line = lines[i];
+            String[] arr = line.split(",");
+            
+            if (arr.length == 2) {
+                String jsonkey = arr[0].trim().replace("\"", "");
+                String jsonvalue = arr[1].trim().replace("\"", "");
+                
+                Map<String, String> headerMap = new HashMap<>();
+                headerMap.put("jsonkey", jsonkey);
+                headerMap.put("jsonvalue", jsonvalue);
+                
+                headers.add(headerMap);
+            }
+        }
+    }
 }
-
-
-In this updated code snippet:
-- The headersList is used to store the JSON key-value pairs from the header lines.
-- It processes headers from lines 1-11, expecting the format "jsonkey, jsonvalue" where each pair is separated by a comma.
-- The data processing starts from line 13 onwards as specified.
-- The transformation logic now correctly maps each data field with its corresponding key based on the headers extracted previously.
-
-These adjustments should allow the CsvtoJsonDRAnTransformer to properly handle multiple headers with JSON keys and values as specified. Feel free to test this updated code and let me know if you need any further modifications!

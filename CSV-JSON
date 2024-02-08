@@ -1,19 +1,12 @@
-Here's the updated code for the CsvtoJsonMRFCnTransformer class based on your requirements:
-
-```java
-import org.apache.flink.api.common.accumulators.IntCounter;
-import org.apache.flink.api.common.functions.RichFlatMapFunction;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.util.Collector;
-import org.json.JSONArray;
-import org.json.JSONObject;
-
-import java.util.Arrays;
-
-public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String, String> {
-    private String[] headers;
+public static class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
+    private List<Map<String, String>> headersList;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
+    private String fileName;
+
+    public CsvtoJsonDRAnTransformer(String fileName) {
+        this.fileName = fileName;
+    }
 
     @Override
     public void open(Configuration parameters) throws Exception {
@@ -24,50 +17,45 @@ public static class CsvtoJsonMRFCnTransformer extends RichFlatMapFunction<String
     @Override
     public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-        JSONObject jsonObject = new JSONObject();
 
-        for (int lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-            String line = lines[lineIndex];
-            String[] arr = line.split(",");
+        // Parse headers
+        headersList = parseHeaders(lines);
 
-            if (lineIndex < 3) {
-                // Process the 1st, 2nd, and 3rd lines as headers
-                if (lineIndex == 0) {
-                    jsonObject.put("HEADER_1", Arrays.asList(arr));
-                } 
-                else if (lineIndex == 1) {
-                    jsonObject.put("HEADER_2", Arrays.asList(arr));
-                } 
-                else if (lineIndex == 2) {
-                    headers = arr; // Store the header row for key names
-                }
-            } 
-            else {
-                if (headers == null || headers.length != arr.length) {
-                    this.failureIntCounter.add(1);
-                    continue;
-                }
+        for (int i = 12; i < lines.length; i++) {
+            String str = lines[i];
+            String[] arr = str.split(",");
+            if (headersList == null || headersList.size() != arr.length) {
+                this.failureIntCounter.add(1);
+                continue;
+            }
+            JSONObject obj = new JSONObject();
+            obj.put("FILENAME", fileName);
+            for (int j = 0; j < arr.length; j++) {
+                Map<String, String> headers = headersList.get(j);
+                String jsonkey = headers.get("jsonkey");
+                String jsonvalue = headers.get("jsonvalue");
+                String value = arr[j].trim().replace(jsonvalue, "");
+                obj.put(jsonkey, value);
+            }
+            this.successIntCounter.add(1);
+            collector.collect(obj.toString());
+        }
+    }
 
-                JSONObject obj = new JSONObject();
-                for (int j = 0; j < arr.length; j++) {
-                    String jsonkey = headers[j].trim().replace("\"", "");
-                    String jsonvalue = arr[j].trim().replace("\"", "");
-                    obj.put(jsonkey, jsonvalue);
-                }
-
-                this.successIntCounter.add(1);
-                collector.collect(obj.toString());
+    private List<Map<String, String>> parseHeaders(String[] lines) {
+        List<Map<String, String>> headersList = new ArrayList<>();
+        for (int i = 0; i < 11; i++) {
+            String line = lines[i];
+            String[] columns = line.split(",");
+            if (columns.length == 2) {
+                Map<String, String> headers = new HashMap<>();
+                String jsonkey = columns[0].trim().replace("‌‌", "");
+                String jsonvalue = columns[1].trim().replace("\"", "");
+                headers.put("jsonkey", jsonkey);
+                headers.put("jsonvalue", jsonvalue);
+                headersList.add(headers);
             }
         }
-
-        collector.collect(jsonObject.toString());
+        return headersList;
     }
 }
-```
-
-I've made the following changes to the code:
-- Removed the creation of `JSONArray` for the JSON values of line 1 and line 2.
-- Refactored the loop to transform the JSON in one go without splitting into separate JSON objects.
-- Updated the loop to use an index-based loop instead of the enhanced for loop to iterate over lines array.
-
-This revised code should meet your requirements for transforming the CSV to JSON without hardcoding the header values and transforming the JSON in one line.

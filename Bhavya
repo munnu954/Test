@@ -1,31 +1,41 @@
-@Given("a csv file with MRFC data")
-public void acsvFileWithMRFCData() throws IOException {
-    // Load the MRFC CSV file
-    this.MRFCFile = MRFCResource.getFile();
-}
+public static class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
+    private String[] headers;
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
+    private String fileName;
+    public CsvtoJsonDRAnTransformer(String fileName) {
+        this.fileName = fileName;
+    }
 
-@When("CsvtoJsonMRFCnTransformer is invoked on the csv file")
-public void csvtojsonmrfentransformerIsInvokedOnTheCsvFile() throws Exception {
-    // Invoke the CsvtoJsonMRFCnTransformer on the CSV file
-    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-    final DataStream<String> stream = env.fromElements(Main.readCSVFile(this.MRFCFile.toPath().toString()));
-    this.MRFCJsonStream = stream.flatMap(new CsvtoJsonConversion.CsvtoJsonMRFCnTransformer(fileName));
-}
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+    }
 
-@And("the MRFC csv file content is converted to json")
-public void theMRFCCsvFileContentIsConvertedToJson() throws Exception {
-    // Collect the converted JSON content
-    Iterator<String> iterator = this.MRFCJsonStream.executeAndCollect();
-    this.jsonFirstRow = iterator.next();
-}
-
-@Then("validate the converted MRFC json content")
-public void validateTheConvertedMRFCJsonContent() throws JSONException {
-    // Validate the converted JSON content
-    JSONObject firstJson = new JSONObject(jsonFirstRow);
-    // Add assertions to validate the JSON content
-    Assert.assertEquals("10", firstJson.getString("IPCQLEN"));
-    Assert.assertEquals("2", firstJson.getString("DESTNODETYPE"));
-    Assert.assertEquals("0", firstJson.getString("OUTOFORDERRXERRORS"));
-    // Add more assertions for other fields
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
+        if (lines.length < 3) {
+            return;
+        }
+        headers = lines[2].split(",");
+        for (int i = 3; i < lines.length; i++) {
+            String str = lines[i];
+            String[] arr = str.split(",");
+            if (headers == null || headers.length != arr.length) {
+                this.failureIntCounter.add(1);
+                continue;
+            }
+            JSONObject obj = new JSONObject();
+            obj.put("device", fileName);
+            for (int j = 0; j < arr.length; j++) {
+                String jsonkey = headers[j].trim().replace("\"‌", "");
+                String jsonvalue = arr[j].trim().replace("\""‌, "");
+                obj.put(jsonkey, jsonvalue);
+            }
+            this.successIntCounter.add(1);
+            collector.collect(obj.toString());
+        }
+    }
 }

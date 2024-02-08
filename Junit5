@@ -1,32 +1,71 @@
-@Then("validate the converted MRFC json content")
-public void validateTheConvertedMRFCJsonContent() throws JSONException {
-   JSONObject firstJson = new JSONObject(jsonFirstRow);
-   
-   Assert.assertEquals("10", firstJson.getString("IPCQLEN"));
-   Assert.assertEquals("2", firstJson.getString("DESTNODETYPE"));
-   Assert.assertEquals("0", firstJson.getString("OUTOFORDERRXERRORS"));
-   Assert.assertEquals("0", firstJson.getString("DUPPKT"));
-   Assert.assertEquals("7014", firstJson.getString("IPCRX"));
-   Assert.assertEquals("SOLKTXE1100.101", firstJson.getString("SystemId"));
-   Assert.assertEquals("2024-01-10 17:05:00", firstJson.getString("# STARTTIMESTAMP"));
-   Assert.assertEquals("7184", firstJson.getString("IPCTX"));
-   
-   JSONArray nodeIPArray = firstJson.getJSONArray("NodeIP");
-   Assert.assertEquals(17, nodeIPArray.length());
-   Assert.assertEquals("2607:f160:8a03:a03a:c0:10f::", nodeIPArray.get(0));
-   Assert.assertEquals("2607:f160:8a03:a03a:c0:10f:0:1", nodeIPArray.get(1));
-   // Add assertions for other NodeIP values
-   
-   Assert.assertEquals("0", firstJson.getString("IPCTXTIMEOUT"));
-   Assert.assertEquals("65", firstJson.getString("DESTNODENUM"));
-   Assert.assertEquals("0", firstJson.getString("INVALIDBUFFERSRX"));
-   Assert.assertEquals("2024-01-10 17:10:00", firstJson.getString("STOPTIMESTAMP"));
-   Assert.assertEquals("68", firstJson.getString("SOURCENODENUM"));
-   Assert.assertEquals("0", firstJson.getString("LINKBUFFERSTXERRORS"));
-   Assert.assertEquals("0", firstJson.getString("LINKBUFFERSRXERRORS"));
-   Assert.assertEquals("0", firstJson.getString("RETRYIPCTX"));
-   Assert.assertEquals("8", firstJson.getString("RETRYLIMITDISCARDERRORS"));
-   Assert.assertEquals("8130", firstJson.getString("LINKBUFFERSRX"));
-   Assert.assertEquals("0", firstJson.getString("ACKOLEN"));
-   Assert.assertEquals("8055", firstJson.getString("LINKBUFFERSTX"));
+public static class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
+    private List<String[]> headersList;
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
+    private String fileName;
+
+    public CsvtoJsonDRAnTransformer(String fileName) {
+        this.fileName = fileName;
+    }
+
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+    }
+
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
+        headersList = new ArrayList<>();
+
+        // Parse headers
+        for (int i = 0; i < 11; i++) {
+            String line = lines[i];
+            String[] headerArr = line.split(",");
+            headersList.add(headerArr);
+        }
+
+        for (int i = 13; i < lines.length; i++) {
+
+            String str = lines[i];
+            String[] arr = str.split(",");
+
+            if (!isValidData(arr)) {
+                this.failureIntCounter.add(1);
+                continue;
+            }
+
+            JSONObject obj = new JSONObject();
+            obj.put("FILENAME", fileName);
+
+            for (int j = 0; j < arr.length; j++) {
+                String jsonkey = headersList.get(j)[0].trim().replace("‌‌", "");
+                String jsonvalue = arr[j].trim().replace(""‌‌, "");
+                obj.put(jsonkey, jsonvalue);
+            }
+
+            this.successIntCounter.add(1);
+            collector.collect(obj.toString());
+        }
+    }
+
+    private boolean isValidData(String[] arr) {
+        if (headersList == null || headersList.isEmpty()) {
+            return false;
+        }
+
+        int expectedColumnCount = headersList.get(0).length;
+        if (arr.length != expectedColumnCount) {
+            return false;
+        }
+
+        for (int i = 0; i < arr.length; i++) {
+            if (!arr[i].trim().equals(headersList.get(0)[i].trim().replace("‌‌", ""))) {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }

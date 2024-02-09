@@ -1,5 +1,5 @@
 public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
-    private List<String[]> headersList = new ArrayList<>();
+    private Map<String, String> headersMap;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
     private String fileName;
@@ -17,34 +17,45 @@ public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String
     @Override
     public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-        
-        // Read and store headers
-        for (int i = 0; i < 11; i++) {
-            String line = lines[i];
-            String[] header = line.split(",");
-            headersList.add(header);
-        }
-
-        // Process data starting from line 13
-        for (int i = 12; i < lines.length; i++) {
+        headersMap = parseHeaders(lines); // Parse headers from line 1-11
+        for (int i = 13; i < lines.length; i++) { // Start processing from line 14
             String str = lines[i];
             String[] arr = str.split(",");
-            if (headersList.size() != arr.length) {
+            if (headersMap == null || headersMap.isEmpty() || arr.length != 2) {
                 this.failureIntCounter.add(1);
                 continue;
             }
             JSONObject obj = new JSONObject();
             obj.put("FILENAME", fileName);
-            for (int j = 0; j < headersList.size(); j++) {
-                String[] header = headersList.get(j);
-                if (header.length == 2) {
-                    String jsonkey = header[0].trim().replace("\"", "");
-                    String jsonvalue = header[1].trim().replace("\"", "");
-                    obj.put(jsonkey, arr[j].trim());
-                }
+            for (String key : headersMap.keySet()) {
+                String jsonkey = key.trim().replace("\"", "");
+                String jsonvalue = getValue(arr, headersMap.get(key));
+                obj.put(jsonkey, jsonvalue);
             }
             this.successIntCounter.add(1);
             collector.collect(obj.toString());
         }
+    }
+
+    private Map<String, String> parseHeaders(String[] lines) {
+        Map<String, String> headersMap = new HashMap<>();
+        for (int i = 0; i < 11; i++) {
+            String line = lines[i];
+            String[] arr = line.split(",");
+            if (arr.length == 2) {
+                String jsonkey = arr[0].trim().replace("\"", "");
+                String jsonvalue = arr[1].trim().replace("\"", "");
+                headersMap.put(jsonkey, jsonvalue);
+            }
+        }
+        return headersMap;
+    }
+
+    private String getValue(String[] arr, String index) {
+        int columnIndex = Integer.parseInt(index) - 1;
+        if (columnIndex >= 0 && columnIndex < arr.length) {
+            return arr[columnIndex].trim().replace("\"", "");
+        }
+        return "";
     }
 }

@@ -1,7 +1,5 @@
-Certainly! Here's the updated code to handle multiple headers in the CSV file:
-
-public static class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
-    private List<Map<String, String>> headers;
+public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
+    private List<Map<String, String>> headersList;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
     private String fileName;
@@ -19,54 +17,39 @@ public static class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String,
     @Override
     public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-        parseHeaders(lines);
         
-        for (int i = 13; i < lines.length; i++) {
-            String str = lines[i];
-            String[] arr = str.split(",");
-            
-            if (headers == null || headers.size() != arr.length) {
+        // Process headers from line 1-11
+        headersList = new ArrayList<>();
+        for (int i = 0; i < 11; i++) {
+            String[] headerArr = lines[i].split(",");
+            if (headerArr.length != 2) {
                 this.failureIntCounter.add(1);
                 continue;
             }
-            
+            String jsonkey = headerArr[0].trim().replace("\"", "");
+            String jsonvalue = headerArr[1].trim().replace("\"", "");
+            Map<String, String> headerMap = new HashMap<>();
+            headerMap.put(jsonkey, jsonvalue);
+            headersList.add(headerMap);
+        }
+        
+        for (int i = 13; i < lines.length; i++) { // Modify to start processing from line 14
+            String str = lines[i];
+            String[] arr = str.split(",");
+            if (headersList.isEmpty() || headersList.size() != arr.length) {
+                this.failureIntCounter.add(1);
+                continue;
+            }
             JSONObject obj = new JSONObject();
             obj.put("FILENAME", fileName);
-            
             for (int j = 0; j < arr.length; j++) {
-                Map<String, String> headerMap = headers.get(j);
-                String jsonkey = headerMap.get("jsonkey");
-                String jsonvalue = headerMap.get("jsonvalue");
-                String value = arr[j].trim().replace(jsonvalue, "");
-                
-                obj.put(jsonkey, value);
+                Map<String, String> headerMap = headersList.get(j);
+                String jsonkey = headerMap.keySet().iterator().next();
+                String jsonvalue = arr[j].trim().replace("\"", "");
+                obj.put(jsonkey, jsonvalue);
             }
-            
             this.successIntCounter.add(1);
             collector.collect(obj.toString());
         }
     }
-    
-    private void parseHeaders(String[] lines) {
-        headers = new ArrayList<>();
-        
-        for (int i = 1; i <= 11; i++) {
-            String line = lines[i];
-            String[] arr = line.split(",");
-            
-            if (arr.length == 2) {
-                String jsonkey = arr[0].trim().replace("\"", "");
-                String jsonvalue = arr[1].trim().replace("\"", "");
-                
-                Map<String, String> headerMap = new HashMap<>();
-                headerMap.put("jsonkey", jsonkey);
-                headerMap.put("jsonvalue", jsonvalue);
-                
-                headers.add(headerMap);
-            }
-        }
-    }
 }
-
-
-In this updated code, the parseHeaders method is added to extract the headers from lines 1-11 of the CSV file. Each header is stored as a map with the jsonkey and jsonvalue. Then, in the flatMap method, we iterate over the data starting from line 13 and use the extracted headers to create the JSON objects.

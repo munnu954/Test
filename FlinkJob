@@ -1,8 +1,21 @@
-Here is the reframed code that handles and processes multiple headers in the CSV file:
+Here is the updated code:
 
 ```java
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
+
+import java.util.Map;
+
 public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
-    private List<String[]> headersList = new ArrayList<>();
+    private MapState<String, String> headersMapState;
+    private ValueState<Integer> headerCountState;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
     private String fileName;
@@ -13,6 +26,12 @@ public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String
 
     @Override
     public void open(Configuration parameters) throws Exception {
+        MapStateDescriptor<String, String> headersMapStateDescriptor = new MapStateDescriptor<>("headersMapState", String.class, String.class);
+        headersMapState = getRuntimeContext().getMapState(headersMapStateDescriptor);
+
+        ValueStateDescriptor<Integer> headerCountStateDescriptor = new ValueStateDescriptor<>("headerCountState", Integer.class);
+        headerCountState = getRuntimeContext().getState(headerCountStateDescriptor);
+
         getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
         getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
@@ -20,39 +39,44 @@ public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String
     @Override
     public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-        for (int i = 0; i < 11; i++) { // Process headers from line 1 to 11
-            String[] headerArr = lines[i].split(",");
-            headersList.add(headerArr);
+
+        if (headerCountState.value() == null) {
+            processHeaders(lines);
+            return;
         }
-        for (int i = 13; i < lines.length; i++) { // Start processing from line 14
+
+        for (int i = headerCountState.value() + 1; i < lines.length; i++) {
             String str = lines[i];
             String[] arr = str.split(",");
-            if (headersList.isEmpty() || headersList.size() != arr.length) {
-                this.failureIntCounter.add(1);
-                continue;
-            }
             JSONObject obj = new JSONObject();
             obj.put("FILENAME", fileName);
-
-            for(int j = 0; j < headersList.size(); j++) {
-                String[] headers = headersList.get(j);
-                if (headers.length != arr.length) {
-                    this.failureIntCounter.add(1);
-                    continue;
-                }
-                for (int k = 0; k < arr.length; k++) {
-                    String jsonkey = headers[k].trim().replace("\"", "");
-                    String jsonvalue = arr[k].trim().replace("\"", "");
-                    obj.put(jsonkey, jsonvalue);
-                }
+            for (int j = 0; j < arr.length; j++) {
+                String jsonkey = headersMapState.get(Integer.toString(j + 1));
+                String jsonvalue = arr[j].trim().replace("\"", "");
+                obj.put(jsonkey, jsonvalue);
             }
             this.successIntCounter.add(1);
             collector.collect(obj.toString());
         }
     }
+
+    private void processHeaders(String[] lines) throws Exception {
+        for (int i = 0; i < 11; i++) {
+            String[] columns = lines[i].split(",");
+            if (columns.length != 2) {
+                throw new Exception("Invalid header format on line " + (i + 1));
+            }
+            headersMapState.put(columns[0].trim().replace("\"", ""), columns[1].trim().replace("\"", ""));
+        }
+        headerCountState.update(11);
+    }
 }
 ```
 
-This updated code reads and processes headers from lines 1 to 11 of the CSV file. Each header line is split into separate columns. The code then uses these headers to create the corresponding JSON object for each row starting from line 14. The `headersList` variable stores all the headers for each row, and each row's headers are matched against the row's values to create the JSON object. Accumulators are used to count the successful and failed transformations.
+In this updated code, I have added additional state variables to store and manage the headers and their respective count. The `headersMapState` is a `MapState` that will store the headers, and the `headerCountState` is a `ValueState` that will keep track of the line number until where the headers have been processed.
 
-Note: Make sure to import the required dependencies, such as `List`, `ArrayList`, `JSONObject`, and `Collector`.
+The `processHeaders` method is responsible for parsing and storing the headers in the `headersMapState`. It assumes that the headers are present in lines 1 to 11 of the CSV file, and each line contains two columns separated by a comma.
+
+In the `flatMap` method, if the `headerCountState` is null, it means the headers haven't been processed yet. So, it calls the `processHeaders` method and returns. Otherwise, it continues with processing the data starting from line `headerCountState + 1`, similar to the previous version of the code. It retrieves the corresponding header from the `headersMapState` using the column index and constructs the JSON object with the keys and values.
+
+Please note that the code assumes a few things based on the given requirements. Make sure to modify it further as per your complete dataset and specific use case.

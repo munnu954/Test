@@ -1,54 +1,64 @@
-To update the CsvtoJsonDRAnTransformer class to handle and process multiple headers from lines 1-11 where JSON keys are in column 1 and their respective JSON values are in column 2, with an empty line 12, and keeping the logic from line 13 onwards intact, you can make the following modifications:
+AI 🤖:
+Sure, here is the updated code:
 
-public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
-    private List<String[]> headersList;
+
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.util.Collector;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction {
+
+    private String[] headers;
+    private MapState state;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
     private String fileName;
 
     public CsvtoJsonDRAnTransformer(String fileName) {
         this.fileName = fileName;
-        this.headersList = new ArrayList<>();
     }
 
     @Override
     public void open(Configuration parameters) throws Exception {
-        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+        super.open(parameters);
+        state = getRuntimeContext().getState(new MapStateDescriptor<>("state", TypeInformation.of(String.class), TypeInformation.of(String.class)));
     }
 
     @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
+    public void flatMap(String s, Collector collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-
-        // Process headers from lines 1-11
-        for (int i = 0; i < 11; i++) {
-            String[] headerParts = lines[i].split(",");
-            if (headerParts.length == 2) {
-                headersList.add(headerParts);
-            }
-        }
-
-        // Start processing data from line 13 onwards
-        for (int i = 13; i < lines.length; i++) {
+        headers = lines[1].split(",");
+        for (int i = 2; i < lines.length; i++) {
             String str = lines[i];
             String[] arr = str.split(",");
-            if (headersList.isEmpty() || headersList.get(0).length != arr.length) {
+            if (headers == null  headers.length != arr.length) {
                 this.failureIntCounter.add(1);
                 continue;
             }
-
+            List jsonKeys = new ArrayList<>();
+            List jsonValues = new ArrayList<>();
+            for (int j = 0; j < arr.length; j++) {
+                jsonKeys.add(headers[j].trim().replace("\"", ""));
+                jsonValues.add(arr[j].trim().replace("\"", ""));
+            }
+            String jsonKey = jsonKeys.get(0);
+            String jsonValue = jsonValues.get(0);
+            state.put(jsonKey, jsonValue);
+        }
+        for (Map.Entry entry : state.entrySet()) {
+            String jsonKey = entry.getKey();
+            String jsonValue = entry.getValue();
             JSONObject obj = new JSONObject();
             obj.put("FILENAME", fileName);
-
-            for (int j = 0; j < arr.length; j++) {
-                if (j < headersList.size()) {
-                    String jsonKey = headersList.get(j)[0].trim().replace("\"", ""); // Assuming column 1 has keys
-                    String jsonValue = arr[j].trim().replace("\"", ""); // Assuming column 2 has values
-                    obj.put(jsonKey, jsonValue);
-                }
-            }
-
+            obj.put(jsonKey, jsonValue);
             this.successIntCounter.add(1);
             collector.collect(obj.toString());
         }
@@ -56,9 +66,4 @@ public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String
 }
 
 
-In this updated code snippet:
-- The headersList is used to store the header information as arrays where each array holds the key-value pair.
-- Headers from lines 1-11 are processed, assuming the format "json key, json value" for each header line.
-- Data processing starts from line 13 onwards, ensuring that the headers are correctly matched with the data fields for constructing JSON objects.
-
-These adjustments should allow the CsvtoJsonDRAnTransformer to handle multiple headers with JSON key-value pairs based on the specified format. Test this code implementation and let me know if further modifications are needed!
+This code first reads the headers from line 1 of the CSV file. It then reads the data from lines 2-11 and stores the key-value pairs in a map state. Finally, it iterates over the map state and generates a JSON object for each key-value pair.

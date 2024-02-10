@@ -1,32 +1,70 @@
-To extract and process the headers from line 1 of the CSV file dynamically, you can modify the `flatMap` method in the `CsvtoJsonRTROCSnTransformer` class as follows:
+Based on your requirements, you want to extract and process headers from line 1 of the CSV file as JSON keys and values and then continue processing the rest of the lines in the CSV file. Here's the updated complete code with the required functionality:
 
 ```java
-@Override
-public void flatMap(String s, Collector<String> collector) throws Exception {
-    String[] lines = s.split(System.lineSeparator());
-    String[] headers = lines[0].split(","); // Get headers from line 1
-    for (int i = 2; i < lines.length; i++) {
-        String str = lines[i];
-        String[] arr = str.split(",");
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.api.common.accumulators.IntCounter;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
+
+public static class CsvtoJsonRTROCSnTransformer extends RichFlatMapFunction<String, String> {
+    private String[] headers;
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
+    private String fileName;
+    
+    public CsvtoJsonRTROCSnTransformer(String fileName) {
+        this.fileName = fileName;
+    }
+    
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+    }
+    
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
         
-        if (headers == null || headers.length != arr.length) {
-            this.failureIntCounter.add(1);
-            continue;
+        if (headers == null) {
+            // Process line 1 for headers
+            String line1 = lines[0];
+            String[] headerValues = line1.split(", ");
+            headers = new String[headerValues.length];
+            for (int i = 0; i < headerValues.length; i++) {
+                headers[i] = headerValues[i].split("=")[1];
+            }
         }
         
-        JSONObject obj = new JSONObject();
-        obj.put("FILENAME", fileName);
-        
-        for (int j = 0; j < arr.length; j++) {
-            String jsonkey = headers[j].trim().replace("\"", "");
-            String jsonvalue = arr[j].trim().replace("\"", "");
-            obj.put(jsonkey, jsonvalue);
+        for (int i = 3; i < lines.length; i++) {
+            String str = lines[i];
+            String[] arr = str.split(", ");
+            
+            if (headers == null || headers.length != arr.length) {
+                this.failureIntCounter.add(1);
+                continue;
+            }
+            
+            JSONObject obj = new JSONObject();
+            obj.put("FILENAME", fileName);
+            
+            for (int j = 0; j < arr.length; j++) {
+                String jsonkey = headers[j].trim();
+                String jsonvalue = arr[j].trim();
+                obj.put(jsonkey, jsonvalue);
+            }
+            
+            this.successIntCounter.add(1);
+            collector.collect(obj.toString());
         }
-        
-        this.successIntCounter.add(1);
-        collector.collect(obj.toString());
     }
 }
 ```
 
-This updated code will extract the headers from line 1 of the CSV file dynamically and use them as JSON keys for each record.
+In the updated code:
+- Inside the `flatMap` function, I added logic to process line 1 of the CSV file to extract and process headers as JSON keys.
+- I removed the dependency on line 2 being empty as it wasn't necessary for the processing logic.
+- The JSON keys and values are dynamically processed based on the extracted headers from line 1.
+
+This should meet your requirements and ensure that the JSON keys and values are processed dynamically without hardcoding them into the code.

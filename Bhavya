@@ -1,61 +1,53 @@
-Certainly! To extract and process the headers from line 1 of the CSV file as JSON keys and values, you can modify the flatMap method as follows:
+public static class CsvtoJsonRTROCSnTransformer extends RichFlatMapFunction<String, String> {
+    private String[] headers;
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
+    private String fileName;
 
-@Override
-public void flatMap(String s, Collector<String> collector) throws Exception {
-    String[] lines = s.split(System.lineSeparator());
-
-    // Extract headers from line 1 (assuming it starts from index 0)
-    String[] headerValues = lines[0].split(",");
-    String[] headerKeys = lines[1].split(",");
-
-    if (headerKeys.length != headerValues.length) {
-        this.failureIntCounter.add(1);
-        return;
+    public CsvtoJsonRTROCSnTransformer(String fileName) {
+        this.fileName = fileName;
     }
 
-    JSONObject headerObj = new JSONObject();
-    for (int i = 0; i < headerKeys.length; i++) {
-        String jsonkey = headerKeys[i].trim().replace("\"", "");
-        String jsonvalue = headerValues[i].trim().replace("\"", "");
-        headerObj.put(jsonkey, jsonvalue);
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
 
-    headers = lines[2].split(",");
-
-    for (int i = 3; i < lines.length; i++) {
-        String str = lines[i];
-        String[] arr = str.split(",");
-
-        if (headers == null || headers.length != arr.length) {
-            this.failureIntCounter.add(1);
-            continue;
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
+        String[] headerLine = lines[0].split(",");
+        headers = new String[headerLine.length];
+        for (int k = 0; k < headerLine.length; k++) {
+            headers[k] = headerLine[k].split("=")[1].trim().replace("\"", "");
         }
-
+        
+        String[] valueLine = lines[1].split(",");
         JSONObject obj = new JSONObject();
         obj.put("FILENAME", fileName);
-
-        // Add headers from line 1 as key-value pairs
-        for (int j = 0; j < headerKeys.length; j++) {
-            String jsonkey = headerKeys[j].trim().replace("\"", "");
-            String jsonvalue = headerValues[j].trim().replace("\"", "");
+        for (int k = 0; k < valueLine.length; k++) {
+            String jsonkey = headers[k].trim();
+            String jsonvalue = valueLine[k].trim().replace("\"", "");
             obj.put(jsonkey, jsonvalue);
         }
 
-        // Adding headers and values from line 3 onwards
-        for (int j = 0; j < arr.length; j++) {
-            String jsonkey = headers[j].trim().replace("\"", "");
-            String jsonvalue = arr[j].trim().replace("\"", "");
-            obj.put(jsonkey, jsonvalue);
+        for (int i = 3; i < lines.length; i++) {
+            String str = lines[i];
+            String[] arr = str.split(",");
+            if (headers == null || headers.length != arr.length) {
+                this.failureIntCounter.add(1);
+                continue;
+            }
+            JSONObject obj = new JSONObject();
+            obj.put("FILENAME", fileName);
+            for (int j = 0; j < arr.length; j++) {
+                String jsonkey = headers[j].trim().replace("\"", "");
+                String jsonvalue = arr[j].trim().replace("\"", "");
+                obj.put(jsonkey, jsonvalue);
+            }
+            this.successIntCounter.add(1);
+            collector.collect(obj.toString());
         }
-
-        this.successIntCounter.add(1);
-        collector.collect(obj.toString());
     }
 }
-
-
-In the updated code, I added a new section to extract and process the headers from line 1 and line 2 of the CSV file. The headerKeys array stores the JSON keys, and the headerValues array stores the corresponding JSON values. These are then added as key-value pairs to a separate headerObj JSONObject.
-
-After processing the headers, the code continues to process the remaining lines of the CSV file starting from line 3 as before. The headers from line 1 are added to each JSON object along with their corresponding values.
-
-Please note that this assumes that line 2 of the CSV file is empty. If line 2 contains any data, you may need to adjust the logic accordingly.

@@ -1,21 +1,7 @@
-AI 🤖:
-Sure, here is the updated code:
+Certainly! Here's the modified code to handle and process multiple headers of the CSV file:
 
-
-import org.apache.flink.api.common.functions.RichFlatMapFunction;
-import org.apache.flink.api.common.state.ValueState;
-import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.util.Collector;
-
-import java.util.ArrayList;
-import java.util.List;
-
-public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction {
-
-    private String[] headers;
-    private ValueState> state;
+public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
+    private List<Map<String, String>> headersList;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
     private String fileName;
@@ -26,45 +12,49 @@ public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction {
 
     @Override
     public void open(Configuration parameters) throws Exception {
-        state = getRuntimeContext().getState(new ValueStateDescriptor<>("state", List.class));
         getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
         getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
 
     @Override
-    public void flatMap(String s, Collector collector) throws Exception {
+    public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-        headers = lines[0].split(",");
-        for (int i = 1; i < lines.length; i++) {
-            String str = lines[i];
-            String[] arr = str.split(",");
-            if (headers == null || headers.length != arr.length) {
+        
+        // Process headers from line 1-11
+        headersList = new ArrayList<>();
+        for (int i = 0; i < 11; i++) {
+            String[] headerArr = lines[i].split(",");
+            if (headerArr.length != 2) {
                 this.failureIntCounter.add(1);
                 continue;
             }
-            List values = state.value();
-            if (values == null) {
-                values = new ArrayList<>();
+            String jsonkey = headerArr[0].trim().replace("\"", "");
+            String jsonvalue = headerArr[1].trim().replace("\"", "");
+            Map<String, String> headerMap = new HashMap<>();
+            headerMap.put(jsonkey, jsonvalue);
+            headersList.add(headerMap);
+        }
+        
+        for (int i = 13; i < lines.length; i++) { // Modify to start processing from line 14
+            String str = lines[i];
+            String[] arr = str.split(",");
+            if (headersList.isEmpty() || headersList.size() != arr.length) {
+                this.failureIntCounter.add(1);
+                continue;
             }
-            values.add(arr[0]);
-            values.add(arr[1]);
-            state.update(values);
+            JSONObject obj = new JSONObject();
+            obj.put("FILENAME", fileName);
+            for (int j = 0; j < arr.length; j++) {
+                Map<String, String> headerMap = headersList.get(j);
+                String jsonkey = headerMap.keySet().iterator().next();
+                String jsonvalue = arr[j].trim().replace("\"", "");
+                obj.put(jsonkey, jsonvalue);
+            }
+            this.successIntCounter.add(1);
+            collector.collect(obj.toString());
         }
-        List values = state.value();
-        if (values == null) {
-            this.failureIntCounter.add(1);
-            return;
-        }
-        JSONObject obj = new JSONObject();
-        obj.put("FILENAME", fileName);
-        for (String value : values) {
-            String[] kv = value.split("=");
-            obj.put(kv[0], kv[1]);
-        }
-        this.successIntCounter.add(1);
-        collector.collect(obj.toString());
     }
 }
 
 
-This code first reads the headers from the first line of the CSV file. Then, it reads each line of the CSV file and extracts the key-value pairs. Finally, it creates a JSON object with the key-value pairs and emits it to the output.
+In this updated code, the headers from line 1-11 are processed and stored in a list of maps, where each map represents a header with its respective key-value pair. Then, during the processing of the remaining lines (starting from line 14), the appropriate header map is retrieved based on the column index, and the corresponding key-value pair is used to create the JSON object.

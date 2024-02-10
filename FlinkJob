@@ -1,47 +1,56 @@
-@Override
-public void flatMap(String s, Collector<String> collector) throws Exception {
-    String[] lines = s.split(System.lineSeparator());
+public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
+    private String[] headers;
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
+    private String fileName;
 
-    // Extract headers from line 13 (assuming it starts from index 0)
-    headers = lines[12].split(",");
+    public CsvtoJsonDRAnTransformer(String fileName) {
+        this.fileName = fileName;
+    }
 
-    for (int i = 13; i < lines.length; i++) {
-        String str = lines[i];
-        String[] arr = str.split(",");
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+    }
 
-        if (headers == null || headers.length != arr.length) {
-            this.failureIntCounter.add(1);
-            continue;
-        }
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
 
-        JSONObject obj = new JSONObject();
+        // Extract headers from line 13 (assuming it starts from index 0)
+        headers = lines[12].split(",");
 
-        // Adding headers and values from line 1 to line 11 as key-value pairs
-        for (int j = 0; j < 11; j++) {
-            String jsonkey = lines[j].split(",")[0].trim().replace("\"", "");
-            String jsonvalue = lines[j].split(",")[1].trim().replace("\"", "").replace("\\/", "/");
-            obj.put(jsonkey, jsonvalue);
-        }
+        for (int i = 13; i < lines.length; i++) {
+            String str = lines[i];
+            String[] arr = str.split(",");
 
-        obj.put("FILENAME", fileName);
-
-        // Adding headers and values from line 13 (index 12) onwards
-        for (int j = 0; j < arr.length; j++) {
-            String jsonkey = headers[j].trim().replace("\"", "");
-            String jsonvalue = arr[j].trim().replace("\"", "").replace("\\/", "/");
-            
-            // Handle date format conversion
-            if (jsonvalue.matches("\\d{2}/\\d{2}/\\d{4} \\d{2}:\\d{2}:\\d{2} UTC")) {
-                SimpleDateFormat inputDateFormat = new SimpleDateFormat("MM/dd/yyyy HH:mm:ss z");
-                Date date = inputDateFormat.parse(jsonvalue);
-                SimpleDateFormat outputDateFormat = new SimpleDateFormat("MM/dd/yyyy HH:mm:ss z");
-                jsonvalue = outputDateFormat.format(date);
+            if (headers == null || headers.length != arr.length) {
+                this.failureIntCounter.add(1);
+                continue;
             }
-            
-            obj.put(jsonkey, jsonvalue);
-        }
 
-        this.successIntCounter.add(1);
-        collector.collect(obj.toString());
+            JSONObject obj = new JSONObject();
+
+            // Adding headers and values from line 1 to line 11 as key-value pairs
+            for (int j = 0; j < 11; j++) {
+                String[] keyValue = lines[j].split(",");
+                String jsonkey = keyValue[0].trim().replace("\"", "");
+                String jsonvalue = keyValue[1].trim().replace("\"", "").replace("\\/", "/");
+                obj.put(jsonkey, jsonvalue);
+            }
+
+            obj.put("FILENAME", fileName);
+
+            // Adding headers and values from line 13 (index 12) onwards
+            for (int j = 0; j < arr.length; j++) {
+                String jsonkey = headers[j].trim().replace("\"", "");
+                String jsonvalue = arr[j].trim().replace("\"", "");
+                obj.put(jsonkey, jsonvalue);
+            }
+
+            this.successIntCounter.add(1);
+            collector.collect(obj.toString());
+        }
     }
 }

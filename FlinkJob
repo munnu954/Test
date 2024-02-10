@@ -1,64 +1,68 @@
-import org.apache.flink.api.common.functions.RichFlatMapFunction;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.metrics.Counter;
-import org.apache.flink.util.Collector;
-import org.json.JSONObject;
-
-import java.util.ArrayList;
-import java.util.List;
+Certainly! Here's the updated code to handle the headers present from line 1 to line 11, where column 1 and column 2 of each line consist of json keys and json values respectively:
 
 public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
-    private List<String> jsonKeys;
-    private List<String> jsonValues;
-    private Counter successIntCounter;
-    private Counter failureIntCounter;
+    private Map<String, String> headersMap;
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
     private String fileName;
 
     public CsvtoJsonDRAnTransformer(String fileName) {
         this.fileName = fileName;
-        this.jsonKeys = new ArrayList<>();
-        this.jsonValues = new ArrayList<>();
     }
 
     @Override
     public void open(Configuration parameters) throws Exception {
-        successIntCounter = getRuntimeContext().getMetricGroup().counter("successIntCounter");
-        failureIntCounter = getRuntimeContext().getMetricGroup().counter("failureIntCounter");
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
 
     @Override
     public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-
-        for (int i = 0; i < 11; i++) {
-            String[] headerCells = lines[i].split(",");
-            if (headerCells.length == 2) {
-                jsonKeys.add(headerCells[0].trim());
-                jsonValues.add(headerCells[1].trim());
-            }
-        }
-
-        for (int i = 13; i < lines.length; i++) {
+        headersMap = parseHeaders(lines); // Parse headers from line 1-11
+        for (int i = 13; i < lines.length; i++) { // Start processing from line 14
             String str = lines[i];
             String[] arr = str.split(",");
-            if (jsonKeys.isEmpty() || jsonKeys.size() != arr.length) {
-                failureIntCounter.inc();
+            if (headersMap == null || headersMap.isEmpty() || arr.length != 2) {
+                this.failureIntCounter.add(1);
                 continue;
             }
-
             JSONObject obj = new JSONObject();
             obj.put("FILENAME", fileName);
-
-            for (int j = 0; j < arr.length; j++) {
-                if (j < jsonKeys.size()) {
-                    String jsonKey = jsonKeys.get(j).replace("\"", "");
-                    String jsonValue = arr[j].replace("\"", "");
-                    obj.put(jsonKey, jsonValue);
-                }
+            for (String key : headersMap.keySet()) {
+                String jsonkey = key.trim().replace("\"", "");
+                String jsonvalue = getValue(arr, headersMap.get(key));
+                obj.put(jsonkey, jsonvalue);
             }
-
-            successIntCounter.inc();
+            this.successIntCounter.add(1);
             collector.collect(obj.toString());
         }
     }
+
+    private Map<String, String> parseHeaders(String[] lines) {
+        Map<String, String> headersMap = new HashMap<>();
+        for (int i = 0; i < 11; i++) {
+            String line = lines[i];
+            String[] arr = line.split(",");
+            if (arr.length == 2) {
+                String jsonkey = arr[0].trim().replace("\"", "");
+                String jsonvalue = arr[1].trim().replace("\"", "");
+                headersMap.put(jsonkey, jsonvalue);
+            }
+        }
+        return headersMap;
+    }
+
+    private String getValue(String[] arr, String index) {
+        int columnIndex = Integer.parseInt(index) - 1;
+        if (columnIndex >= 0 && columnIndex < arr.length) {
+            return arr[columnIndex].trim().replace("\"", "");
+        }
+        return "";
+    }
 }
+
+
+In the updated code, I added a parseHeaders method to extract and store the headers in a headersMap. The headersMap is then used to retrieve the corresponding values from the CSV rows. The getValue method is introduced to get the value at the specified index from the arr array.
+
+Please note that I assumed the format of the headers to be in key-value pairs, where the key is present in column 1 and its respective value is present in column 2. You may need to adjust the code accordingly if the format is different.

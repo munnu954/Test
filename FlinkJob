@@ -1,46 +1,64 @@
-Sure, I can help you with that. Here is the updated code:
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
 
+import java.util.ArrayList;
+import java.util.List;
 
 public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
+    private List<String> jsonKeys;
+    private List<String> jsonValues;
+    private Counter successIntCounter;
+    private Counter failureIntCounter;
+    private String fileName;
 
-  private String[] headers;
-  private IntCounter successIntCounter = new IntCounter();
-  private IntCounter failureIntCounter = new IntCounter();
-  private String fileName;
-
-  public CsvtoJsonDRAnTransformer(String fileName) {
-    this.fileName = fileName;
-  }
-
-  @Override
-  public void open(Configuration parameters) throws Exception {
-    getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-    getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
-  }
-
-  @Override
-  public void flatMap(String s, Collector<String> collector) throws Exception {
-    String[] lines = s.split(System.lineSeparator());
-    headers = lines[0].split(","); // Modify to pick headers from line number 1
-    for (int i = 1; i < lines.length; i++) { // Modify to start processing from line 2
-      String str = lines[i];
-      String[] arr = str.split(",");
-      if (headers == null || headers.length != arr.length) {
-        this.failureIntCounter.add(1);
-        continue;
-      }
-      JSONObject obj = new JSONObject();
-      obj.put("FILENAME", fileName);
-      for (int j = 0; j < arr.length; j++) {
-        String jsonkey = headers[j].trim().replace("\"", "");
-        String jsonvalue = arr[j].trim().replace("\"", "");
-        obj.put(jsonkey, jsonvalue);
-      }
-      this.successIntCounter.add(1);
-      collector.collect(obj.toString());
+    public CsvtoJsonDRAnTransformer(String fileName) {
+        this.fileName = fileName;
+        this.jsonKeys = new ArrayList<>();
+        this.jsonValues = new ArrayList<>();
     }
-  }
+
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        successIntCounter = getRuntimeContext().getMetricGroup().counter("successIntCounter");
+        failureIntCounter = getRuntimeContext().getMetricGroup().counter("failureIntCounter");
+    }
+
+    @Override
+    public void flatMap(String s, Collector<String> collector) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
+
+        for (int i = 0; i < 11; i++) {
+            String[] headerCells = lines[i].split(",");
+            if (headerCells.length == 2) {
+                jsonKeys.add(headerCells[0].trim());
+                jsonValues.add(headerCells[1].trim());
+            }
+        }
+
+        for (int i = 13; i < lines.length; i++) {
+            String str = lines[i];
+            String[] arr = str.split(",");
+            if (jsonKeys.isEmpty() || jsonKeys.size() != arr.length) {
+                failureIntCounter.inc();
+                continue;
+            }
+
+            JSONObject obj = new JSONObject();
+            obj.put("FILENAME", fileName);
+
+            for (int j = 0; j < arr.length; j++) {
+                if (j < jsonKeys.size()) {
+                    String jsonKey = jsonKeys.get(j).replace("\"", "");
+                    String jsonValue = arr[j].replace("\"", "");
+                    obj.put(jsonKey, jsonValue);
+                }
+            }
+
+            successIntCounter.inc();
+            collector.collect(obj.toString());
+        }
+    }
 }
-
-
-I hope this is helpful

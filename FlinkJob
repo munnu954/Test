@@ -1,18 +1,5 @@
-
-import org.apache.flink.api.common.functions.RichFlatMapFunction;
-import org.apache.flink.api.common.state.ValueState;
-import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.util.Collector;
-
-import java.util.ArrayList;
-import java.util.List;
-
-public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction {
-
-    private String[] headers;
-    private ValueState> state;
+public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
+    private List<String[]> headersList = new ArrayList<>();
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
     private String fileName;
@@ -23,41 +10,41 @@ public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction {
 
     @Override
     public void open(Configuration parameters) throws Exception {
-        state = getRuntimeContext().getState(new ValueStateDescriptor<>("state", List.class));
         getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
         getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
     }
 
     @Override
-    public void flatMap(String s, Collector collector) throws Exception {
+    public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
-        headers = lines[0].split(",");
-        for (int i = 1; i < lines.length; i++) {
+        
+        // Read and store headers from lines 1 to 11
+        for (int i = 0; i < 11; i++) {
+            String line = lines[i];
+            String[] header = line.split(",");
+            headersList.add(header);
+        }
+
+        // Process data starting from line 14
+        for (int i = 12; i < lines.length; i++) {
             String str = lines[i];
             String[] arr = str.split(",");
-            if (headers == null || headers.length != arr.length) {
+            if (headersList.size() != arr.length) {
                 this.failureIntCounter.add(1);
                 continue;
             }
-            List values = state.value();
-            if (values == null) {
-                values = new ArrayList<>();
+            JSONObject obj = new JSONObject();
+            obj.put("FILENAME", fileName);
+            for (int j = 0; j < headersList.size(); j++) {
+                String[] header = headersList.get(j);
+                if (header.length == 2) {
+                    String jsonkey = header[0].trim().replace("\"", "");
+                    String jsonvalue = header[1].trim().replace("\"", "");
+                    obj.put(jsonkey, arr[j].trim());
+                }
             }
-            values.add(arr[0]);
-            state.update(values);
+            this.successIntCounter.add(1);
+            collector.collect(obj.toString());
         }
-        List values = state.value();
-        if (values == null || values.isEmpty()) {
-            this.failureIntCounter.add(1);
-            return;
-        }
-        JSONObject obj = new JSONObject();
-        obj.put("FILENAME", fileName);
-        for (String value : values) {
-            String[] kv = value.split("=");
-            obj.put(kv[0], kv[1]);
-        }
-        this.successIntCounter.add(1);
-        collector.collect(obj.toString());
     }
 }

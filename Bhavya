@@ -1,62 +1,41 @@
-```
-import org.apache.flink.api.common.functions.RichFlatMapFunction;
-import org.apache.flink.api.common.accumulators.IntCounter;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.util.Collector;
-import org.json.JSONObject;
 
-public static class CsvtoJsonRTROCSnTransformer extends RichFlatMapFunction<String, String> {
-    private String[] headers;
-    private IntCounter successIntCounter = new IntCounter();
-    private IntCounter failureIntCounter = new IntCounter();
-    private String fileName;
+public static class CsvtoJsonRTROCSnTransformer extends RichFlatMapFunction {
 
-    public CsvtoJsonRTROCSnTransformer(String fileName) {
-        this.fileName = fileName;
+  private String[] headers;
+  private IntCounter successIntCounter = new IntCounter();
+  private IntCounter failureIntCounter = new IntCounter();
+  private String fileName;
+
+  public CsvtoJsonRTROCSnTransformer(String fileName) {
+    this.fileName = fileName;
+  }
+
+  @Override
+  public void open(Configuration parameters) throws Exception {
+    getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+    getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+  }
+
+  @Override
+  public void flatMap(String s, Collector collector) throws Exception {
+    String[] lines = s.split(System.lineSeparator());
+    headers = lines[0].split(",");
+    for (int i = 1; i < lines.length; i++) {
+      String str = lines[i];
+      String[] arr = str.split(",");
+      if (headers == null || headers.length != arr.length) {
+        this.failureIntCounter.add(1);
+        continue;
+      }
+      JSONObject obj = new JSONObject();
+      obj.put("FILENAME", fileName);
+      for (int j = 0; j < arr.length; j++) {
+        String jsonkey = headers[j].trim().replace("\"‌", "");
+        String jsonvalue = arr[j].trim().replace("\""‌", "");
+        obj.put(jsonkey, jsonvalue);
+      }
+      this.successIntCounter.add(1);
+      collector.collect(obj.toString());
     }
-
-    @Override
-    public void open(Configuration parameters) throws Exception {
-        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
-    }
-
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] lines = s.split(System.lineSeparator());
-        if (lines.length < 3) {
-            // Handle the case when the input does not have enough lines
-            // You can throw an exception, log an error, or handle it according to your use case
-            return;
-        }
-        if (lines[0].startsWith("device=") && lines[1].startsWith("object=") && lines[2].startsWith("indicator=")) {
-            String[] headersLine = lines[2].substring("indicator=".length()).split(", ");
-            headers = new String[headersLine.length];
-            for (int i = 0; i < headersLine.length; i++) {
-                headers[i] = headersLine[i];
-            }
-        } else {
-            // Handle the case when the headers line does not match the expected format
-            // You can throw an exception, log an error, or handle it according to your use case
-            return;
-        }
-        for (int i = 3; i < lines.length; i++) {
-            String str = lines[i];
-            String[] arr = str.split(",");
-            if (headers == null || headers.length != arr.length) {
-                this.failureIntCounter.add(1);
-                continue;
-            }
-            JSONObject obj = new JSONObject();
-            obj.put("FILENAME", fileName);
-            for (int j = 0; j < arr.length; j++) {
-                String jsonkey = headers[j].trim().replace("\"", "");
-                String jsonvalue = arr[j].trim().replace("\"", "");
-                obj.put(jsonkey, jsonvalue);
-            }
-            this.successIntCounter.add(1);
-            collector.collect(obj.toString());
-        }
-    }
+  }
 }
-```

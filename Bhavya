@@ -1,5 +1,10 @@
+Certainly! I have updated the code to handle the new format of the headers in line 1 of the CSV file, where column 1 and column 2 contain the JSON key and its respective JSON value separated by "=" symbol, and column 3 contains a JSON key, followed by its corresponding JSON values in the subsequent columns.
+
+Here's the updated code:
+
+```java
 public static class CsvtoJsonRTROCSnTransformer extends RichFlatMapFunction<String, String> {
-    private List<String> headers = new ArrayList<>();
+    private String[] headers;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
     private String fileName;
@@ -18,38 +23,51 @@ public static class CsvtoJsonRTROCSnTransformer extends RichFlatMapFunction<Stri
     public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
 
-        // Extract headers from line 1 of the CSV
-        String line1 = lines[0];
-        if (!line1.isEmpty()) {
-            String[] columns = line1.split(",");
-            for (int i = 0; i < columns.length; i++) {
-                headers.add(columns[i].trim());
+        // Process header line
+        String[] headerLine = lines[0].split(",");
+        int numOfJsonKeys = headerLine.length - 2;
+        String[] jsonKeys = new String[numOfJsonKeys];
+        String[] jsonValues = new String[numOfJsonKeys + 1];
+
+        for (int i = 0; i < headerLine.length; i++) {
+            String[] keyValue = headerLine[i].split("=");
+            if (i < 2) {
+                jsonKeys[i] = keyValue[0].trim();
+                jsonValues[i] = keyValue[1].trim();
+            } else {
+                jsonKeys[i - 2] = keyValue[0].trim();
+                jsonValues[i - 2 + 1] = keyValue[1].trim();
             }
         }
 
+        // Process data lines
+        headers = lines[2].split(",");
         for (int i = 3; i < lines.length; i++) {
-            String str = lines[i];
-            String[] arr = str.split(",");
-            if (headers.size() < 2 || headers.size() > arr.length) {
+            String[] arr = lines[i].split(",");
+            if (headers == null || headers.length != arr.length) {
                 this.failureIntCounter.add(1);
                 continue;
             }
             JSONObject obj = new JSONObject();
             obj.put("FILENAME", fileName);
-
-            // Processing jsonkey-value pairs from columns 1 and 2
-            obj.put(headers.get(0), arr[0].trim());
-            obj.put(headers.get(1), arr[1].trim());
-
-            // Processing jsonkey-value pairs from columns 3 to 8
-            for (int j = 2; j < Math.min(headers.size(), arr.length); j++) {
-                String jsonkey = headers.get(j).trim().replace("\"", "");
+            
+            // Add JSON keys and values from header line
+            for (int j = 0; j < numOfJsonKeys + 1; j++) {
+                obj.put(jsonKeys[j], jsonValues[j]);
+            }
+            
+            // Add remaining columns based on headers and values
+            for (int j = 0; j < arr.length; j++) {
+                String jsonkey = headers[j].trim().replace("\"", "");
                 String jsonvalue = arr[j].trim().replace("\"", "");
                 obj.put(jsonkey, jsonvalue);
             }
-
+            
             this.successIntCounter.add(1);
             collector.collect(obj.toString());
         }
     }
 }
+```
+
+Please ensure that you have imported the required packages for `JSONObject`, `IntCounter`, `RichFlatMapFunction`, `Configuration`, `Collector`, and `System` in your code.

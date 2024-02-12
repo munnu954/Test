@@ -1,7 +1,10 @@
-Apologies for the mistake in the previous code. The issue occurred because the header line only contained 1 element instead of 2. Here's the updated code with the necessary fix:
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.api.common.accumulators.IntCounter;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.util.Collector;
+import org.json.JSONObject;
 
-```java
-public static class CsvtoJsonRTROCSnTransformer extends RichFlatMapFunction<String, String> {
+public class CsvtoJsonRTROCSnTransformer extends RichFlatMapFunction<String, String> {
     private String[] headers;
     private IntCounter successIntCounter = new IntCounter();
     private IntCounter failureIntCounter = new IntCounter();
@@ -21,54 +24,48 @@ public static class CsvtoJsonRTROCSnTransformer extends RichFlatMapFunction<Stri
     public void flatMap(String s, Collector<String> collector) throws Exception {
         String[] lines = s.split(System.lineSeparator());
 
-        // Process header line
-        String[] headerLine = lines[0].split(",");
-        int numOfJsonKeys = headerLine.length - 1;
-        String[] jsonKeys = new String[numOfJsonKeys];
-        String[] jsonValues = new String[numOfJsonKeys + 1];
-
-        for (int i = 0; i < headerLine.length; i++) {
-            String[] keyValue = headerLine[i].split("=");
-            if (i < 2) {
-                jsonKeys[i] = keyValue[0].trim();
-            }
-            if (keyValue.length > 1) {
-                jsonValues[i] = keyValue[1].trim();
+        // Extract and process headers from line 1 - column 1 and 2
+        String[] headerParts = lines[0].split(",");
+        JSONObject headerObj1 = new JSONObject();
+        for (int i = 0; i < 2; i++) {
+            String[] keyValue = headerParts[i].split("=");
+            if (keyValue.length == 2) {
+                String jsonKey = keyValue[0].trim();
+                String jsonValue = keyValue[1].trim();
+                headerObj1.put(jsonKey, jsonValue);
             }
         }
+        collector.collect(headerObj1.toString());
 
-        // Process data lines
+        // Extract JSON key from column 3 of line 1
+        String key3 = headerParts[2].split("=")[0].trim(); // Assuming only 1 key in column 3
+
+        // Process headers from line 1 - columns 3 onwards
+        JSONObject headerObj2 = new JSONObject();
+        for (int i = 2; i < headerParts.length; i++) {
+            String jsonValue = headerParts[i].split("=")[1].trim();
+            headerObj2.put(key3, jsonValue);
+        }
+        collector.collect(headerObj2.toString());
+
+        // Processing data starting from line 3
         headers = lines[2].split(",");
         for (int i = 3; i < lines.length; i++) {
-            String[] arr = lines[i].split(",");
+            String str = lines[i];
+            String[] arr = str.split(",");
             if (headers == null || headers.length != arr.length) {
                 this.failureIntCounter.add(1);
                 continue;
             }
             JSONObject obj = new JSONObject();
             obj.put("FILENAME", fileName);
-
-            // Add JSON keys and values from header line
-            for (int j = 0; j < numOfJsonKeys + 1; j++) {
-                if (j < 2) {
-                    obj.put(jsonKeys[j], jsonValues[j]);
-                }
-            }
-
-            // Add remaining columns based on headers and values
             for (int j = 0; j < arr.length; j++) {
                 String jsonkey = headers[j].trim().replace("\"", "");
                 String jsonvalue = arr[j].trim().replace("\"", "");
                 obj.put(jsonkey, jsonvalue);
             }
-
             this.successIntCounter.add(1);
             collector.collect(obj.toString());
         }
     }
 }
-```
-
-This updated code handles the case of the header line with only 1 element. The `jsonValues` array will be populated if the `keyValue` array has a length greater than 1, ensuring that the JSON value from the header line is stored correctly.
-
-Make sure to import the necessary packages for `JSONObject`, `IntCounter`, `RichFlatMapFunction`, `Configuration`, `Collector`, and `System` in your code.

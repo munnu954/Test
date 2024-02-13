@@ -1,58 +1,50 @@
-import org.apache.flink.api.common.functions.RichFlatMapFunction;
-import org.apache.flink.api.common.accumulators.IntCounter;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.util.Collector;
+import org.apache.flink.streaming.api.datastream.DataStream;
 import org.json.JSONObject;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assertions;
 
-public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
-    private String[] headers;
-    private IntCounter successIntCounter = new IntCounter();
-    private IntCounter failureIntCounter = new IntCounter();
-    private String fileName;
+import java.io.IOException;
+import java.util.Iterator;
 
-    public CsvtoJsonDRAnTransformer(String fileName) {
-        this.fileName = fileName;
+public class CsvToJsonDRATest {
+
+    private File draFile;
+    private String jsonFirstRow;
+    private DataStream<String> draJsonStream;
+    private String fileName = "DRA";
+
+    @BeforeEach
+    public void setup() throws IOException {
+        this.draFile = new File("src/test/resources/files/DRA.csv");
     }
 
-    @Override
-    public void open(Configuration parameters) throws Exception {
-        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
-    }
+    @Test
+    public void testCsvToJsonTransformation() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        final DataStream<String> stream = env.fromElements(Main.readCSVFile(this.draFile.toPath().toString()));
+        this.draJsonStream = stream.flatMap(new CsvtoJsonDRAnTransformer(fileName));
 
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] lines = s.split(System.lineSeparator());
+        Iterator<String> iterator = this.draJsonStream.executeAndCollect();
+        this.jsonFirstRow = iterator.next();
 
-        for (int i = 0; i < 11; i++) {
-            String[] headerParts = lines[i].split(",");
-            // Assuming JSON keys in column 1 and corresponding JSON values in column 2
-            if (headerParts.length >= 2) {
-                String jsonKey = headerParts[0].trim();
-                String jsonValue = headerParts[1].trim();
-                JSONObject headerObj = new JSONObject();
-                headerObj.put(jsonKey, jsonValue);
-                collector.collect(headerObj.toString());
-            }
-        }
+        JSONObject firstJson = new JSONObject(jsonFirstRow);
 
-        headers = lines[12].split(","); // Modify line number here
-        for (int i = 13; i < lines.length; i++) {
-            String str = lines[i];
-            String[] arr = str.split(",");
-            if (headers == null || headers.length != arr.length) {
-                this.failureIntCounter.add(1);
-                continue;
-            }
-            JSONObject obj = new JSONObject();
-            obj.put("FILENAME", fileName);
-            for (int j = 0; j < arr.length; j++) {
-                String jsonkey = headers[j].trim().replace("\"", "");
-                String jsonvalue = arr[j].trim().replace("\"", "");
-                obj.put(jsonkey, jsonvalue);
-            }
-            this.successIntCounter.add(1);
-            collector.collect(obj.toString());
-        }
+        Assertions.assertEquals("Diameter Egress Transaction", firstJson.get("Group"));
+        Assertions.assertEquals("SG", firstJson.get("ScopeType"));
+        Assertions.assertEquals("301", firstJson.get("TxAnswerTimeoutMp"));
+        Assertions.assertEquals("ALL", firstJson.get("Server"));
+        Assertions.assertEquals("01/23/2024 18:11:13 UTC", firstJson.get("Start"));
+        Assertions.assertEquals("Oracle Communications Diameter Signaling Router 8.6.0.1.0-96.15.0", firstJson.get("Product"));
+        Assertions.assertEquals("204", firstJson.get("Count"));
+        Assertions.assertEquals("0", firstJson.get("RxAnswerMsgQueueFullDiscard"));
+        Assertions.assertEquals("2024-01-23 18:11:00 UTC", firstJson.get("Timestamp"));
+        Assertions.assertEquals("HOSTNAME IN", firstJson.get("Match"));
+        Assertions.assertEquals("MeasSimple", firstJson.get("ReportType"));
+        Assertions.assertEquals("01/23/2024 19:13:30 UTC", firstJson.get("ReportDate"));
+        Assertions.assertEquals("njbbs1f51mpA", firstJson.get("Scope"));
+        Assertions.assertEquals("Diameter Egress Transaction", firstJson.get("ReportDescription"));
+        Assertions.assertEquals("01/23/2024 19:11:13 UTC", firstJson.get("End"));
+        Assertions.assertEquals("0:05", firstJson.get("Interval"));
     }
 }

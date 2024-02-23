@@ -1,89 +1,92 @@
--Ddatastax-java-driver.basic.request.timeout="15 seconds"
+Main.java class:-
+public static void main(String[] args) throws Exception {
+String primaryKey;
+UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
+unifiedAuditMessage.setProcessType(ProcessType.Transformer.toString());
+ParameterTool parameters = ParameterTool.fromArgs(args);
+String filePath = parameters.getRequired("filePath");
+String delimeter=parameters.getRequired("primaryKey");
+String fileType = parameters.getRequired("fileType");
 
+//Extract the FILENAME from filePath
+String[] pathArr = filePath.split("/");
+String fileName = pathArr[pathArr.length - 1];
 
-
-
-
-
-Certainly! Here's an example of JUnit test cases for negative scenarios that validates the exception handling logic in the code:
-
-```java
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import org.json.JSONObject;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Path;
-
-public class CsvToJsonDRATest {
-
-    private File draFile;
-    private CsvToJsonDRAnTransformer csvToJsonDraTransformer;
-
-    @Mock
-    private StreamExecutionEnvironment envMock;
-
-    @BeforeEach
-    public void setup() throws IOException {
-        MockitoAnnotations.initMocks(this);
-        this.draFile = new File("src/test/resources/files/DRA.csv");
-        csvToJsonDraTransformer = new CsvtoJsonDRAnTransformer("DRA");
-    }
-
-    @Test
-    public void testInvalidCsvFilePath() {
-        assertThrows(IOException.class, () -> Main.readCSVFile("invalid/filepath.csv"));
-    }
-
-    @Test
-    public void testNullCsvRow() {
-        assertThrows(NullPointerException.class, () -> csvToJsonDraTransformer.flatMap(null));
-    }
-
-    @Test
-    public void testInvalidJsonRowFormat() {
-        JSONObject invalidJson = new JSONObject();
-        invalidJson.put("Group", "Diameter Egress Transaction");
-        invalidJson.put("ScopeType", "SG");
-        invalidJson.put("TxAnswerTimeoutMp", "301");
-        invalidJson.put("Server", "ALL");
-        // Include only some of the expected fields to generate an invalid JSON row
-
-        assertThrows(Exception.class, () -> csvToJsonDraTransformer.flatMap(invalidJson));
-    }
-
-    @Test
-    public void testJsonRowValidation() {
-        String jsonRow = "{\"Group\":\"Invalid Group Value\", \"ScopeType\":\"SG\", \"TxAnswerTimeoutMp\":\"301\", \"Server\":\"ALL\", \"Start\":\"01/23/2024 18:11:13 UTC\", \"Product\":\"Oracle Communications Diameter Signaling Router 8.6.0.1.0-96.15.0\", \"Count\":204, \"RxAnswerMsgQueueFullDiscard\":\"0\", \"Timestamp\":\"2024-01-23 18:11:00 UTC\", \"Match\":\"HOSTNAME IN\", \"ReportType\":\"MeasSimple\", \"ReportDate\":\"01/23/2024 19:13:30 UTC\", \"Scope\":\"njbbs1f51mpA\", \"ReportDescription\":\"Diameter Egress Transaction\", \"End\":\"01/23/2024 19:11:13 UTC\", \"Interval\":\"0:05\"}";
-
-        assertThrows(AssertionError.class, () -> validateJsonRow(jsonRow));
-    }
-
-    private void validateJsonRow(String jsonRow) {
-        JSONObject jsonResponse = new JSONObject(jsonRow);
-
-        // Invalid assertions to fail the test
-        Assertions.assertEquals("Invalid Group Value", jsonResponse.get("Group"));
-        Assertions.assertEquals("SG", jsonResponse.get("ScopeType"));
-        Assertions.assertEquals("301", jsonResponse.get("TxAnswerTimeoutMp"));
-        Assertions.assertEquals("ALL", jsonResponse.get("Server"));
-        Assertions.assertEquals("01/23/2024 18:11:13 UTC", jsonResponse.get("Start"));
-        Assertions.assertEquals("Oracle Communications Diameter Signaling Router 8.6.0.1.0-96.15.0", jsonResponse.get("Product"));
-        Assertions.assertEquals(204, jsonResponse.getInt("Count"));
-        Assertions.assertEquals("0", jsonResponse.get("RxAnswerMsgQueueFullDiscard"));
-        Assertions.assertEquals("2024-01-23 18:11:00 UTC", jsonResponse.get("Timestamp"));
-        Assertions.assertEquals("HOSTNAME IN", jsonResponse.get("Match"));
-        Assertions.assertEquals("MeasSimple", jsonResponse.get("ReportType"));
-        Assertions.assertEquals("01/23/2024 19:13:30 UTC", jsonResponse.get("ReportDate"));
-        Assertions.assertEquals("njbbs1f51mpA", jsonResponse.get("Scope"));
-        Assertions.assertEquals("Diameter Egress Transaction", jsonResponse.get("ReportDescription"));
-        Assertions.assertEquals("01/23/2024 19:11:13 UTC", jsonResponse.get("End"));
-        Assertions.assertEquals("0:05", jsonResponse.get("Interval"));
-    }
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+filePath = parameters.getRequired("filePath");
+unifiedAuditMessage.setInputFilePath(filePath);
+unifiedAuditMessage.setFileType("XML_"+ fileType);
+DataStream<String> xmlDataStream =null;
+DataStream<String> jsonStream=null;
+switch (fileType) {
+case "NETAСТ":
+primaryKey = "measInfo";
+break; 
+case "IMS-CCF":
+primaryKey = "mi";
+case "ETAS":
+primaryKey = "measInfo";
+break;
+default:
+primaryKey = "";
 }
-```
+xmlDataStream = env.fromElements (readXMLFile(filePath));
+jsonStream = xmlDataStream.flatMap(new XmlToJsonConverter(primaryKey, filePath, fileName)).name("XmlToJsonFlatMap");
+jsonStream.sinkTo(sink);
+JobExecutionResult jobExecutionResult = env.execute("Xml to JSON Transformer: "+fileType);
+}
 
-In this code, we are using the `assertThrows` method from JUnit to assert that specific exceptions are thrown when certain negative scenarios occur. The scenarios covered include invalid CSV file path, null CSV rows, invalid JSON row format, and an invalid assertion in the JSON row validation.
+XmlToJsonConverter.java class:-
+public class XmlToJsonConverter extends RichFlatMapFunction<String, String> {
+private List<String> outerList = new ArrayList<String>();
+private List<JsonNode> primaryNodeList = new ArrayList<JsonNode>();
+private List<String> primaryKeyList = new ArrayList<String>();
+public String primaryKey;
+public String filePath;
+public String fileName;
+private int successCount = 0;
+private int failureCount = 0;
+public int getSuccessCount() {
+return successCount;
+}
+public int getFailureCount() {
+return failureCount;
+}
+private IntCounter successIntCounter = new IntCounter();
+private IntCounter failureIntCounter = new IntCounter();
+@Override
+public void open(Configuration parameters) throws Exception {
+getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+}
+public XmlToJsonConverter() {
+super();
+}
+public XmlToJsonConverter(String primaryKey, String filePath, String fileName) {
+super();
+this.primaryKey = primaryKey;
+this.filePath = filePath;
+this.fileName = fileName;
+}
+@Override
+public void flatMap(String value, Collector<String> out) throws Exception {
+//... (rest of the code remains unchanged)
+
+//Adding FILENAME as key in each JSON response
+for (String obj: primaryKeyList) {
+ObjectNode keyNode = JsonNodeFactory.instance.objectNode();
+keyNode.put("FILENAME", fileName); // Newly added line
+if ((node.at("/" + obj).isObject())) {
+keyNode (ObjectNode) node.at("/" + obj);
+} else if ((node.at("/" + obj).isArray())) { 
+arrNode = (ArrayNode) node.at("/" + obj); //If its a Json Array
+} 
+//... (rest of the code remains unchanged)
+}
+//... (rest of the code remains unchanged)
+}
+//... (rest of the code remains unchanged)
+}
+}
+
+The changes that have been made to the classes are highlighted and include passing the "fileName" as an additional parameter in the constructor of XmlToJsonConverter and adding the "FILENAME" key to each JSON response within the flatMap method of XmlToJsonConverter.

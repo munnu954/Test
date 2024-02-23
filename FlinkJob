@@ -1,61 +1,173 @@
-Sure, I can help you with that. Here is the updated code:
+Main.java class:-
+public static void main(String[] args) throws Exception {
+String primaryKey;
+UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
+unifiedAuditMessage.setProcessType(ProcessType.Transformer.toString());
+ParameterTool parameters = ParameterTool.fromArgs(args);
+String filePath = parameters.getRequired("filePath"); String delimeter=parameters.getRequired("primaryKey");
+String fileType = parameters.getRequired("fileType");
 
+//Extract the FILENAME from filePath
+String[] pathArr = filePath.split("/");
+String fileName = pathArr[pathArr.length - 1];
 
-public class CsvtoJsonDRAnTransformer extends RichFlatMapFunction<String, String> {
-    private String[] headers;
-    private IntCounter successIntCounter = new IntCounter();
-    private IntCounter failureIntCounter = new IntCounter();
-    private String fileName;
-
-    public CsvtoJsonDRAnTransformer(String fileName) {
-        this.fileName = fileName;
-    }
-
-    @Override
-    public void open(Configuration parameters) throws Exception {
-        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
-    }
-
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] lines = s.split(System.lineSeparator());
-
-        // Extract headers from line 13 (assuming it starts from index 0)
-        headers = lines[12].split(",");
-
-        for (int i = 13; i < lines.length; i++) {
-            String str = lines[i];
-            String[] arr = str.split(",");
-
-            if (headers == null || headers.length != arr.length) {
-                this.failureIntCounter.add(1);
-                continue;
-            }
-
-            JSONObject obj = new JSONObject();
-
-            // Adding headers and values from line 1 to line 11 as key-value pairs
-            for (int j = 0; j < 11; j++) {
-                String jsonkey = lines[j].split(",")[0].trim().replace("\"", "");
-                String jsonvalue = lines[j].split(",")[1].trim().replace("\"", "").replace("\\/", "/");
-                obj.put(jsonkey, jsonvalue);
-            }
-
-            obj.put("FILENAME", fileName);
-
-            // Adding headers and values from line 13 (index 12) onwards
-            for (int j = 0; j < arr.length; j++) {
-                String jsonkey = headers[j].trim().replace("\"", "");
-                String jsonvalue = arr[j].trim().replace("\"", "");
-                obj.put(jsonkey, jsonvalue.replaceAll("\\\\/", "/"));
-            }
-
-            this.successIntCounter.add(1);
-            collector.collect(obj.toString().replaceAll("\\\\/", "/"));
-        }
-    }
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+filePath = parameters.getRequired("filePath"); unifiedAuditMessage.setInputFilePath(filePath);
+unifiedAuditMessage.setFileType("XML_"+ fileType);
+DataStream<String> xmlDataStream =null;
+DataStream<String> jsonStream=null;
+switch (fileType) {
+case "NETAСТ":
+primaryKey = "measInfo";
+break; 
+case "IMS-CCF":
+primaryKey = "mi";
+case "ETAS":
+primaryKey = "measInfo";
+break;
+default:
+primaryKey = "";
+}
+xmlDataStream = env.fromElements (readXMLFile(filePath));
+jsonStream = xmlDataStream.flatMap(new XmlToJsonConverter(primaryKey, filePath, fileName)).name("XmlToJsonFlatMap");
+jsonStream.sinkTo(sink);
+JobExecutionResult jobExecutionResult = env.execute("Xml to JSON Transformer: "+fileType);
 }
 
-
-I have updated the code to replace all occurrences of \\/ with / in the jsonvalue variable. This will ensure that the output JSON is in the desired format
+XmlToJsonConverter.java class:-
+public class XmlToJsonConverter extends RichFlatMapFunction<String, String> {
+private List<String> outerList = new ArrayList<String>();
+private List<JsonNode> primaryNodeList = new ArrayList<JsonNode>();
+private List<String> primaryKeyList = new ArrayList<String>();
+public String primaryKey;
+public String filePath;
+public String fileName; // Newly added variable to store FILENAME
+private int successCount = 0;
+private int failureCount = 0;
+public int getSuccessCount() {
+return successCount;
+}
+public int getFailureCount() {
+return failureCount;
+}
+private IntCounter successIntCounter = new IntCounter();
+private IntCounter failureIntCounter = new IntCounter();
+@Override
+public void open(Configuration parameters) throws Exception {
+getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+}
+public XmlToJsonConverter() {
+super();
+}
+public XmlToJsonConverter(String primaryKey, String filePath, String fileName) { // Updated constructor with fileName parameter
+super();
+this.primaryKey = primaryKey;
+this.filePath = filePath;
+this.fileName = fileName;
+}
+@Override
+public void flatMap(String value, Collector<String> out) throws Exception {
+XmlMapper xmlMapper = new XmlMapper();
+JsonNode node = xmlMapper.readTree(value.getBytes());
+KafkaProducerService kProducerService = new KafkaProducerService();
+// Get all elements path
+this.processJsonPointer("", node);
+List<Object> removeList = new ArrayList<Object>();
+//Get the primary key elements
+for (String obj: outerList) {
+if (obj != null) {
+// Add the primary key elements path
+if (("/" + obj).endsWith(("/" + primaryKey))) {
+primaryKeyList.add(obj); }
+// Add the primary key child elements path into remove list
+if (("/" + obj).contains(("/" + primaryKey + "/"))) {
+removeList.add(obj);
+}}}
+//Remove the unwanted elements and clear removeList
+this.removeUnwantedElements (removelist);
+//Return json node if primaryKey not found
+if (primaryKeyList.isEmpty()) {
+outerList.clear();
+out.collect(node.toString()); this.successIntCounter.add(1);
+return;
+} //If min one primaryKey is not an object or array, Exit with exception
+boolean pkeyHasMinOneObjectorArry = false;
+for(String pkey: primaryKeyList) { if((node.at("/"+pKey).isobject()) || (node.at("/"+pKey).isArray())) {
+pKeyHasMinOneObjectorArry = true;
+break;
+}}
+if(!pKeyHasMinOneObjectOrArry) {
+outerlist.clear();
+primaryKeyList.clear();
+this.failureIntCounter.add(1);
+throw new XmlToJsonConverterException("Min one primaryKey is not an object or array");
+}
+//Identifying the inner & parent elements of same level for removal
+for ( String obj: primaryKeyList) { for (String outerObj: outerList) {
+//Filtering inner elements
+if (outerObj.contains(obj.substring(0, obj.lastIndexOf("/") + 1)) && outerObj.substring(obj.lastIndexOf("/") + 1).contains("/")) {
+removeList.add(outerObj);
+}
+//Filtering the parent level
+String tempprimaryKeyObj = "";
+for (String objElements : obj.split("/")) {
+tempprimaryKeyObj += objElements;
+if (outerObj.equalsIgnoreCase(tempprimaryKeyObj)) {
+removeList.add(outerObj);
+}
+tempprimaryKeyObj += "/";
+}}}
+//Remove the unwanted elements and clear removeList
+this.removeUnwantedElements(removeList);
+// Final Cleanup Remove child elements having any child elements
+for (String outerObjSec: outerList) { 
+if (!(outerObjSec.equalsIgnoreCase(outerObj)) && outerObjSec.startswith(outerObj + "/")) {
+if(!removeList.contains(outerObjSec)) removeList.add(outerObjSec);
+}}}
+//Remove the unwanted elements and clear removeList
+this.removeUnwantedElements(removeList);
+//re-creating the json from the filtered path
+ArrayNode arrNode JsonNodeFactory.instance.arrayNode();
+int auditRecordCount = 0;
+for (String obj: primaryKeyList) {
+ObjectNode keyNode= JsonNodeFactory.instance.objectNode();
+keyNode.put("FILENAME", fileName); // Newly added line to add FILENAME key
+if ((node.at("/" + obj).isObject())) {
+keyNode (ObjectNode) node.at("/" + obj);
+} else if ((node.at("/" + obj).isArray())) { arrNode = (ArrayNode) node.at("/" + obj); //If its a Json Array
+} else { keyNode = JsonNodeFactory.instance.objectNode();
+}
+primaryNodeList.add(keyNode);
+if ((node.at("/" + obj).isobject())) {
+for (String outerObj: outerList) {(!outerObj.isEmpty() && outerObj.contains("/")
+&& outerObj.contains(obj.substring(0, obj.lastIndexOf("/")))) {
+keyNode.set(outerObj.substring(outerObj.lastIndexOf("/") + 1, outerObj.length()), (JsonNode) node.at("/" + outerObj));
+} else if (!outerObj.isEmpty() && !(outerObj.contains("/"))) {
+keyNode.set(outerObj, (JsonNode) node.at("/" + outerObj));
+} else if (louterObj.isEmpty() && (outerObj.contains(primaryKey + "/")) && buterobj.substring(0,outerObj.lastIndexOf("/")+1).equalsIgnoreCase(obj.substring(0,obj.lastIndexOf("/")+1))) {
+keyNode.set(outerObj.substring(outerObj.lastIndexOf("/") + 1, outerObj.length()),
+(JsonNode) node.at("/" + outerObj));
+}}
+arrNode.add(keyNode);
+out.collect(keyNode.toString());
+this.successIntCounter.add(1);
+} else if ((node.at("/" + obj).isArray())){
+Iterator<JsonNode> nodeIter = arrNode.elements();
+while (nodeIter.hasNext()) {
+keyNode (ObjectNode) nodeIter.next(); 
+for (String outerObj: outerList) {
+if (!outerObj.isEmpty() && !(outerObj.contains("/"))) {
+keyNode.set(outerObj, (JsonNode) node.at("/" + outerObj));
+} else if (!outerObj.isEmpty() && (outerObj.contains(primaryKey + "/")) && outerObj.substring(0,outerObj.lastIndexOf("/")+1).equalsIgnoreCase(obj.substring
+(e, obj.lastIndexOf("/")+1))){
+keyNode.set(outerObj.substring(outerObj.lastIndexOf("/") + 1, outerObj.length()),
+(JsonNode) node.at("/" + outerObj));
+}}
+this.successIntCounter.add(1);
+out.collect(keyNode.toString());
+}}}
+//Prepare outer node ObjectNode finalObjNode = JsonNodeFactory.instance.objectNode(); finalobjNode.set(primaryKey, arrNode);
+//Clear the cache
+outerList.clear(); primaryKeyList.clear(); primaryNodeList.clear();
+}

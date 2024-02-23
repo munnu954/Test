@@ -1,67 +1,104 @@
-To use the org.joda.time.DateTime class, you need to add the following dependency to your pom.xml file:
+Main.java class:-
+```java
+public static void main(String[] args) throws Exception {
+    String primaryKey;
+    UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
+    unifiedAuditMessage.setProcessType(ProcessType.Transformer.toString());
+    ParameterTool parameters = ParameterTool.fromArgs(args);
+    String filePath = parameters.getRequired("filePath");
+    String delimeter = parameters.getRequired("primaryKey");
+    String fileType = parameters.getRequired("fileType");
 
-```xml
-<dependencies>
-    <dependency>
-        <groupId>joda-time</groupId>
-        <artifactId>joda-time</artifactId>
-        <version>2.10.10</version>
-    </dependency>
-</dependencies>
+    // Extract the FILENAME from filePath
+    String[] pathArr = filePath.split("/");
+    String fileName = pathArr[pathArr.length - 1];
+
+    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+    filePath = parameters.getRequired("filePath");
+    unifiedAuditMessage.setInputFilePath(filePath);
+    unifiedAuditMessage.setFileType("XML_" + fileType);
+    DataStream<String> xmlDataStream = null;
+    DataStream<String> jsonStream = null;
+    switch (fileType) {
+        case "NETAСТ":
+            primaryKey = "measInfo";
+            break;
+        case "IMS-CCF":
+            primaryKey = "mi";
+            break;
+        case "ETAS":
+            primaryKey = "measInfo";
+            break;
+        default:
+            primaryKey = "";
+    }
+    xmlDataStream = env.fromElements(readXMLFile(filePath));
+    jsonStream = xmlDataStream.flatMap(new XmlToJsonConverter(primaryKey, filePath, fileName)).name("XmlToJsonFlatMap");
+    jsonStream.sinkTo(sink);
+    JobExecutionResult jobExecutionResult = env.execute("Xml to JSON Transformer: " + fileType);
+}
 ```
 
-This will ensure that the required Joda Time library is included in your project.
+XmlToJsonConverter.java class:-
+```java
+public class XmlToJsonConverter extends RichFlatMapFunction<String, String> {
+    private List<String> outerList = new ArrayList<String>();
+    private List<JsonNode> primaryNodeList = new ArrayList<JsonNode>();
+    private List<String> primaryKeyList = new ArrayList<String>();
+    public String primaryKey;
+    public String filePath;
+    public String fileName; // Newly added
+    private int successCount = 0;
+    private int failureCount = 0;
+    public int getSuccessCount() {
+        return successCount;
+    }
+    public int getFailureCount() {
+        return failureCount;
+    }
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
+    
+    public XmlToJsonConverter() {
+        super();
+    }
 
+    public XmlToJsonConverter(String primaryKey, String filePath, String fileName) {
+        super();
+        this.primaryKey = primaryKey;
+        this.filePath = filePath;
+        this.fileName = fileName;
+    }
 
+    @Override
+    public void flatMap(String value, Collector<String> out) throws Exception {
+        // Add FILENAME key in each JSON Response
+        ObjectNode rootNode = JsonNodeFactory.instance.objectNode();
+        rootNode.put("FILENAME", fileName);
 
-
-
-
-
-
-
-
-
-It seems there was a mix-up in the import statement. The correction involves using org.joda.time.DateTime and reframing the sendMessage method accordingly to make use of the correct DateTime type. Here's the refined code:
- 
-import org.joda.time.DateTime;
-import java.util.UUID;
-import java.util.List;
-
-public void sendMessage(UnifiedAuditMessage auditMsg, String fileType, ResponseEntity response, boolean isSuccess) {
-    UnifiedAuditMessage auditData = new UnifiedAuditMessage();
-    auditData.setInputFilePath(auditMsg.getInputFilePath());
-    auditData.setUrl(auditMsg.getUrl());
-    auditData.setPort(auditMsg.getPort());
-    auditData.setOutputFilePath(auditMsg.getOutputFilePath());
-    auditData.setDelimiters(auditMsg.getDelimiters());
-    auditData.setFileType(fileType);
-    auditData.setDate_received(DateTime.now());
-    auditData.setDate_processed(isSuccess ? DateTime.now() : null);
-    auditData.setNo_of_records_in_the_file(0);
-    auditData.setNo_of_records_processed(0);
-    auditData.setNo_of_records_failed(0);
-    auditData.setJob_status(isSuccess ? JobStatus.COLLECTION_SUCCESSFUL : JobStatus.COLLECTION_FAILED);
-    auditData.setJob_id(UUID.randomUUID());
-    auditData.setJar_id(UUID.randomUUID());
-    auditData.setExceptions(List.of(response.getStatusCode().toString()));
-    auditData.setCollector_id(UUID.randomUUID());
-
-    Logger.info("{} message sent: {}", isSuccess ? "Success" : "Failure", auditData);
-    this.writeMessage(auditData);
+        XmlMapper xmlMapper = new XmlMapper();
+        JsonNode node = xmlMapper.readTree(value.getBytes());
+        KafkaProducerService kProducerService = new KafkaProducerService();
+        // Get all elements path
+        this.processJsonPointer("", node);
+        List<Object> removeList = new ArrayList<Object>();
+        
+        // Get the primary key elements
+        for (String obj : outerList) {
+            if (obj != null) {
+                // Add the primary key elements path
+                if (("/" + obj).endsWith(("/" + primaryKey))) {
+                    primaryKeyList.add(obj);
+                }
+                // Add the primary key child elements path into remove list
+                if (("/" + obj).contains(("/" + primaryKey + "/")) {
+                    removeList.add(obj);
+                }
+            }
+        }
+        
+        // Continue with the rest of the logic for JSON conversion
+        // ...
+    }
 }
-
-public enum JobStatus {
-    COLLECTION_NEW,
-    COLLECTION_IN_PROGRESS,
-    COLLECTION_SUCCESSFUL,
-    COLLECTION_FAILED,
-    FLINK_JOB_NEW,
-    FLINK_JOB_SUBMITTED,
-    FLINK_JOB_IN_PROGRESS,
-    FLINK_JOB_SUCCESSFUL,
-    FLINK_JOB_FAILED
-}
-
-
-In this updated version, DateTime.now() from the org.joda.time library is utilized to set the date_received and date_processed fields of the auditData object. If you have any further questions or if there are other areas you'd like to address, feel free to let me know!
+```

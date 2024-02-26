@@ -1,92 +1,83 @@
-Main.java class:-
-public static void main(String[] args) throws Exception {
-String primaryKey;
-UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
-unifiedAuditMessage.setProcessType(ProcessType.Transformer.toString());
-ParameterTool parameters = ParameterTool.fromArgs(args);
-String filePath = parameters.getRequired("filePath");
-String delimeter=parameters.getRequired("primaryKey");
-String fileType = parameters.getRequired("fileType");
+Sure! Here's the converted JUnit test case code:
 
-//Extract the FILENAME from filePath
-String[] pathArr = filePath.split("/");
-String fileName = pathArr[pathArr.length - 1];
+```java
+@RunWith(SpringRunner.class)
+@SpringBootTest
+public class XmlTransformerApplicationTest {
 
-StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-filePath = parameters.getRequired("filePath");
-unifiedAuditMessage.setInputFilePath(filePath);
-unifiedAuditMessage.setFileType("XML_"+ fileType);
-DataStream<String> xmlDataStream =null;
-DataStream<String> jsonStream=null;
-switch (fileType) {
-case "NETAСТ":
-primaryKey = "measInfo";
-break; 
-case "IMS-CCF":
-primaryKey = "mi";
-case "ETAS":
-primaryKey = "measInfo";
-break;
-default:
-primaryKey = "";
-}
-xmlDataStream = env.fromElements (readXMLFile(filePath));
-jsonStream = xmlDataStream.flatMap(new XmlToJsonConverter(primaryKey, filePath, fileName)).name("XmlToJsonFlatMap");
-jsonStream.sinkTo(sink);
-JobExecutionResult jobExecutionResult = env.execute("Xml to JSON Transformer: "+fileType);
-}
+    @Autowired
+    private TestRestTemplate restTemplate;
 
-XmlToJsonConverter.java class:-
-public class XmlToJsonConverter extends RichFlatMapFunction<String, String> {
-private List<String> outerList = new ArrayList<String>();
-private List<JsonNode> primaryNodeList = new ArrayList<JsonNode>();
-private List<String> primaryKeyList = new ArrayList<String>();
-public String primaryKey;
-public String filePath;
-public String fileName;
-private int successCount = 0;
-private int failureCount = 0;
-public int getSuccessCount() {
-return successCount;
-}
-public int getFailureCount() {
-return failureCount;
-}
-private IntCounter successIntCounter = new IntCounter();
-private IntCounter failureIntCounter = new IntCounter();
-@Override
-public void open(Configuration parameters) throws Exception {
-getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
-}
-public XmlToJsonConverter() {
-super();
-}
-public XmlToJsonConverter(String primaryKey, String filePath, String fileName) {
-super();
-this.primaryKey = primaryKey;
-this.filePath = filePath;
-this.fileName = fileName;
-}
-@Override
-public void flatMap(String value, Collector<String> out) throws Exception {
-//... (rest of the code remains unchanged)
+    @Test
+    public void testXmlTransformer() throws Exception {
+        // Given
+        String kafkaServer = "localhost:9092";
+        String filePath = "ETAS.xml";
+        String fileType = "ETAS";
+        String dataTopic = "3459-DEV-COLLECTION-JSON-DATA-QUEUE";
+        String auditTopic = "3459-DEV-COLLECTION-AUDIT-QUEUE";
+        int noofRecords = 40;
 
-//Adding FILENAME as key in each JSON response
-for (String obj: primaryKeyList) {
-ObjectNode keyNode = JsonNodeFactory.instance.objectNode();
-keyNode.put("FILENAME", fileName); // Newly added line
-if ((node.at("/" + obj).isObject())) {
-keyNode (ObjectNode) node.at("/" + obj);
-} else if ((node.at("/" + obj).isArray())) { 
-arrNode = (ArrayNode) node.at("/" + obj); //If its a Json Array
-} 
-//... (rest of the code remains unchanged)
-}
-//... (rest of the code remains unchanged)
-}
-//... (rest of the code remains unchanged)
-}
-}
+        // Check if Kafka server is running
+        Properties props = new Properties();
+        props.put("bootstrap.servers", kafkaServer);
+        AdminClient client = AdminClient.create(props);
+        Collection<Node> nodes = client.describeCluster().nodes().get();
+        boolean isKafkaServerRunning = nodes != null && !nodes.isEmpty();
 
-The changes that have been made to the classes are highlighted and include passing the "fileName" as an additional parameter in the constructor of XmlToJsonConverter and adding the "FILENAME" key to each JSON response within the flatMap method of XmlToJsonConverter.
+        // Assert Kafka server is running
+        Assert.assertTrue(isKafkaServerRunning);
+
+        // Check if topics exist in Kafka server
+        Properties kafkaProperties = new Properties();
+        kafkaProperties.put("bootstrap.servers", kafkaServer);
+        AdminClient adminClient = AdminClient.create(kafkaProperties);
+        ListTopicsResult topics = adminClient.listTopics();
+        Set<String> topicsSet = topics.names().get();
+        boolean isDataTopicExist = topicsSet.contains(dataTopic);
+        boolean isAuditTopicExist = topicsSet.contains(auditTopic);
+
+        // Assert topics exist
+        Assert.assertTrue(isDataTopicExist);
+        Assert.assertTrue(isAuditTopicExist);
+
+        // Get the uploaded jar ID
+        ResponseEntity<JsonNode> jarsResponse = restTemplate.getForEntity("/jars", JsonNode.class);
+        Assert.assertEquals(HttpStatus.OK, jarsResponse.getStatusCode());
+        String jarId = jarsResponse.getBody().get("files").get(0).get("id").asText();
+
+        // Submit job with programArgs in body
+        String programArgs = getProgramArgs(filePath, fileType);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        JSONObject requestBody = new JSONObject();
+        requestBody.put("programArgs", programArgs);
+        String jobSubmitUrl = "/jars/" + jarId + "/run";
+        HttpEntity<String> request = new HttpEntity<>(requestBody.toString(), headers);
+        ResponseEntity<JsonNode> response = restTemplate.postForEntity(jobSubmitUrl, request, JsonNode.class);
+        Assert.assertEquals(HttpStatus.OK, response.getStatusCode());
+        String jobId = response.getBody().get("jobid").asText();
+        Assert.assertNotNull(jobId);
+
+        // Wait for job completion and check accumulator details
+        Thread.sleep(5000);
+        ResponseEntity<JsonNode> accumulatorsResponse = restTemplate.getForEntity("/jobs/" + jobId + "/accumulators", JsonNode.class);
+        Assert.assertEquals(HttpStatus.OK, accumulatorsResponse.getStatusCode());
+        String accumulatorName = accumulatorsResponse.getBody().get("user-task-accumulators").get(0).get("name").asText();
+        if (accumulatorName.equals("successIntCounter")) {
+            int successCount = accumulatorsResponse.getBody().get("user-task-accumulators").get(0).get("value").asInt();
+            Assert.assertEquals(noofRecords, successCount);
+        } else {
+            int failureCount = accumulatorsResponse.getBody().get("user-task-accumulators").get(0).get("value").asInt();
+            Assert.assertEquals(0, failureCount);
+        }
+    }
+
+    private String getProgramArgs(String filePath, String fileType) {
+        String programArgsTemplate = "Some program args template"; // Replace with your program args template
+        return programArgsTemplate.replace("|filePath|", filePath).replace("|fileType|", fileType);
+    }
+}
+```
+
+Please note that you need to replace the programArgsTemplate with your actual program arguments template. Also, make sure to configure the TestRestTemplate with the appropriate properties in your test configuration.

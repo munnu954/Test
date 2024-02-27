@@ -1,98 +1,53 @@
-Apologies for the error. To fix the issue, we can provide explicit type information to the `FromElementsFunction` in the test case. Here's the updated code:
+Here is an example of how you can write Junit test cases for the ETAS fileType transformation:
 
-```java
-import org.apache.flink.api.common.restartstrategy.RestartStrategies;
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
+```
+import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
-import org.apache.flink.streaming.api.functions.source.FromElementsFunction;
-import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
-import org.apache.flink.test.util.MiniClusterWithClientResource;
-import org.apache.flink.util.Collector;
-import org.junit.ClassRule;
+import org.apache.flink.test.util.AbstractTestBase;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
-
-public class XmlToJsonConverterTest {
-
-    @ClassRule
-    public static final MiniClusterWithClientResource MINI_CLUSTER =
-            new MiniClusterWithClientResource(
-                    new MiniClusterResourceConfiguration.Builder()
-                            .setNumberSlotsPerTaskManager(1)
-                            .setNumberTaskManagers(1)
-                            .build());
+public class XmlTransformerApplicationTest extends AbstractTestBase {
 
     @Test
-    public void testETASTransformation() throws Exception {
+    public void testETASFileTypeTransformation() throws Exception {
+        // Set up the test parameters
+        ParameterTool parameters = ParameterTool.fromArgs(new String[]{
+                "--auditTopic", "auditTopic",
+                "--bootstrapServer", "bootstrapServer",
+                "--filePath", "src/test/resources/files/ETAS.xml",
+                "--jar_id", "jar_id",
+                "--url", "url",
+                "--port", "port",
+                "--primaryKey", "measInfo",
+                "--dataTopic", "dataTopic",
+                "--fileType", "ETAS"
+        });
+
+        // Set up the Flink execution environment
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(1);
-        env.setRestartStrategy(RestartStrategies.noRestart());
 
-        // Set up the input data
-        String filePath = "src/test/resources/files/ETAS.xml";
-        List<String> inputRecords = new ArrayList<>();
-        // Add 40 records to the input list
+        // Configure the test data input stream
+        List<String> inputData = new ArrayList<>();
         for (int i = 0; i < 40; i++) {
-            inputRecords.add("ETAS record " + (i + 1));
+            inputData.add("<ETAS>data</ETAS>");
         }
+        DataStream<String> xmlDataStream = env.fromCollection(inputData);
 
-        // Create a data source from the input records
-        DataStream<String> source = env.fromElements(inputRecords.toArray(new String[0]));
+        // Perform the transformation
+        DataStream<String> jsonStream = xmlDataStream.flatMap(new XmlToJsonConverter("measInfo", "filePath", "fileName"));
 
-        // Apply the transformation
-        DataStream<String> result = source.flatMap(new XmlToJsonConverter("measInfo", filePath, "ETAS.xml"));
-
-        // Create a test sink to collect the transformed records
-        TestSink testSink = new TestSink();
-        result.addSink(testSink);
-
-        // Execute the job
-        env.execute();
-
-        // Verify the success and failure counts
-        assertEquals(40, testSink.getSuccessCount());
-        assertEquals(0, testSink.getFailureCount());
-    }
-
-    // Custom sink to collect the transformed records
-    private static class TestSink extends RichSinkFunction<String> {
-        private int successCount = 0;
-        private int failureCount = 0;
-
-        @Override
-        public void open(Configuration parameters) throws Exception {
-            super.open(parameters);
-        }
-
-        @Override
-        public void invoke(String value, Context context) {
-            // Count the success and failure records
-            if (value.startsWith("ETAS record")) {
-                successCount++;
-            } else {
-                failureCount++;
-            }
-        }
-
-        public int getSuccessCount() {
-            return successCount;
-        }
-
-        public int getFailureCount() {
-            return failureCount;
-        }
+        // Verify the success and failure counters
+        int successCount = env.execute().getAccumulatorResult("successIntCounter");
+        int failureCount = env.execute().getAccumulatorResult("failureIntCounter");
+        Assert.assertEquals(40, successCount);
+        Assert.assertEquals(0, failureCount);
     }
 }
 ```
 
-In this updated code, we replaced the usage of `FromElementsFunction` with `env.fromElements()` to create the data source. We also updated the `TestSink` to extend `RichSinkFunction` instead of `SinkFunction`. This allows us to override the `open()` method and call `super.open(parameters)` to ensure the sink function is properly initialized.
-
-Please give it a try and let me know if you encounter any further issues.
+Make sure to replace the `XmlToJsonConverter` constructor arguments with the appropriate values for your test case.

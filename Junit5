@@ -1,127 +1,43 @@
-import org.json.JSONObject;
-import org.junit.Assert;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.MediaType;
-import org.springframework.test.context.junit4.SpringRunner;
+import static org.junit.Assert.assertEquals;
+import static org.mockito.Mockito.*;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.Properties;
-import java.util.Set;
-
-import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.ListTopicsResult;
-import org.apache.kafka.common.Node;
-import com.fasterxml.jackson.databind.JsonNode;
-
-
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.sink.SinkFunction;
+import org.apache.flink.types.StringValue;
 import org.junit.Test;
 
 public class XmlTransformerApplicationTest {
 
     @Test
-    public void testXmlTransformation() {
-        XmlTransformerApplicationStepDef stepDef = new XmlTransformerApplicationStepDef();
+    public void testEtasTransformation() throws Exception {
+        String filePath = "src/test/resources/files/ETAS.xml";
 
-        stepDef.aRunningKafkaServer("localhost:9092");
-        stepDef.filePath_and_fileType_are_provided("ETAS.xml", "ETAS");
-        stepDef.theServerHasTwoTopics("3459-DEV-COLLECTION-JSON-DATA-QUEUE", "3459-DEV-COLLECTION-AUDIT-QUEUE");
-        stepDef.jarIdOfUploadedJarFile();
-        stepDef.jobIsSubmittedWithProgramArgsInBody();
-        stepDef.should_return_accumulator_with_success(40);
+        String primaryKey = "measInfo";
+        String bootstrapServer = "localhost:9092";
+        String auditTopic = "auditTopic";
+        String dataTopic = "dataTopic";
+        String fileName = "ETAS.xml";
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        XmlToJsonConverter xmlToJsonConverter = new XmlToJsonConverter(primaryKey, filePath, fileName);
+
+        DataStream<String> xmlDataStream = env.readTextFile(filePath);
+        DataStream<String> jsonStream = xmlDataStream.flatMap(xmlToJsonConverter).name("XmlToJsonFlatMap");
+
+        SinkFunction<String> testSink = mock(SinkFunction.class);
+        jsonStream.addSink(testSink);
+
+        env.execute();
+
+        verify(testSink, times(40)).invoke(anyString());
+
+        int successCount = xmlToJsonConverter.getSuccessCount();
+        int failureCount = xmlToJsonConverter.getFailureCount();
+
+        assertEquals(40, successCount);
+        assertEquals(0, failureCount);
     }
 }
-
-
-
-Sure! Here's the converted JUnit test case code:
-
-```java
-@RunWith(SpringRunner.class)
-@SpringBootTest
-public class XmlTransformerApplicationTest {
-
-    @Autowired
-    private TestRestTemplate restTemplate;
-
-    @Test
-    public void testXmlTransformer() throws Exception {
-        // Given
-        String kafkaServer = "localhost:9092";
-        String filePath = "ETAS.xml";
-        String fileType = "ETAS";
-        String dataTopic = "3459-DEV-COLLECTION-JSON-DATA-QUEUE";
-        String auditTopic = "3459-DEV-COLLECTION-AUDIT-QUEUE";
-        int noofRecords = 40;
-
-        // Check if Kafka server is running
-        Properties props = new Properties();
-        props.put("bootstrap.servers", kafkaServer);
-        AdminClient client = AdminClient.create(props);
-        Collection<Node> nodes = client.describeCluster().nodes().get();
-        boolean isKafkaServerRunning = nodes != null && !nodes.isEmpty();
-
-        // Assert Kafka server is running
-        Assert.assertTrue(isKafkaServerRunning);
-
-        // Check if topics exist in Kafka server
-        Properties kafkaProperties = new Properties();
-        kafkaProperties.put("bootstrap.servers", kafkaServer);
-        AdminClient adminClient = AdminClient.create(kafkaProperties);
-        ListTopicsResult topics = adminClient.listTopics();
-        Set<String> topicsSet = topics.names().get();
-        boolean isDataTopicExist = topicsSet.contains(dataTopic);
-        boolean isAuditTopicExist = topicsSet.contains(auditTopic);
-
-        // Assert topics exist
-        Assert.assertTrue(isDataTopicExist);
-        Assert.assertTrue(isAuditTopicExist);
-
-        // Get the uploaded jar ID
-        ResponseEntity<JsonNode> jarsResponse = restTemplate.getForEntity("/jars", JsonNode.class);
-        Assert.assertEquals(HttpStatus.OK, jarsResponse.getStatusCode());
-        String jarId = jarsResponse.getBody().get("files").get(0).get("id").asText();
-
-        // Submit job with programArgs in body
-        String programArgs = getProgramArgs(filePath, fileType);
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        JSONObject requestBody = new JSONObject();
-        requestBody.put("programArgs", programArgs);
-        String jobSubmitUrl = "/jars/" + jarId + "/run";
-        HttpEntity<String> request = new HttpEntity<>(requestBody.toString(), headers);
-        ResponseEntity<JsonNode> response = restTemplate.postForEntity(jobSubmitUrl, request, JsonNode.class);
-        Assert.assertEquals(HttpStatus.OK, response.getStatusCode());
-        String jobId = response.getBody().get("jobid").asText();
-        Assert.assertNotNull(jobId);
-
-        // Wait for job completion and check accumulator details
-        Thread.sleep(5000);
-        ResponseEntity<JsonNode> accumulatorsResponse = restTemplate.getForEntity("/jobs/" + jobId + "/accumulators", JsonNode.class);
-        Assert.assertEquals(HttpStatus.OK, accumulatorsResponse.getStatusCode());
-        String accumulatorName = accumulatorsResponse.getBody().get("user-task-accumulators").get(0).get("name").asText();
-        if (accumulatorName.equals("successIntCounter")) {
-            int successCount = accumulatorsResponse.getBody().get("user-task-accumulators").get(0).get("value").asInt();
-            Assert.assertEquals(noofRecords, successCount);
-        } else {
-            int failureCount = accumulatorsResponse.getBody().get("user-task-accumulators").get(0).get("value").asInt();
-            Assert.assertEquals(0, failureCount);
-        }
-    }
-
-    private String getProgramArgs(String filePath, String fileType) {
-        String programArgsTemplate = "Some program args template"; // Replace with your program args template
-        return programArgsTemplate.replace("|filePath|", filePath).replace("|fileType|", fileType);
-    }
-}
-```
-
-Please note that you need to replace the programArgsTemplate with your actual program arguments template. Also, make sure to configure the TestRestTemplate with the appropriate properties in your test configuration.

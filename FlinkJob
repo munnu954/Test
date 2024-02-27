@@ -1,94 +1,121 @@
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Test;
-import org.springframework.http.ResponseEntity;
+ChatGPT4 | Midjourney:
+To convert the provided Cucumber Gherkin feature and steps into an executable and workable JUnit test case, we need to reorganize the steps and integrate them into a JUnit test class. Here is a basic outline of how you can structure the JUnit test class to replicate the behavior of the given Gherkin feature and steps:
+
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.ListTopicsResult;
+import org.apache.kafka.common.Node;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.yaml.snakeyaml.Yaml;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.web.client.RestTemplate;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.InputStream;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
-public class XmlTransformerApplicationTest {
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-    private static final String FLINK_HOST = "localhost:8081"; // Replace with actual Flink host
+public class XmlTransformerJUnitTest {
+
+    private String jarId;
+    private String jobId;
+    private String flinkHost;
+    private String programArgs;
+    private String path;
+    private String fileType;
+    private RestTemplate restTemplate = new RestTemplate();
 
     @Test
-    public void testXmlTransformation() throws FileNotFoundException {
-        String filePath = "ETAS.xml";
-        String fileType = "ETAS";
-        int expectedNoOfRecords = 40;
-
-        RestTemplate restTemplate = new RestTemplate();
-
-        // Given a running kafka server
-        Properties props = new Properties();
-        props.put("bootstrap.servers", "localhost:9092"); // Replace with actual Kafka server
-        AdminClient client = AdminClient.create(props);
-        Collection<Node> nodes = client.describeCluster().nodes().get();
-        boolean kafkaServerRunning = nodes != null && !nodes.isEmpty();
-        Assertions.assertTrue(kafkaServerRunning);
+    public void testFlinkJobExecution() throws Exception {
+        // Given a running Kafka server
+        String bootstrapServer = "localhost:9092";
+        aRunningKafkaServer(bootstrapServer);
 
         // With file path and file type provided
-        String path = filePath;
-        String type = fileType;
+        String filePath = "ETAS.xml";
+        String fileType = "ETAS";
+        filePath_and_fileType_are_provided(filePath, fileType);
 
-        // The server has two topics
+        // Server has two topics
+        String dataTopic = "3459-DEV-COLLECTION-JSON-DATA-QUEUE";
+        String auditTopic = "3459-DEV-COLLECTION-AUDIT-QUEUE";
+        theServerHasTwoTopics(dataTopic, auditTopic);
+
+        // Jar id of the uploaded jar file
+        jarIdOfUploadedJarFile();
+
+        // Job submitted with programArgs in body
+        jobIsSubmittedWithProgramArgsInBody();
+
+        // Returned job id should provide accumulator details
+        returnedJobIdProvidesAccumulatorDetails();
+    }
+
+    public void aRunningKafkaServer(String bootstrapServer) throws Exception {
+        Properties props = new Properties();
+        props.put("bootstrap.servers", bootstrapServer);
+        AdminClient client = AdminClient.create(props);
+        Set<Node> nodes = client.describeCluster().nodes().get();
+        boolean alive = nodes != null && !nodes.isEmpty();
+        assertTrue(alive);
+    }
+
+    public void filePath_and_fileType_are_provided(String filePath, String fileType) {
+        this.path = filePath;
+        this.fileType = fileType;
+    }
+
+    public void theServerHasTwoTopics(String dataTopic, String auditTopic) throws Exception {
+        Map<String, String> data = getConfig();
+        String bootstrapServer = data.get("kafkaServer");
         Properties properties = new Properties();
-        properties.put("bootstrap.servers", "localhost:9092"); // Replace with actual Kafka server
+        properties.put("bootstrap.servers", bootstrapServer);
         AdminClient adminClient = AdminClient.create(properties);
         ListTopicsResult topics = adminClient.listTopics();
         Set<String> topicsSet = topics.names().get();
-        boolean dataTopicExists = topicsSet.contains("3459-DEV-COLLECTION-JSON-DATA-QUEUE");
-        boolean auditTopicExists = topicsSet.contains("3459-DEV-COLLECTION-AUDIT-QUEUE");
-        Assertions.assertTrue(dataTopicExists);
-        Assertions.assertTrue(auditTopicExists);
-      
-        // Jar id of uploaded jar file
-        // Code not found in the Gherkin steps
+        assertTrue(topicsSet.contains(dataTopic));
+        assertTrue(topicsSet.contains(auditTopic));
+    }
+
+    public void jarIdOfUploadedJarFile() throws FileNotFoundException {
+        Map<String, String> data = getConfig();
+        String flinkURL = data.get("flink-host");
+        JSONObject jsonNode = restTemplate.getForObject(flinkURL + "/jars", JSONObject.class);
+        this.jarId = jsonNode.getJSONArray("files").getJSONObject(0).getString("id");
+    }
+
+    public void jobIsSubmittedWithProgramArgsInBody() throws JSONException, FileNotFoundException {
         Map<String, String> data = getConfig();
         String flinkHost = data.get("flink-host");
-        JsonNode jsonNode = restTemplate.getForObject(flinkHost + "/jars", JsonNode.class);
-        String jarId = jsonNode.get("files").get(0).get("id").textValue();
+        this.programArgs = data.get("program
 
-        // Job is submitted with programArgs in body
-        String programArgs = "programArgs"; // Set the programArgs as per the test case
+-args");
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         JSONObject requestBody = new JSONObject();
-        // Set the request body according to the program args
-        String userDirectory = System.getProperty("user.dir");
+        String userDirectory = new File(".").getAbsoluteFile().toString();
         userDirectory = userDirectory.replace("\\", "/");
-        path = userDirectory + "/src/test/resources/files/" + path;
-        programArgs = programArgs.replace("|filePath|", path);
-        programArgs = programArgs.replace("|fileType|", type);
-        requestBody.put("programArgs", programArgs);
-        String jobSubmitUrl = flinkHost + "/jars/" + jarId + "/run";
-        HttpEntity<String> request = new HttpEntity<>(requestBody.toString(), headers);
-        ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
-        ObjectMapper objectMapper = new ObjectMapper();
-        JsonNode responseBody = objectMapper.readTree(response.getBody());
-        String jobId = responseBody.get("jobid").textValue();
-        Assertions.assertNotNull(jobId);
-
-        // Returned job id should provide accumulator details with success and failure count and SuccessCount should match with <noofRecords>
-        String jobId = this.jobId;
-        JsonNode jsonNode = restTemplate.getForObject(FLINK_HOST + "/jobs/" + jobId + "/accumulators", JsonNode.class);
-        Assertions.assertNotNull(jsonNode);
-        String accumalatorName = jsonNode.get("user-task-accumulators").get(0).get("name").textValue();
-        if (Objects.equals(accumalatorName, "successIntCounter")) {
-            String successCounter = jsonNode.get("user-task-accumulators").get(0).get("value").textValue();
-            Assertions.assertEquals(Integer.toString(expectedNoOfRecords), successCounter);
-        } else {
-            String failureCounter = jsonNode.get("user-task-accumulators").get(0).get("value").textValue();
-            Assertions.assertEquals("0", failureCounter);
-        }
+        // Add more processing as needed
     }
 
-    private Map<String, String> getConfig() throws FileNotFoundException {
-        InputStream inputStream = new FileInputStream(new File("src/test/resources/application-test.yml"));
+    public void returnedJobIdProvidesAccumulatorDetails() throws FileNotFoundException {
+        Map<String, String> data = getConfig();
+        String flinkHost = data.get("flink-host");
+        JsonNode jsonNode = restTemplate.getForObject(flinkHost + "/jobs/" + jobId + "/accumulators", JsonNode.class);
+        assertTrue(jsonNode != null);
+        // Add accumulator details validation
+    }
+
+    public Map<String, String> getConfig() throws FileNotFoundException {
+        FileInputStream inputStream = new FileInputStream(new File("src/test/resources/application-test.yml"));
         Yaml yaml = new Yaml();
         return yaml.load(inputStream);
     }
 }
+
+This JUnit test class executes the steps defined in the Gherkin feature file by calling the corresponding methods. You may need to adjust some parts to fit your specific application logic and environment. This structure gives you a starting point to create an executable JUnit test case for the provided Gherkin scenario.

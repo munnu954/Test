@@ -1,38 +1,76 @@
-import org.apache.flink.util.Collector;
-import org.junit.jupiter.api.Test;
-import static org.junit.jupiter.api.Assertions.assertEquals;
+To write JUnit test cases for the `ETAS` file type transformation within the `XmlToJsonConverter` class, you will need to use a combination of Flink testing utilities and mock objects. The focus of these test cases will be to assert that the `successIntCounter` has a count of 40 and the `failureIntCounter` has a count of 0 after the transformation of a given `ETAS.xml` file with 40 records.
 
-public class XmlToJsonConverterTest {
+When writing test cases for Flink jobs, you can use the Flink `CollectSink` utility class to collect the results of the transformation, and Mockito (or similar frameworks) to test interactions and internals of your classes.
+
+Here's how you might go about writing these JUnit test cases:
+
+```java
+import org.apache.flink.streaming.util.CollectSink;
+import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
+import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
+import org.apache.flink.streaming.api.operators.StreamFlatMap;
+import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
+import org.apache.flink.streaming.util.CollectSink;
+import org.apache.flink.streaming.util.OneInputStreamOperatorTestHarness;
+import org.apache.flink.test.util.AbstractTestBase;
+import org.apache.flink.util.Collector;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.io.BufferedReader;
+import java.io.FileReader;
+
+import static org.mockito.Mockito.*;
+
+// Assuming XmlTransformerApplication.java and XmlToJsonConverter.java are in the same package
+public class XmlToJsonConverterTest extends AbstractTestBase {
 
     @Test
     public void testEtasTransformation() throws Exception {
-        String filePath = "src/test/resources/files/ETAS.xml";
-        String primaryKey = "measInfo";
-        String fileName = "ETAS.xml";
+        // Create a test harness for the operator
+        StreamFlatMap<String, String> operator = new StreamFlatMap<>(new XmlToJsonConverter("ETAS"));
+        OneInputStreamOperatorTestHarness<String, String> testHarness =
+            new OneInputStreamOperatorTestHarness<>(operator);
 
-        XmlToJsonConverter converter = new XmlToJsonConverter(primaryKey, filePath, fileName);
-        converter.open(null);
+        testHarness.open();
 
-        String xmlData = // XML data as string from ETAS.xml
-        Collector<String> out = new TestCollector<>();
-        converter.flatMap(xmlData, out);
+        // Read ETAS.xml file from resources
+        BufferedReader reader = new BufferedReader(new FileReader("src/test/resources/files/ETAS.xml"));
+        StringBuilder xmlContent = new StringBuilder();
+        String line;
+        while((line = reader.readLine()) != null) {
+            xmlContent.append(line);
+        }
+        reader.close();
 
-        int successCount = converter.getSuccessCount();
-        int failureCount = converter.getFailureCount();
+        // Process the XML content
+        testHarness.processElement(new StreamRecord<>(xmlContent.toString()));
 
-        assertEquals(40, successCount);
-        assertEquals(0, failureCount);
-    }
+        // Use CollectSink to get the output from the operator
+        CollectSink<String> sink = new CollectSink<>();
+        operator.setOutput(new CollectSinkOutput<>(sink));
 
-    // Custom Collector implementation for testing purposes
-    private static class TestCollector<T> implements Collector<T> {
-        @Override
-        public void collect(T t) {}
+        // Trigger all operators, functions, timers, and checkpoints to execute.
+        testHarness.close();
 
-        @Override
-        public void close() {}
+        // Assertions
+        final int successCount = operator.getSuccessCount();
+        final int failureCount = operator.getFailureCount();
+
+        Assert.assertEquals("There should be 40 successful transformations", 40, successCount);
+        Assert.assertEquals("There should be no failures", 0, failureCount);
     }
 }
+```
 
-// This test case assumes that you have a sample XML data from ETAS.xml available and can be used in the testEtasTransformation() method. 
-// You can replace `String xmlData` with an actual XML data for testing or use any testing framework like Mockito for more advanced mocking/stubbing capabilities.
+In this test:
+
+1. We start by creating a test harness for the `StreamFlatMap` operator, which uses `XmlToJsonConverter`.
+2. We read the contents of the `ETAS.xml` from the resources directory.
+3. We then use `processElement` to feed the contents into our `StreamFlatMap` operator within the test harness.
+4. Using `CollectSink`, we collect the transformed JSON outputs.
+5. We retrieve the counts from `successIntCounter` and `failureIntCounter` and perform assertions.
+
+Note that this is a sample test skeleton. It may be necessary to adjust the file-reading mechanism depending on the actual content and structure of `ETAS.xml`, as well as to ensure that the actual path to `ETAS.xml` is correct and accessible during the test execution. Also, ensure that necessary library dependencies for mocking and Flink's test utilities are added to your project.
+
+Keep in mind that your `XmlToJsonConverter` class and its methods will need to be properly designed for testability for this test to work. For example, the `flatMap` function might need proper exception handling and accumulator registration. It's also advised to follow good practices for Flink job testing by preserving and managing Flink's lifecycle and runtime context in your unit tests.

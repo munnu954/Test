@@ -1,176 +1,94 @@
-Main.java class:-
-public static void main(String[] args) throws Exception {
-String primaryKey;
-UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
-unifiedAuditMessage.setProcessType(ProcessType.Transformer.toString());
-ParameterTool parameters = ParameterTool.fromArgs(args);
-String filePath = parameters.getRequired("filePath"); 
-String delimeter=parameters.getRequired("primaryKey");
-String fileType = parameters.getRequired("fileType");
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestTemplate;
 
-//Extract the FILENAME from filePath
-String[] pathArr = filePath.split("/");
-String fileName = pathArr[pathArr.length - 1];
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.InputStream;
+import java.util.Map;
+import java.util.Properties;
 
-StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-filePath = parameters.getRequired("filePath"); 
-unifiedAuditMessage.setInputFilePath(filePath);
-unifiedAuditMessage.setFileType("XML_"+ fileType);
-DataStream<String> xmlDataStream =null;
-DataStream<String> jsonStream=null;
-switch (fileType) {
-case "NETAСТ":
-primaryKey = "measInfo";
-break; 
-case "IMS-CCF":
-primaryKey = "mi";
-case "ETAS":
-primaryKey = "measInfo";
-break;
-default:
-primaryKey = "";
-}
-xmlDataStream = env.fromElements (readXMLFile(filePath));
-jsonStream = xmlDataStream.flatMap(new XmlToJsonConverter(primaryKey, filePath, fileName)).name("XmlToJsonFlatMap");
-jsonStream.sinkTo(sink);
-JobExecutionResult jobExecutionResult = env.execute("Xml to JSON Transformer: "+fileType);
-}
+public class XmlTransformerApplicationTest {
 
-XmlToJsonConverter.java class:-
-public class XmlToJsonConverter extends RichFlatMapFunction<String, String> {
-private List<String> outerList = new ArrayList<String>();
-private List<JsonNode> primaryNodeList = new ArrayList<JsonNode>();
-private List<String> primaryKeyList = new ArrayList<String>();
-public String primaryKey;
-public String filePath;
-public String fileName; // Added for FILENAME key
-private int successCount = 0;
-private int failureCount = 0;
-public int getSuccessCount() {
-return successCount;
-}
-public int getFailureCount() {
-return failureCount;
-}
-private IntCounter successIntCounter = new IntCounter();
-private IntCounter failureIntCounter = new IntCounter();
-@Override
-public void open(Configuration parameters) throws Exception {
-getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
-getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
-}
-public XmlToJsonConverter() {
-super();
-}
-public XmlToJsonConverter(String primaryKey, String filePath, String fileName) {
-super();
-this.primaryKey = primaryKey;
-this.filePath = filePath;
-this.fileName = fileName;
-}
-@Override
-public void flatMap(String value, Collector<String> out) throws Exception {
-XmlMapper xmlMapper = new XmlMapper();
-JsonNode node = xmlMapper.readTree(value.getBytes());
-KafkaProducerService kProducerService = new KafkaProducerService();
-// Get all elements path
-this.processJsonPointer("", node);
-List<Object> removeList = new ArrayList<Object>();
-//Get the primary key elements
-for (String obj: outerList) {
-if (obj != null) {
-// Add the primary key elements path
-if (("/" + obj).endsWith(("/" + primaryKey))) {
-primaryKeyList.add(obj); }
-// Add the primary key child elements path into remove list
-if (("/" + obj).contains(("/" + primaryKey + "/"))) {
-removeList.add(obj);
-}}}
-//Remove the unwanted elements and clear removeList
-this.removeUnwantedElements (removelist);
-//Return json node if primaryKey not found
-if (primaryKeyList.isEmpty()) {
-outerList.clear();
-out.collect(node.toString()); this.successIntCounter.add(1);
-return;
-} //If min one primaryKey is not an object or array, Exit with exception
-boolean pkeyHasMinOneObjectorArry = false;
-for(String pkey: primaryKeyList) { if((node.at("/"+pKey).isobject()) || (node.at("/"+pKey).isArray())) {
-pKeyHasMinOneObjectorArry = true;
-break;
-}}
-if(!pKeyHasMinOneObjectOrArry) {
-outerlist.clear();
-primaryKeyList.clear();
-this.failureIntCounter.add(1);
-throw new XmlToJsonConverterException("Min one primaryKey is not an object or array");
-}
-//Identifying the inner & parent elements of same level for removal
-for ( String obj: primaryKeyList) { for (String outerObj: outerList) {
-//Filtering inner elements
-if (outerObj.contains(obj.substring(0, obj.lastIndexOf("/") + 1)) && outerObj.substring(obj.lastIndexOf("/") + 1).contains("/")) {
-removeList.add(outerObj);
-}
-//Filtering the parent level
-String tempprimaryKeyObj = "";
-for (String objElements : obj.split("/")) {
-tempprimaryKeyObj += objElements;
-if (outerObj.equalsIgnoreCase(tempprimaryKeyObj)) {
-removeList.add(outerObj);
-}
-tempprimaryKeyObj += "/";
-}}}
-//Remove the unwanted elements and clear removeList
-this.removeUnwantedElements(removeList);
-// Final Cleanup Remove child elements having any child elements
-for (String outerObjSec: outerList) { 
-if (!(outerObjSec.equalsIgnoreCase(outerObj)) && outerObjSec.startswith(outerObj + "/")) {
-if(!removeList.contains(outerObjSec)) removeList.add(outerObjSec);
-}}}
-//Remove the unwanted elements and clear removeList
-this.removeUnwantedElements(removeList);
-//re-creating the json from the filtered path
-ArrayNode arrNode JsonNodeFactory.instance.arrayNode();
-int auditRecordCount = 0;
-for (String obj: primaryKeyList) {
-ObjectNode keyNode= JsonNodeFactory.instance.objectNode();
-if ((node.at("/" + obj).isObject())) {
-keyNode (ObjectNode) node.at("/" + obj);
-} else if ((node.at("/" + obj).isArray())) { arrNode = (ArrayNode) node.at("/" + obj); //If its a Json Array
-} else { keyNode = JsonNodeFactory.instance.objectNode();
-}
-primaryNodeList.add(keyNode);
-if ((node.at("/" + obj).isobject())) {
-for (String outerObj: outerList) {(!outerObj.isEmpty() && outerObj.contains("/")
-&& outerObj.contains(obj.substring(0, obj.lastIndexOf("/")))) {
-keyNode.set(outerObj.substring(outerObj.lastIndexOf("/") + 1, outerObj.length()), (JsonNode) node.at("/" + outerObj));
-} else if (!outerObj.isEmpty() && !(outerObj.contains("/"))) {
-keyNode.set(outerObj, (JsonNode) node.at("/" + outerObj));
-} else if (louterObj.isEmpty() && (outerObj.contains(primaryKey + "/")) && buterobj.substring(0,outerObj.lastIndexOf("/")+1).equalsIgnoreCase(obj.substring(0,obj.lastIndexOf("/")+1))) {
-keyNode.set(outerObj.substring(outerObj.lastIndexOf("/") + 1, outerObj.length()),
-(JsonNode) node.at("/" + outerObj));
-}}
-arrNode.add(keyNode);
-keyNode.put("FILENAME", fileName); // Adding FILENAME key
-out.collect(keyNode.toString());
-this.successIntCounter.add(1);
-} else if ((node.at("/" + obj).isArray())){
-Iterator<JsonNode> nodeIter = arrNode.elements();
-while (nodeIter.hasNext()) {
-keyNode (ObjectNode) nodeIter.next(); 
-for (String outerObj: outerList) {
-if (!outerObj.isEmpty() && !(outerObj.contains("/"))) {
-keyNode.set(outerObj, (JsonNode) node.at("/" + outerObj));
-} else if (!outerObj.isEmpty() && (outerObj.contains(primaryKey + "/")) && outerObj.substring(0,outerObj.lastIndexOf("/")+1).equalsIgnoreCase(obj.substring
-(e, obj.lastIndexOf("/")+1))){
-keyNode.set(outerObj.substring(outerObj.lastIndexOf("/") + 1, outerObj.length()),
-(JsonNode) node.at("/" + outerObj));
-}}
-keyNode.put("FILENAME", fileName); // Adding FILENAME key
-this.successIntCounter.add(1);
-out.collect(keyNode.toString());
-}}}
-//Prepare outer node ObjectNode finalObjNode = JsonNodeFactory.instance.objectNode(); finalobjNode.set(primaryKey, arrNode);
-//Clear the cache
-outerList.clear(); primaryKeyList.clear(); primaryNodeList.clear();
+    private static final String FLINK_HOST = "localhost:8081"; // Replace with actual Flink host
+
+    @Test
+    public void testXmlTransformation() throws FileNotFoundException {
+        String filePath = "ETAS.xml";
+        String fileType = "ETAS";
+        int expectedNoOfRecords = 40;
+
+        RestTemplate restTemplate = new RestTemplate();
+
+        // Given a running kafka server
+        Properties props = new Properties();
+        props.put("bootstrap.servers", "localhost:9092"); // Replace with actual Kafka server
+        AdminClient client = AdminClient.create(props);
+        Collection<Node> nodes = client.describeCluster().nodes().get();
+        boolean kafkaServerRunning = nodes != null && !nodes.isEmpty();
+        Assertions.assertTrue(kafkaServerRunning);
+
+        // With file path and file type provided
+        String path = filePath;
+        String type = fileType;
+
+        // The server has two topics
+        Properties properties = new Properties();
+        properties.put("bootstrap.servers", "localhost:9092"); // Replace with actual Kafka server
+        AdminClient adminClient = AdminClient.create(properties);
+        ListTopicsResult topics = adminClient.listTopics();
+        Set<String> topicsSet = topics.names().get();
+        boolean dataTopicExists = topicsSet.contains("3459-DEV-COLLECTION-JSON-DATA-QUEUE");
+        boolean auditTopicExists = topicsSet.contains("3459-DEV-COLLECTION-AUDIT-QUEUE");
+        Assertions.assertTrue(dataTopicExists);
+        Assertions.assertTrue(auditTopicExists);
+      
+        // Jar id of uploaded jar file
+        // Code not found in the Gherkin steps
+        Map<String, String> data = getConfig();
+        String flinkHost = data.get("flink-host");
+        JsonNode jsonNode = restTemplate.getForObject(flinkHost + "/jars", JsonNode.class);
+        String jarId = jsonNode.get("files").get(0).get("id").textValue();
+
+        // Job is submitted with programArgs in body
+        String programArgs = "programArgs"; // Set the programArgs as per the test case
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        JSONObject requestBody = new JSONObject();
+        // Set the request body according to the program args
+        String userDirectory = System.getProperty("user.dir");
+        userDirectory = userDirectory.replace("\\", "/");
+        path = userDirectory + "/src/test/resources/files/" + path;
+        programArgs = programArgs.replace("|filePath|", path);
+        programArgs = programArgs.replace("|fileType|", type);
+        requestBody.put("programArgs", programArgs);
+        String jobSubmitUrl = flinkHost + "/jars/" + jarId + "/run";
+        HttpEntity<String> request = new HttpEntity<>(requestBody.toString(), headers);
+        ResponseEntity<String> response = restTemplate.postForEntity(jobSubmitUrl, request, String.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        JsonNode responseBody = objectMapper.readTree(response.getBody());
+        String jobId = responseBody.get("jobid").textValue();
+        Assertions.assertNotNull(jobId);
+
+        // Returned job id should provide accumulator details with success and failure count and SuccessCount should match with <noofRecords>
+        String jobId = this.jobId;
+        JsonNode jsonNode = restTemplate.getForObject(FLINK_HOST + "/jobs/" + jobId + "/accumulators", JsonNode.class);
+        Assertions.assertNotNull(jsonNode);
+        String accumalatorName = jsonNode.get("user-task-accumulators").get(0).get("name").textValue();
+        if (Objects.equals(accumalatorName, "successIntCounter")) {
+            String successCounter = jsonNode.get("user-task-accumulators").get(0).get("value").textValue();
+            Assertions.assertEquals(Integer.toString(expectedNoOfRecords), successCounter);
+        } else {
+            String failureCounter = jsonNode.get("user-task-accumulators").get(0).get("value").textValue();
+            Assertions.assertEquals("0", failureCounter);
+        }
+    }
+
+    private Map<String, String> getConfig() throws FileNotFoundException {
+        InputStream inputStream = new FileInputStream(new File("src/test/resources/application-test.yml"));
+        Yaml yaml = new Yaml();
+        return yaml.load(inputStream);
+    }
 }

@@ -1,32 +1,44 @@
-To ensure that the JSON keys start from 0 and progress in ascending order to n-1, you can modify the code as follows:
+I understand that you are trying to ensure that every value from the CSV string is turned into a key-value pair in the JSON where the key is a string representation of the index of the value in the CSV row (e.g., "0" for the first value, "1" for the second, and so on). The sample code you provided seems to follow the correct logic for such a transformation. Let's make it more concrete:
 
 ```java
-@Override
-public void flatMap(String s, Collector<String> collector) throws Exception {
-    String[] lines = s.split(System.lineSeparator());
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.util.Collector;
+import org.apache.flink.api.common.accumulators.IntCounter;
+import org.json.JSONObject;
 
-    for (String str : lines) {
-        String[] arr = str.split(",");
+public class CsvToJsonFlatMapFunction extends RichFlatMapFunction<String, String> {
+    private IntCounter successIntCounter = new IntCounter();
+    private IntCounter failureIntCounter = new IntCounter();
 
-        JSONObject obj = new JSONObject();
-        boolean validLine = true;
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+    }
 
-        for (int i = 0; i < arr.length; i++) {
-            String jsonkey = String.valueOf(i); 
-            String jsonvalue = arr[i].trim().replace("\"", "");
-            obj.put(jsonkey, jsonvalue);
-        }
+    @Override
+    public void flatMap(String s, Collector<String> out) throws Exception {
+        String[] lines = s.split(System.lineSeparator());
 
-        if (validLine) {
-            this.successIntCounter.add(1);
-            int n = arr.length;
-            obj.put(String.valueOf(n), "Additional Value"); // Add additional value with key n
-            collector.collect(obj.toString());
-        } else {
-            this.failureIntCounter.add(1);
+        for (String line : lines) {
+            String[] values = line.split(",");
+            JSONObject jsonObject = new JSONObject();
+
+            for (int index = 0; index < values.length; index++) {
+                // Remove potential quotes and trim spaces
+                String value = values[index].trim().replace("\"", "");
+                jsonObject.put(String.valueOf(index), value);
+            }
+
+            // Emit the line as JSON string
+            out.collect(jsonObject.toString());
+            successIntCounter.add(1);
         }
     }
 }
 ```
 
-In this modified code, the for loop starts from index 0 and progresses to n-1. Additionally, an extra key 'n' with the value "Additional Value" is added at the end of the JSON object to ensure that the keys progress in the desired order.
+Please note:
+
+- This function assumes that the values are separated by commas and that there are no quoted values containing commas within them. If that's not the case, you would need to use a CSV parsing library to handle these cases properly.
+- The `flatMap` function will split each input `String s` by new lines and process each line separately. For each line, it splits

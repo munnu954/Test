@@ -1,34 +1,58 @@
-@Override
-public void flatMap(String s, Collector<String> collector) throws Exception {
-    String[] lines = s.split(System.lineSeparator());
-    for (String str : lines) {
-        String[] arr = str.split(",");
-        JSONObject obj = new JSONObject();
-        boolean validLine = true;
-        for (int i = 0; i < arr.length; i++) {
-            String jsonkey = String.valueOf(i);
-            String jsonvalue = arr[i].trim().replace("\"", "");
-            obj.put(jsonkey, jsonvalue);
-        }
-        if (validLine) {
-            // Sort the keys in ascending order
-            List<String> sortedKeys = new ArrayList<>();
-            Iterator<String> keys = obj.keys();
-            while (keys.hasNext()) {
-                sortedKeys.add(keys.next());
-            }
-            Collections.sort(sortedKeys);
-            
-            // Create a new JSONObject with sorted keys
-            JSONObject sortedObj = new JSONObject();
-            for (String key : sortedKeys) {
-                sortedObj.put(key, obj.get(key));
-            }
-            
-            this.successIntCounter.add(1);
-            collector.collect(sortedObj.toString());
-        } else {
-            this.failureIntCounter.add(1);
-        }
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.springframework.boot.test.context.SpringBootTest;
+
+import java.util.Arrays;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+@SpringBootTest
+public class LuceneSpaceCollectorRepositoryTest {
+
+    @InjectMocks
+    private LuceneSpaceCollectorRepository luceneSpaceCollectorRepository;
+
+    @Mock
+    private LuceneTemplate luceneTemplate;
+
+    @Test
+    public void testUpdateClusterStateToConnecting() {
+        String id = "123";
+        String expectedQuery = "{\"update_fields\":{\"clusterState\":\"CONNECTING\"}," +
+                              "\"query\":{\"bool\":{\"must\":[{\"term\":{\"id\":\"123\"}}," +
+                              " \"must_not\":[{\"term\":{\"clusterState\":\"CONNECTING\"}},{\"term\":{\"clusterState\":\"RUNNING\"}}]}}}";
+        Mockito.when(luceneTemplate.updateByQuery(expectedQuery)).thenReturn(1);
+
+        int result = luceneSpaceCollectorRepository.updateClusterStateToConnecting(id);
+
+        assertEquals(1, result);
+    }
+
+    @Test
+    public void testFindTerminatedDevices() {
+        String nTimeAgo = "2023-01-01";
+        String expectedQuery = "{\"query\":{\"bool\":{\"must\":[{\"range\":{\"lastAliveTime\":{\"lt\":\"2023-01-01\"}}}," +
+                              " {\"term\":{\"clusterState\": \"RUNNING\"}}]}}}";
+        List<SpaceCollector> expectedSpaceCollectors = Arrays.asList(new SpaceCollector(), new SpaceCollector());
+        Mockito.when(luceneTemplate.findByQuery(expectedQuery, SpaceCollector.class)).thenReturn(expectedSpaceCollectors);
+
+        List<SpaceCollector> result = luceneSpaceCollectorRepository.findTerminatedDevices(nTimeAgo);
+
+        assertEquals(expectedSpaceCollectors, result);
+    }
+
+    @Test
+    public void testFindAllByEnabledAndNotRunning() {
+        String expectedQuery = "{\"query\":{\"bool\":{\"must\":[{\"term\":{\"enabled\":\"true\"}}]}," + 
+                               "{\"must_not\":[{\"term\":{\"clusterState\":\"RUNNING\"}}]}}}";
+        List<SpaceCollector> expectedSpaceCollectors = Arrays.asList(new SpaceCollector());
+        Mockito.when(luceneTemplate.findByQuery(expectedQuery, SpaceCollector.class)).thenReturn(expectedSpaceCollectors);
+
+        List<SpaceCollector> result = luceneSpaceCollectorRepository.findAllByEnabledAndNotRunning();
+
+        assertEquals(expectedSpaceCollectors, result);
     }
 }

@@ -1,79 +1,55 @@
+import org.apache.sshd.server.SshServer;
+import org.apache.sshd.server.auth.password.PasswordAuthenticator;
+import org.apache.sshd.server.auth.password.StaticPasswordAuthenticator;
+import org.apache.sshd.server.subsystem.sftp.SftpSubsystemFactory;
+import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
-import static org.junit.jupiter.api.Assertions.*;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.AdminClientConfig;
-import org.apache.kafka.clients.admin.ListTopicsOptions;
-import org.apache.kafka.clients.admin.ListTopicsResult;
-import org.apache.kafka.common.KafkaFuture;
-import org.apache.kafka.common.errors.ResourceNotFoundException;
+import org.mockito.MockitoAnnotations;
 
-import java.util.HashSet;
-import java.util.Properties;
-import java.util.Set;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
-@SpringBootTest
-public class KafkaTopicUtilTest {
+import static org.mockito.Mockito.*;
 
-    @InjectMocks
-    private KafkaTopicUtil kafkaTopicUtil;
+class SshServerTest {
 
     @Mock
-    private AdminClient adminClient;
+    private SshServer sshServer;
 
-    @Mock
-    private ListTopicsResult listTopicsResult;
+    private SshServerConnection sshServerConnection;
 
-    @Test
-    public void testIsKafkaTopicPresent() throws ExecutionException, InterruptedException, ResourceNotFoundException {
-        String topicName = "testTopic";
-
-        Set<String> topicNames = new HashSet<>();
-        topicNames.add("testTopic");
-
-        KafkaFuture<Set<String>> kafkaFuture = KafkaFuture.completedFuture(topicNames);
-        Mockito.when(listTopicsResult.names()).thenReturn(kafkaFuture);
-        Mockito.when(adminClient.listTopics(Mockito.any(ListTopicsOptions.class))).thenReturn(listTopicsResult);
-
-        boolean isTopicPresent = kafkaTopicUtil.isKafkaTopicPresent(topicName);
-
-        assertTrue(isTopicPresent);
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        sshServerConnection = new SshServerConnection(sshServer);
     }
 
     @Test
-    public void testIsKafkaTopicAbsent() throws ExecutionException, InterruptedException, ResourceNotFoundException {
-        String topicName = "nonExistentTopic";
-
-        Set<String> topicNames = new HashSet<>();
-        topicNames.add("testTopic");
-
-        KafkaFuture<Set<String>> kafkaFuture = KafkaFuture.completedFuture(topicNames);
-        Mockito.when(listTopicsResult.names()).thenReturn(kafkaFuture);
-        Mockito.when(adminClient.listTopics(Mockito.any(ListTopicsOptions.class))).thenReturn(listTopicsResult);
-
-        boolean isTopicPresent = kafkaTopicUtil.isKafkaTopicPresent(topicName);
-
-        assertFalse(isTopicPresent);
+    void testStartServer() throws IOException {
+        sshServerConnection.startServer();
+        verify(sshServer).start();
     }
 
     @Test
-    public void testIsKafkaTopicExceptionHandling() throws ExecutionException, InterruptedException, ResourceNotFoundException {
-        String topicName = "testTopic";
+    void testStart() throws IOException {
+        String sshHost = "localhost";
+        int sshPort = 22;
+        String hostedPath = "/path/to/hosted/files";
 
-        KafkaFuture<Set<String>> kafkaFuture = KafkaFuture.completedFuture(null);
-        Mockito.when(listTopicsResult.names()).thenReturn(kafkaFuture);
-        Mockito.when(adminClient.listTopics(Mockito.any(ListTopicsOptions.class))).thenReturn(listTopicsResult);
+        when(sshServer.getHost()).thenReturn(sshHost);
+        when(sshServer.getPort()).thenReturn(sshPort);
 
-        assertThrows(ResourceNotFoundException.class, () -> {
-            kafkaTopicUtil.isKafkaTopicPresent(topicName);
-        });
+        sshServerConnection.start();
+
+        verify(sshServer).setHost(sshHost);
+        verify(sshServer).setPort(sshPort);
+        verify(sshServer).setKeyPairProvider(any(SimpleGeneratorHostKeyProvider.class));
+        verify(sshServer).setSubsystemFactories(Collections.singletonList(new SftpSubsystemFactory()));
+        verify(sshServer).setPasswordAuthenticator(any(PasswordAuthenticator.class));
+        verify(sshServer).setFileSystemFactory(any(VirtualFileSystemFactory.class));
+        verify(sshServer).start();
     }
-
-    // Add more test cases to cover various scenarios in isKafkaTopicPresent method
-
 }

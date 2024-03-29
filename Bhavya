@@ -1,55 +1,86 @@
-import org.apache.sshd.server.SshServer;
-import org.apache.sshd.server.auth.password.PasswordAuthenticator;
-import org.apache.sshd.server.auth.password.StaticPasswordAuthenticator;
-import org.apache.sshd.server.subsystem.sftp.SftpSubsystemFactory;
-import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.mockito.stubbing.OngoingStubbing;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
-class SshServerTest {
+public class SSHServerSimulatorTest {
 
     @Mock
-    private SshServer sshServer;
+    private SshServer sshServerMock;
 
-    private SshServerConnection sshServerConnection;
+    @Mock
+    private SimpleGeneratorHostKeyProvider keyPairProviderMock;
+
+    @Mock
+    private SftpSubsystemFactory sftpSubsystemFactoryMock;
+
+    @Mock
+    private Logger loggerMock;
+
+    @InjectMocks
+    private SSHServerSimulator sshServerSimulator;
 
     @BeforeEach
-    void setUp() {
+    public void setup() {
         MockitoAnnotations.openMocks(this);
-        sshServerConnection = new SshServerConnection(sshServer);
+        sshServerSimulator.setLogger(loggerMock);
     }
 
     @Test
-    void testStartServer() throws IOException {
-        sshServerConnection.startServer();
-        verify(sshServer).start();
-    }
-
-    @Test
-    void testStart() throws IOException {
+    public void testStartServer_whenHostedPathIsSet_shouldSetFileSystemFactory() throws IOException {
+        // Arrange
+        String hostedPath = "/path/to/hosted";
         String sshHost = "localhost";
         int sshPort = 22;
-        String hostedPath = "/path/to/hosted/files";
+        when(sshServerMock.setPort(sshPort)).thenReturn(sshServerMock);
+        when(sshServerMock.setHost(sshHost)).thenReturn(sshServerMock);
+        when(sshServerMock.setKeyPairProvider(any(KeyPairProvider.class))).thenReturn(sshServerMock);
+        when(sshServerMock.setSubsystemFactories(any(Collection.class))).thenReturn(sshServerMock);
+        when(sshServerMock.setPasswordAuthenticator(any(AuthenticationProvider.class))).thenReturn(sshServerMock);
 
-        when(sshServer.getHost()).thenReturn(sshHost);
-        when(sshServer.getPort()).thenReturn(sshPort);
+        Path hostedPathObj = Paths.get(hostedPath);
+        when(sshServerSimulator.createVirtualFileSystemFactory(hostedPathObj)).thenReturn(mock(FileSystemFactory.class));
 
-        sshServerConnection.start();
+        // Act
+        sshServerSimulator.startServer(hostedPath, sshHost, sshPort);
 
-        verify(sshServer).setHost(sshHost);
-        verify(sshServer).setPort(sshPort);
-        verify(sshServer).setKeyPairProvider(any(SimpleGeneratorHostKeyProvider.class));
-        verify(sshServer).setSubsystemFactories(Collections.singletonList(new SftpSubsystemFactory()));
-        verify(sshServer).setPasswordAuthenticator(any(PasswordAuthenticator.class));
-        verify(sshServer).setFileSystemFactory(any(VirtualFileSystemFactory.class));
-        verify(sshServer).start();
+        // Assert
+        OngoingStubbing<FileSystemFactory> fileSystemFactoryStub = when(sshServerMock.setFileSystemFactory(any(FileSystemFactory.class)));
+        fileSystemFactoryStub.then(invocation -> {
+            FileSystemFactory fileSystemFactory = invocation.getArgument(0);
+            assert fileSystemFactory instanceof VirtualFileSystemFactory;
+            VirtualFileSystemFactory vfsFactory = (VirtualFileSystemFactory) fileSystemFactory;
+            assertEquals(hostedPathObj, vfsFactory.getRootDir());
+            return sshServerMock;
+        });
+
+        // Verify
+        sshServerSimulator.startServer(hostedPath, sshHost, sshPort);
     }
-}
+
+    @Test
+    public void testStartServer_whenHostedPathIsNotSet_shouldNotSetFileSystemFactory() throws IOException {
+        // Arrange
+        String hostedPath = "";
+        String sshHost = "localhost";
+        int sshPort = 22;
+        when(sshServerMock.setPort(sshPort)).thenReturn(sshServerMock);
+        when(sshServerMock.setHost(sshHost)).thenReturn(sshServerMock);
+        when(sshServerMock.setKeyPairProvider(any(KeyPairProvider.class))).thenReturn(sshServerMock);
+        when(sshServerMock.setSubsystemFactories(any(Collection.class))).thenReturn(sshServerMock);
+        when(sshServerMock.setPasswordAuthenticator(any(AuthenticationProvider.class))).thenReturn(sshServerMock);
+
+        // Act
+        sshServerSimulator.start

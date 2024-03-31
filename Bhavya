@@ -1,7 +1,233 @@
-org.mockito.exceptions.misusing.CannotStubVoidMethodWithReturnValue:
+Here is the complete JUnit 5 test cases code for the FlinkApiService class:
 
-'setHost' is a *void method and it cannot be stubbed with a *return value*!
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.http.*;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.RestTemplate;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-Voids are usually stubbed with Throwables: doThrow (exception).when(mock).some VoidMethod();
+public class FlinkApiServiceTest {
 
-If you need to set the void method to do nothing you can use: doNothing().when(mock).some VoidMethod();
+    @Mock
+    private KafkaConsumer kafkaConsumer;
+
+    @Mock
+    private KafkaAuditProducer kafkaAuditProducer;
+
+    @Mock
+    private FlinkJobDataSource flinkJobDataSource;
+
+    @Mock
+    private RestTemplate restTemplate;
+
+    @InjectMocks
+    private FlinkApiService flinkApiService;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.initMocks(this);
+        flinkApiService.setRestTemplate(restTemplate);
+    }
+
+    @Test
+    void triggerJob_WhenValidAuditMsgAndFileTypeCSV_ShouldReturnJobSubmitted() throws Exception {
+        CollectionAudit auditMsg = new CollectionAudit();
+        auditMsg.setJobStatus(JobStatus.IN_PROGRESS.toString());
+        auditMsg.setProcessType(ProcessType.FILE_PROCESSING.toString());
+        auditMsg.setFileType("csv_sample");
+
+        String programArgsTemp = "program_args";
+        String flinkApiUrl = "http://localhost:8080";
+        String flinkJobJarid = "flink_job_jar_id";
+        String programArgs = "program_args";
+        String auditMsgInputFilePath = "input_file_path";
+        String auditMsgDelimiters = ",";
+        String auditMsgUrl = "http://localhost";
+        Integer auditMsgPort = 9090;
+        String auditMsgCollectorId = "collector_id";
+
+        when(flinkJobDataSource.getFlinkJobDetails(FlinkFileTypes.CSV.toString()))
+                .thenReturn(new FlinkJob(flinkJobJarid));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<String> request = new HttpEntity<>(headers);
+
+        ResponseEntity<String> responseEntity = new ResponseEntity<>(HttpStatus.OK);
+        when(restTemplate.postForEntity(eq(flinkApiUrl + "/jars/" + flinkJobJarid + "/run"),
+                eq(request), eq(String.class)))
+                .thenReturn(responseEntity);
+
+        String result = flinkApiService.triggerJob(auditMsg);
+
+        assertEquals("Job submitted", result);
+    }
+
+    @Test
+    void triggerJob_WhenInvalidFileType_ShouldReturnJobNotTriggered() throws Exception {
+        CollectionAudit auditMsg = new CollectionAudit();
+        auditMsg.setJobStatus(JobStatus.IN_PROGRESS.toString());
+        auditMsg.setProcessType(ProcessType.FILE_PROCESSING.toString());
+        auditMsg.setFileType("invalid_file_type");
+
+        String result = flinkApiService.triggerJob(auditMsg);
+
+        assertEquals("Job is not triggered", result);
+        verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    void triggerJob_WhenProgramArgsIsEmpty_ShouldReturnJobNotTriggered() throws Exception {
+        CollectionAudit auditMsg = new CollectionAudit();
+        auditMsg.setJobStatus(JobStatus.IN_PROGRESS.toString());
+        auditMsg.setProcessType(ProcessType.FILE_PROCESSING.toString());
+        auditMsg.setFileType("csv_sample");
+
+        when(flinkJobDataSource.getFlinkJobDetails(FlinkFileTypes.CSV.toString()))
+                .thenReturn(new FlinkJob("flink_job_jar_id"));
+        flinkApiService.setProgramArgsTemp("");
+
+        String result = flinkApiService.triggerJob(auditMsg);
+
+        assertEquals("Job is not triggered", result);
+        verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    void triggerJob_WhenFlinkJobNotFound_ShouldReturnJobNotTriggered() throws Exception {
+        CollectionAudit auditMsg = new CollectionAudit();
+        auditMsg.setJobStatus(JobStatus.IN_PROGRESS.toString());
+        auditMsg.setProcessType(ProcessType.FILE_PROCESSING.toString());
+        auditMsg.setFileType("csv_sample");
+
+        when(flinkJobDataSource.getFlinkJobDetails(FlinkFileTypes.CSV.toString()))
+                .thenReturn(null);
+
+        String result = flinkApiService.triggerJob(auditMsg);
+
+        assertEquals("Job is not triggered", result);
+        verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    void triggerJob_WhenRestTemplateThrowsHttpClientErrorException_ShouldReturnJobNotTriggered() throws Exception {
+        CollectionAudit auditMsg = new CollectionAudit();
+        auditMsg.setJobStatus(JobStatus.IN_PROGRESS.toString());
+        auditMsg.setProcessType(ProcessType.FILE_PROCESSING.toString());
+        auditMsg.setFileType("csv_sample");
+
+        String programArgsTemp = "program_args";
+        String flinkApiUrl = "http://localhost:8080";
+        String flinkJobJarid = "flink_job_jar_id";
+        String auditMsgInputFilePath = "input_file_path";
+        String auditMsgDelimiters = ",";
+        String auditMsgUrl = "http://localhost";
+        Integer auditMsgPort = 9090;
+        String auditMsgCollectorId = "collector_id";
+
+        when(flinkJobDataSource.getFlinkJobDetails(FlinkFileTypes.CSV.toString()))
+                .thenReturn(new FlinkJob(flinkJobJarid));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<String> request = new HttpEntity<>(headers);
+
+        HttpClientErrorException ex = new HttpClientErrorException(HttpStatus.BAD_REQUEST);
+        when(restTemplate.postForEntity(eq(flinkApiUrl + "/jars/" + flinkJobJarid + "/run"),
+                eq(request), eq(String.class)))
+                .thenThrow(ex);
+
+        String result = flinkApiService.triggerJob(auditMsg);
+
+        assertEquals("Job is not triggered", result);
+    }
+
+    @Test
+    void triggerJob_WhenRestTemplateThrowsHttpServerErrorException_ShouldReturnJobNotTriggered() throws Exception {
+        CollectionAudit auditMsg = new CollectionAudit();
+        auditMsg.setJobStatus(JobStatus.IN_PROGRESS.toString());
+        auditMsg.setProcessType(ProcessType.FILE_PROCESSING.toString());
+        auditMsg.setFileType("csv_sample");
+
+        String programArgsTemp = "program_args";
+        String flinkApiUrl = "http://localhost:8080";
+        String flinkJobJarid = "flink_job_jar_id";
+        String auditMsgInputFilePath = "input_file_path";
+        String auditMsgDelimiters = ",";
+        String auditMsgUrl = "http://localhost";
+        Integer auditMsgPort = 9090;
+        String auditMsgCollectorId = "collector_id";
+
+        when(flinkJobDataSource.getFlinkJobDetails(FlinkFileTypes.CSV.toString()))
+                .thenReturn(new FlinkJob(flinkJobJarid));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<String> request = new HttpEntity<>(headers);
+
+        HttpServerErrorException ex = new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR);
+        when(restTemplate.postForEntity(eq(flinkApiUrl + "/jars/" + flinkJobJarid + "/run"),
+                eq(request), eq(String.class)))
+                .thenThrow(ex);
+
+        String result = flinkApiService.triggerJob(auditMsg);
+
+        assertEquals("Job is not triggered", result);
+    }
+
+    @Test
+    void triggerJob_WhenRestTemplateThrowsException_ShouldReturnJobNotTriggered() throws Exception {
+        CollectionAudit auditMsg = new CollectionAudit();
+        auditMsg.setJobStatus(JobStatus.IN_PROGRESS.toString());
+        auditMsg.setProcessType(ProcessType.FILE_PROCESSING.toString());
+        auditMsg.setFileType("csv_sample");
+
+        String programArgsTemp = "program_args";
+        String flinkApiUrl = "http://localhost:8080";
+        String flinkJobJarid = "flink_job_jar_id";
+        String auditMsgInputFilePath = "input_file_path";
+        String auditMsgDelimiters = ",";
+        String auditMsgUrl = "http://localhost";
+        Integer auditMsgPort = 9090;
+        String auditMsgCollectorId = "collector_id";
+
+        when(flinkJobDataSource.getFlinkJobDetails(FlinkFileTypes.CSV.toString()))
+                .thenReturn(new FlinkJob(flinkJobJarid));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<String> request = new HttpEntity<>(headers);
+
+        when(restTemplate.postForEntity(eq(flinkApiUrl + "/jars/" + flinkJobJarid + "/run"),
+                eq(request), eq(String.class)))
+                .thenThrow(new RuntimeException());
+
+        String result = flinkApiService.triggerJob(auditMsg);
+
+        assertEquals("Job is not triggered", result);
+    }
+
+    @Test
+    void triggerJob_WhenJobStatusAndProcessTypeAreNull_ShouldReturnJobDetailsAreNull() throws Exception {
+        CollectionAudit auditMsg = new CollectionAudit();
+        auditMsg.setJobStatus(null);
+        auditMsg.setProcessType(null);
+
+        String result = flinkApiService.triggerJob(auditMsg);
+
+        assertEquals("Job details are null", result);
+        verifyNoInteractions(restTemplate);
+    }
+}
+```
+
+Note: The above test cases use Mockito framework for mocking dependencies and verify the behavior of the `triggerJob` method in different scenarios. Make sure to include the necessary dependencies and imports in your test file.

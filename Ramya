@@ -1,69 +1,95 @@
-To fix the "URI is not absolute" error, we need to provide an absolute URI when creating the LuceneCollectionAuditRepository instance within the test class. Here's the updated and workable JUnit 5 test class code:
+To achieve 100% code coverage for the `KafkaConsumerService` class, we need to write JUnit 5 test cases that cover all the methods, including edge cases and exception paths. We'll use Mockito to mock the dependencies such as `Gson`, `CollectionAuditLuceneRepository`, and Kafka related classes (`Consumer`, `Producer`, etc.). We'll also use `@ExtendWith(MockitoExtension.class)` to integrate Mockito with JUnit 5.
+
+For simplicity, let's assume `CollectionAudit` is a simple POJO with an `id` field.
+
+Below is a sample test class structure to achieve 100% code coverage:
 
 ```java
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+import java.util.*;
+import java.time.Duration;
+
+import org.apache.kafka.clients.consumer.*;
+import org.apache.kafka.clients.producer.*;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
-import static org.junit.jupiter.api.Assertions.*;
-import java.net.URI;
-import java.util.ArrayList;
-import java.util.List;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-public class LuceneCollectionAuditRepositoryTest {
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
-    @InjectMocks
-    private LuceneCollectionAuditRepository luceneRepo;
+@ExtendWith(MockitoExtension.class)
+public class KafkaConsumerServiceTest {
 
     @Mock
-    private LuceneRepository<CollectionAudit, String> luceneRepository;
+    private Gson gson;
+
+    @Mock
+    private CollectionAuditLuceneRepository luceneRepo;
+
+    @InjectMocks
+    private KafkaConsumerService service;
+
+    @Mock
+    private Consumer<String, String> consumer;
+
+    @Mock
+    private Producer<String, String> producer;
 
     @Test
-    public void testFindLatestByFilePaths() {
-        List<String> filePaths = new ArrayList<>();
-        filePaths.add("file1.txt");
-        filePaths.add("file2.txt");
+    public void testConsumeKafkaFeedCollectionAuditEntity() {
+        // Mock the consumer behavior
+        when(consumer.poll(Duration.ofSeconds(3))).thenReturn(createConsumerRecords());
+        // Mock the repository behavior
+        when(luceneRepo.findById(anyString())).thenReturn(null);
+        // Execute the method under test
+        List<String> result = service.consumeKafkaFeedCollectionAuditEntity("test-topic");
+        // Validate the results
+        assertFalse(result.isEmpty());
+        assertTrue(result.contains("success"));
 
-        Mockito.when(luceneRepository.findByQuery(Mockito.anyString())).thenReturn(new ArrayList<>());
+        // Add more assertions and verify interactions as needed
+    }
 
-        List<CollectionAudit> result = luceneRepo.findLatestByFilePaths(filePaths);
+    @Test
+    public void testPublishKafkaFeedCollectionAuditEntity() {
+        // No need to mock anything for this test, but you should verify that the producer sends the message
+        service.publishKafkaFeedCollectionAuditEntity("test-topic", "entityData");
+        // Verify that a message was sent
+        verify(producer, times(1)).send(any(ProducerRecord.class));
+    }
 
+    @Test
+    public void testPublishCollectionAuditObject() {
+        // This method actually doesn't interact with any mocked components, so just test its return value
+        CollectionAudit testData = new CollectionAudit(); // Assuming this is a valid object
+        testData.setId("testId");
+        Object result = service.publishCollectionAuditObject("test-topic", testData);
         assertNotNull(result);
+        assertEquals(testData, result);
     }
 
-    @Test
-    public void testFindTopByKeyFilePathOrderByKeyCreatedAtDesc() {
-        String filePath = "file1.txt";
-
-        Mockito.when(luceneRepository.findByQuery(Mockito.anyString())).thenReturn(new ArrayList<>());
-
-        CollectionAudit result = luceneRepo.findTopByKeyFilePathOrderByKeyCreatedAtDesc(filePath);
-
-        assertNull(result);
+    private ConsumerRecords<String, String> createConsumerRecords() {
+        // Create a mock ConsumerRecord and ConsumerRecords to simulate Kafka consumer behavior
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("test-topic", 0, 0L, "key", "value");
+        List<ConsumerRecord<String, String>> recordList = Collections.singletonList(record);
+        return new ConsumerRecords<>(Collections.singletonMap(new TopicPartition("test-topic", 0), recordList));
     }
 
-    @Test
-    public void testDeleteByFilePath() {
-        String filePath = "file1.txt";
-        CollectionAudit auditData = new CollectionAudit();
-        auditData.setId("1");
-
-        List<CollectionAudit> auditList = new ArrayList<>();
-        auditList.add(auditData);
-
-        Mockito.when(luceneRepository.findByQuery(Mockito.anyString())).thenReturn(auditList);
-        Mockito.doNothing().when(luceneRepository).deleteById(Mockito.anyString());
-
-        luceneRepo.deleteByFilePath(filePath);
-
-        Mockito.verify(luceneRepository, Mockito.times(1)).deleteById(Mockito.anyString());
-    }
-
-    @BeforeEach
-    public void setUp() throws Exception {
-        luceneRepo = new LuceneCollectionAuditRepository(URI.create("file:///path/to/index"));
-    }
+    // Add additional test methods to cover other methods and scenarios, including error paths and edge cases.
 }
 ```
 
-In the above code, the `setUp()` method is added to initialize the `luceneRepo` instance with an absolute URI. Make sure to replace `file:///path/to/index` with the actual path to the Lucene index to make the test cases executable without the "URI is not absolute" error.
+This test class outlines how to test the three main public methods of `KafkaConsumerService`. To achieve 100% code coverage, you'll need to expand upon this with additional tests for:
+
+- Different conditions in `consumeKafkaFeedCollectionAuditEntity`, such as when an exception is thrown by the consumer or the Lucene repository.
+- Error handling in `publishKafkaFeedCollectionAuditEntity`, simulating exceptions thrown by the Kafka producer.
+- Testing `getConsumerProps` and `getProducerProps` might require you to test the created properties indirectly since these methods are private. One approach is to use reflection to make them accessible in your test class, although this usually isn't necessary unless these methods contain complex logic.
+
+Remember, achieving 100% code coverage often means testing every conditional branch, exception path, and line of code, which can sometimes lead to diminishing returns in terms of the value of tests versus their maintenance cost.

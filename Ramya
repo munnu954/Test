@@ -86,10 +86,129 @@ public class KafkaConsumerServiceTest {
 }
 ```
 
-This test class outlines how to test the three main public methods of `KafkaConsumerService`. To achieve 100% code coverage, you'll need to expand upon this with additional tests for:
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-- Different conditions in `consumeKafkaFeedCollectionAuditEntity`, such as when an exception is thrown by the consumer or the Lucene repository.
-- Error handling in `publishKafkaFeedCollectionAuditEntity`, simulating exceptions thrown by the Kafka producer.
-- Testing `getConsumerProps` and `getProducerProps` might require you to test the created properties indirectly since these methods are private. One approach is to use reflection to make them accessible in your test class, although this usually isn't necessary unless these methods contain complex logic.
+import java.util.*;
+import java.time.Duration;
 
-Remember, achieving 100% code coverage often means testing every conditional branch, exception path, and line of code, which can sometimes lead to diminishing returns in terms of the value of tests versus their maintenance cost.
+import org.apache.kafka.clients.consumer.*;
+import org.apache.kafka.clients.producer.*;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.StringSerializer;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+
+@ExtendWith(MockitoExtension.class)
+public class KafkaConsumerServiceTest {
+
+    @Mock
+    private Gson gson;
+
+    @Mock
+    private CollectionAuditLuceneRepository luceneRepo;
+
+    @InjectMocks
+    private KafkaConsumerService service;
+
+    @Mock
+    private Consumer<String, String> consumer;
+
+    @Mock
+    private Producer<String, String> producer;
+
+    @Test
+    public void testConsumeKafkaFeedCollectionAuditEntity_Success() {
+        // Mock the consumer behavior
+        when(consumer.poll(Duration.ofSeconds(3))).thenReturn(createConsumerRecords());
+        // Mock the repository behavior
+        when(luceneRepo.findById(anyString())).thenReturn(null);
+        // Execute the method under test
+        List<String> result = service.consumeKafkaFeedCollectionAuditEntity("test-topic");
+        // Validate the results
+        assertFalse(result.isEmpty());
+        assertTrue(result.contains("success"));
+
+        // Add more assertions and verify interactions as needed
+    }
+
+    @Test
+    public void testConsumeKafkaFeedCollectionAuditEntity_LuceneRepoAlreadyExists() {
+        // Mock the consumer behavior
+        when(consumer.poll(Duration.ofSeconds(3))).thenReturn(createConsumerRecords());
+        // Mock the repository behavior
+        when(luceneRepo.findById(anyString())).thenReturn(new CollectionAudit());
+        // Execute the method under test
+        List<String> result = service.consumeKafkaFeedCollectionAuditEntity("test-topic");
+        // Validate the results
+        assertFalse(result.isEmpty());
+        assertTrue(result.contains("Data already Exists for id: testId"));
+
+        // Add more assertions and verify interactions as needed
+    }
+
+    @Test
+    public void testConsumeKafkaFeedCollectionAuditEntity_ExceptionThrownByConsumer() {
+        // Mock the consumer behavior to throw an exception
+        when(consumer.poll(Duration.ofSeconds(3))).thenThrow(new RuntimeException("Consumer exception"));
+        // Execute the method under test
+        List<String> result = service.consumeKafkaFeedCollectionAuditEntity("test-topic");
+        // Validate the results
+        assertFalse(result.isEmpty());
+        assertTrue(result.contains("error"));
+
+        // Add more assertions and verify interactions as needed
+    }
+
+    @Test
+    public void testPublishKafkaFeedCollectionAuditEntity_Success() {
+        // No need to mock anything for this test, but you should verify that the producer sends the message
+        service.publishKafkaFeedCollectionAuditEntity("test-topic", "entityData");
+        // Verify that a message was sent
+        verify(producer, times(1)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    public void testPublishKafkaFeedCollectionAuditEntity_ExceptionThrownByProducer() {
+        // Mock the producer behavior to throw an exception
+        doThrow(new RuntimeException("Producer exception")).when(producer).send(any(ProducerRecord.class));
+        // Execute the method under test
+        assertThrows(RuntimeException.class, () -> service.publishKafkaFeedCollectionAuditEntity("test-topic", "entityData"));
+
+        // Add more assertions and verify interactions as needed
+    }
+
+@Test
+    public void testPublishCollectionAuditObject() {
+        // This method actually doesn't interact with any mocked components, so just test its return value
+        CollectionAudit testData = new CollectionAudit(); // Assuming this is a valid object
+        testData.setId("testId");
+        Object result = service.publishCollectionAuditObject("test-topic", testData);
+        assertNotNull(result);
+        assertEquals(testData, result);
+    }
+
+    @Test
+    public void testGetConsumerProps() {
+        // Call the private method using reflection or modify the visibility to package-private
+        Properties consumerProps = service.getConsumerProps();
+        assertNotNull(consumerProps);
+        assertEquals("test-group", consumerProps.get(ConsumerConfig.GROUP_ID_CONFIG));
+
+        // Add more assertions and verify interactions as needed
+    }
+
+    @Test
+    public void testGetProducerProps() {
+        // Call the private method using reflection or modify the visibility to package-private
+        Properties producerProps = service.getProducerProps();
+        assertNotNull(producerProps);
+        assertEquals("test-bootstrap-servers", producerProps.get(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG));
+
+        }

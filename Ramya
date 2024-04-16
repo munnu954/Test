@@ -1,53 +1,99 @@
-Sure! Here is an example of JUnit 5 test cases for achieving 100% code coverage of the `getConsumerProps()` method of the `KafkaConsumerService` class:
+Certainly! Here is an example of JUnit 5 test cases for achieving 100% code coverage of the `consumeKafkaFeedCollectionAuditEntity(String)` method of the `KafkaConsumerService` class:
 
 ```java
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Properties;
 
+import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.StringDeserializer;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.core.ConsumerFactory;
-import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.annotation.Autowired;
 
 public class KafkaConsumerServiceTest {
     
     private KafkaConsumerService kafkaConsumerService;
     
+    private Consumer<String, String> kafkaConsumerMock;
+    
+    private CollectionAuditLuceneRepository luceneRepoMock;
+    
     @BeforeEach
     public void setup() {
         kafkaConsumerService = new KafkaConsumerService();
+        kafkaConsumerMock = mock(KafkaConsumer.class);
+        luceneRepoMock = mock(CollectionAuditLuceneRepository.class);
+        
+        // Inject mocks into the KafkaConsumerService object
+        kafkaConsumerService.consumer = kafkaConsumerMock;
+        kafkaConsumerService.luceneRepo = luceneRepoMock;
     }
     
     @Test
-    public void testGetConsumerProps() {
-        String bootstrapServers = "localhost:9092";
+    public void testConsumeKafkaFeedCollectionAuditEntity() {
+        String topicName = "test-topic";
+        List<String> consumedMessages = new ArrayList<>();
+        consumedMessages.add("message1");
+        consumedMessages.add("message2");
         
         // Set up mock properties
-        Properties expectedProps = new Properties();
-        expectedProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        expectedProps.put(ConsumerConfig.GROUP_ID_CONFIG, "test-group");
-        expectedProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        expectedProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
-        expectedProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        Properties consumerProps = new Properties();
+        consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+        consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, "test-group");
+        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+        consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         
         // Set up mock environment
-        KafkaConsumerService kafkaConsumerServiceMock = mock(KafkaConsumerService.class);
-        when(kafkaConsumerServiceMock.getConsumerProps()).thenReturn(expectedProps);
+        when(kafkaConsumerMock.poll(Mockito.any())).thenReturn(createConsumerRecords(consumedMessages));
+        when(kafkaConsumerMock.subscribe(Collections.singletonList(topicName))).thenReturn(null);
+        when(kafkaConsumerMock.iterator()).thenReturn(consumedMessages.stream().map(message -> {
+            ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
+            when(record.value()).thenReturn(message);
+            return record;
+        }).iterator());
+        when(luceneRepoMock.findById(Mockito.any())).thenReturn(null);
         
         // Call the method
-        Properties actualProps = kafkaConsumerServiceMock.getConsumerProps();
+        List<String> parsedSavedMessages = kafkaConsumerService.consumeKafkaFeedCollectionAuditEntity(topicName);
         
-        // Verify the result
-        assertEquals(expectedProps, actualProps);
+        // Verify the results
+        assertEquals(2, parsedSavedMessages.size());
+        assertTrue(parsedSavedMessages.contains("success"));
+        assertTrue(parsedSavedMessages.contains("success"));
+        
+        // Verify the interactions with mocks
+        ArgumentCaptor<ConsumerRecords<String, String>> consumerRecordsCaptor = ArgumentCaptor.forClass(ConsumerRecords.class);
+        Mockito.verify(kafkaConsumerMock).subscribe(Collections.singletonList(topicName));
+        Mockito.verify(kafkaConsumerMock).poll(Mockito.any());
+        Mockito.verify(kafkaConsumerMock, Mockito.times(2)).commitSync();
+        Mockito.verify(luceneRepoMock, Mockito.times(2)).save(Mockito.any());
+    }
+    
+    private ConsumerRecords<String, String> createConsumerRecords(List<String> messages) {
+        List<ConsumerRecord<String, String>> records = new ArrayList<>();
+        for (String message : messages) {
+            ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
+            when(record.value()).thenReturn(message);
+            records.add(record);
+        }
+        return new ConsumerRecords<>(Collections.singletonMap("topic", records));
     }
     
 }
 ```
 
-In this example, we are using JUnit 5 to write the test case. We are also using the Mockito library to mock the `KafkaConsumerService` class and its method `getConsumerProps()`. The test case verifies that the returned properties from the method match the expected properties.
+In this example, we are using JUnit 5 to write the test case. We are also using the Mockito library to mock the dependencies of the `KafkaConsumerService` class, such as the `KafkaConsumer` and `CollectionAuditLuceneRepository`. The test case verifies that the method correctly consumes messages from Kafka and saves them to the Lucene repository. Additionally, it checks that the correct messages are returned by the method.

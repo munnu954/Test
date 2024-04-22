@@ -1,41 +1,84 @@
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import org.apache.kafka.clients.consumer.Consumer;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
+class MyTest {
 
-public class KafkaConsumerServiceTest {
+    @Mock
+    private LuceneRepo luceneRepo;
+
+    @InjectMocks
+    private MyService myService; // Replace MyService with your service class name
+
+    private final Logger logger = LoggerFactory.getLogger(MyTest.class);
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
 
     @Test
-    public void testConsumeKafkaFeedCollectionAuditEntity() {
-        KafkaConsumerService kafkaConsumerService = new KafkaConsumerService();
-        
-        // Mocking dependencies
-        Consumer<String, String> mockConsumer = Mockito.mock(Consumer.class);
-        when(mockConsumer.poll(any())).thenAnswer(new Answer<ConsumerRecords<String, String>>() {
-            @Override
-            public ConsumerRecords<String, String> answer(InvocationOnMock invocation) throws Throwable {
-                List<ConsumerRecord<String, String>> records = new ArrayList<>();
-                records.add(new ConsumerRecord<>("topicName", 0, 0, "key", "value"));
-                return new ConsumerRecords<>(records);
-            }
-        });
-        kafkaConsumerService.setMockConsumer(mockConsumer);
-        
-        List<String> result = kafkaConsumerService.consumeKafkaFeedCollectionAuditEntity("topicName");
-        
-        // Verify the method behavior and result
-        assertEquals(1, result.size());
-        assertEquals("success", result.get(0));
-        verify(mockConsumer, times(1)).subscribe(anyList());
-        verify(mockConsumer, times(1)).close();
+    void testSaveEntitySuccess() {
+        // Arrange
+        String message = "{\"id\": 1, \"data\": \"some data\"}";
+        CollectionAuditEntity auditEntity = new CollectionAuditEntity();
+        auditEntity.setId(1);
+
+        when(luceneRepo.findById(1)).thenReturn(null);
+
+        // Act
+        List<String> parsedSavedMessages = new ArrayList<>();
+        myService.processMessage(message, parsedSavedMessages);
+
+        // Assert
+        assertEquals("success", parsedSavedMessages.get(0));
+        verify(luceneRepo, times(1)).save(any(CollectionAuditEntity.class));
+    }
+
+    @Test
+    void testEntityAlreadyExists() {
+        // Arrange
+        String message = "{\"id\": 1, \"data\": \"some data\"}";
+        CollectionAuditEntity auditEntity = new CollectionAuditEntity();
+        auditEntity.setId(1);
+
+        when(luceneRepo.findById(1)).thenReturn(auditEntity);
+
+        // Act
+        List<String> parsedSavedMessages = new ArrayList<>();
+        myService.processMessage(message, parsedSavedMessages);
+
+        // Assert
+        assertEquals("Data already exists for id: 1", parsedSavedMessages.get(0));
+        verify(luceneRepo, never()).save(any(CollectionAuditEntity.class));
+    }
+
+    @Test
+    void testExceptionHandling() {
+        // Arrange
+        String message = "{\"id\": 1, \"data\": \"some data\"}";
+
+        doThrow(new RuntimeException("Test exception")).when(luceneRepo).save(any(CollectionAuditEntity.class));
+
+        // Act
+        List<String> parsedSavedMessages = new ArrayList<>();
+        myService.processMessage(message, parsedSavedMessages);
+
+        // Assert
+        assertEquals("error", parsedSavedMessages.get(0));
     }
 }

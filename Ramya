@@ -1,96 +1,37 @@
-package com.example.service;
-
-import com.example.dto.SpaceCollectorDto;
-import com.example.model.SpaceCollector;
-import com.example.repository.SpaceCollectorLuceneRepository;
-import com.example.transformer.Transformer;
-import org.json.JSONException;
-import org.json.JSONObject;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
 import java.util.List;
-import java.util.stream.Collectors;
 
-@Service
-public class SpaceCollectorService {
-
-    @Autowired
-    private SpaceCollectorLuceneRepository spaceCollectorLuceneRepository;
+@RestController
+@RequestMapping("/api/spaceCollectors")
+public class SpaceCollectorController {
 
     @Autowired
-    private Transformer transformer;
+    SpaceCollectorService spaceCollectorService;
+    
+    @Autowired
+    AuditService auditService;
 
-    /**
-     * Converts a SpaceCollector object to a SpaceCollectorDto object.
-     *
-     * @param spaceCollector The SpaceCollector object to be converted.
-     * @return The converted SpaceCollectorDto object.
-     */
-    public SpaceCollectorDto convertToDto(SpaceCollector spaceCollector) {
-        SpaceCollectorDto dto = new SpaceCollectorDto();
-        
-        // Map fields from SpaceCollector to SpaceCollectorDto
-        dto.setId(spaceCollector.getId());
-        dto.setUrl(spaceCollector.getUrl());
-        dto.setSshPublicKey(spaceCollector.getSshPublicKey());
-        dto.setSshPrivateKey(spaceCollector.getSshPrivateKey());
-        dto.setInputFilePath(spaceCollector.getInputFilePath());
-        dto.setOutputFilePath(spaceCollector.getOutputFilePath());
-        dto.setConnectionType(spaceCollector.getConnectionType());
-        dto.setEnabled(spaceCollector.isEnabled());
-        dto.setPassword(spaceCollector.getPassword());
-        dto.setPort(spaceCollector.getPort());
-        dto.setUserName(spaceCollector.getUserName());
-        dto.setPollingDuration(spaceCollector.getPollingDuration());
-        dto.setClusterState(spaceCollector.getClusterState());
-        dto.setFileType(spaceCollector.getFileType());
-        dto.setLastSuccessfulCollection(spaceCollector.getLastSuccessfulCollection());
-        dto.setLastSuccessfulTransformation(spaceCollector.getLastSuccessfulTransformation());
-        
-        // Map any new fields (if any)
-        // e.g., dto.setNewField1(spaceCollector.getNewField1());
+    @GetMapping("/checkStatus")
+    public ResponseEntity<SpaceCollector> checkStatus(@RequestParam("host") String host) {
+        // Check if data is being collected for the specified host
+        List<SpaceCollector> spaceCollectors = spaceCollectorService.checkStatus(host);
 
-        return dto;
-    }
+        if (spaceCollectors.isEmpty()) {
+            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+        }
 
-    /**
-     * Searches for SpaceCollectors based on the provided SpaceCollector criteria.
-     *
-     * @param spaceCollector The criteria to search for SpaceCollectors.
-     * @return A list of matching SpaceCollectors.
-     * @throws JSONException If there is an error in JSON transformation.
-     */
-    public List<SpaceCollectorDto> search(SpaceCollector spaceCollector) throws JSONException {
-        JSONObject searchSpaceCollector = transformer.transformToJSONObject(spaceCollector);
-        JSONObject transformedToLucene = transformer.transformToLucene(searchSpaceCollector);
-        
-        List<SpaceCollector> spaceCollectorList = spaceCollectorLuceneRepository.findByQuery(transformedToLucene.toString());
-        
-        // Convert List<SpaceCollector> to List<SpaceCollectorDto>
-        return spaceCollectorList.stream()
-            .map(this::convertToDto)
-            .collect(Collectors.toList());
-    }
+        // Get the last collection and transformation dates
+        LocalDateTime[] dates = auditService.findLastCollectionAndTransformationDates(host);
+        LocalDateTime lastCollectionDate = dates[0];
+        LocalDateTime lastTransformationDate = dates[1];
 
-    /**
-     * Checks the status based on the provided URL.
-     *
-     * @param url The URL to check status.
-     * @return A list of SpaceCollectorDtos.
-     * @throws JSONException If there is an error in JSON transformation.
-     */
-    public List<SpaceCollectorDto> checkStatus(String url) throws JSONException {
-        JSONObject jsonObject = new JSONObject();
-        jsonObject.put("url", url);
-        
-        JSONObject transformedToLucene = transformer.transformToLucene(jsonObject);
-        
-        List<SpaceCollector> spaceCollectorList = spaceCollectorLuceneRepository.findByQuery(transformedToLucene.toString());
-        
-        // Convert List<SpaceCollector> to List<SpaceCollectorDto>
-        return spaceCollectorList.stream()
-            .map(this::convertToDto)
-            .collect(Collectors.toList());
+        // Prepare the output response including the last collection and transformation dates
+        SpaceCollector collector = spaceCollectors.get(0); // Assuming the list contains at least one item
+        collector.setLastSuccessfulCollection(lastCollectionDate);
+        collector.setLastSuccessfulTransformation(lastTransformationDate);
+
+        return new ResponseEntity<>(collector, HttpStatus.OK);
     }
 }

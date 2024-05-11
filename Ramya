@@ -1,20 +1,78 @@
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
-import org.vdsi.space.collections.lucene.model.CollectionAudit;
+// 1. Create CollectionAudit Model
+@Entity
+@Table(name = "COLLECTION_AUDIT")
+public class CollectionAudit {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
+    @Column(name = "host")
+    private String host;
+
+    // Existing fields...
+
+    @Column(name = "last_successful_collection")
+    private LocalDateTime lastSuccessfulCollection;
+
+    @Column(name = "last_successful_transformation")
+    private LocalDateTime lastSuccessfulTransformation;
+
+    // Constructors, getters, and setters...
+}
+
+// 2. Implement Repository Method
+@Repository
+public interface CollectionAuditRepository extends JpaRepository<CollectionAudit, Long> {
+    List<CollectionAudit> findByHostAndStatusOrderByDateReceivedDesc(String host, String status);
+}
+
+// 3. Create Service Layer
+@Service
+public class CollectionAuditService {
+
+    private final CollectionAuditRepository auditRepository;
+
+    @Autowired
+    public CollectionAuditService(CollectionAuditRepository auditRepository) {
+        this.auditRepository = auditRepository;
+    }
+
+    public Map<String, Object> getLastSuccessfulTimes(String host) {
+        Map<String, Object> result = new HashMap<>();
+
+        // Query COLLECTION_AUDIT table for last successful collection
+        List<CollectionAudit> collectionAudits = auditRepository.findByHostAndStatusOrderByDateReceivedDesc(host, "COLLECTION_SUCCESSFUL");
+        if (!collectionAudits.isEmpty()) {
+            CollectionAudit collectionAudit = collectionAudits.get(0);
+            result.put("lastSuccessfulCollection", collectionAudit.getLastSuccessfulCollection());
+        }
+
+        // Query COLLECTION_AUDIT table for last successful transformation
+        List<CollectionAudit> transformationAudits = auditRepository.findByHostAndStatusOrderByDateReceivedDesc(host, "FLINK_JOB_SUCCESSFUL");
+        if (!transformationAudits.isEmpty()) {
+            CollectionAudit transformationAudit = transformationAudits.get(0);
+            result.put("lastSuccessfulTransformation", transformationAudit.getLastSuccessfulTransformation());
+        }
+
+        return result;
+    }
+}
+
+// 4. Build API Endpoint
 @RestController
-public class CollectionAuditController {
+@RequestMapping("/checkStatus")
+public class StatusController {
 
     private final CollectionAuditService auditService;
 
     @Autowired
-    public CollectionAuditController(CollectionAuditService auditService) {
+    public StatusController(CollectionAuditService auditService) {
         this.auditService = auditService;
     }
 
-    @GetMapping("/lastSuccessfulCollectionAudit")
-    public CollectionAudit getLastSuccessfulCollectionAudit() {
-        return auditService.getLastSuccessfulCollectionAudit();
+    @GetMapping
+    public ResponseEntity<Map<String, Object>> checkStatus(@RequestParam String host) {
+        Map<String, Object> result = auditService.getLastSuccessfulTimes(host);
+        return ResponseEntity.ok(result);
     }
 }

@@ -1,26 +1,50 @@
-// Assuming you have access to CollectionAuditService in SpaceCollector
+// Model class to hold last successful collection and transformation dates
+public class CollectionAuditInfo {
+    private LocalDateTime lastSuccessfulCollection;
+    private LocalDateTime lastSuccessfulTransformation;
 
+    // Getters and setters
+}
+
+// Service class to interact with the database and fetch audit information
 @Service
-public class SpaceCollectorService {
-
-    private final CollectionAuditService collectionAuditService;
+public class AuditService {
 
     @Autowired
-    public SpaceCollectorService(CollectionAuditService collectionAuditService) {
-        this.collectionAuditService = collectionAuditService;
+    private JdbcTemplate jdbcTemplate; // or use Spring Data JPA if preferred
+
+    // Method to fetch last successful collection and transformation dates
+    public CollectionAuditInfo getLastSuccessfulDates(String host) {
+        CollectionAuditInfo auditInfo = new CollectionAuditInfo();
+
+        try {
+            // Prepare the query to fetch last successful collection date
+            String collectionQuery = "SELECT MAX(date_processed) FROM COLLECTION_AUDIT WHERE host = ? AND status = 'COLLECTION_SUCCESSFUL'";
+            LocalDateTime lastCollectionDate = jdbcTemplate.queryForObject(collectionQuery, new Object[]{host}, LocalDateTime.class);
+            auditInfo.setLastSuccessfulCollection(lastCollectionDate);
+
+            // Prepare the query to fetch last successful transformation date
+            String transformationQuery = "SELECT MAX(date_processed) FROM COLLECTION_AUDIT WHERE host = ? AND status = 'FLINK_JOB_SUCCESSFUL'";
+            LocalDateTime lastTransformationDate = jdbcTemplate.queryForObject(transformationQuery, new Object[]{host}, LocalDateTime.class);
+            auditInfo.setLastSuccessfulTransformation(lastTransformationDate);
+        } catch (DataAccessException e) {
+            e.printStackTrace();
+            // Handle exceptions
+        }
+
+        return auditInfo;
     }
+}
 
-    public SpaceCollectorData getSpaceCollectorData(String host) {
-        // Fetch CollectionAudit data for the specified host
-        CollectionAudit lastSuccessfulCollectionAudit = collectionAuditService.getLastSuccessfulCollectionAuditByHost(host);
+// Controller class to handle HTTP requests
+@RestController
+public class AuditController {
 
-        // Here you can process the CollectionAudit data and create SpaceCollectorData object
-        SpaceCollectorData spaceCollectorData = new SpaceCollectorData();
-        spaceCollectorData.setHost(host);
-        spaceCollectorData.setLastSuccessfulCollection(lastSuccessfulCollectionAudit.getLastSuccessfulCollection());
-        spaceCollectorData.setLastSuccessfulTransformation(lastSuccessfulCollectionAudit.getLastSuccessfulTransformation());
-        
-        // Return the SpaceCollectorData object
-        return spaceCollectorData;
+    @Autowired
+    private AuditService auditService;
+
+    @GetMapping("/audit")
+    public CollectionAuditInfo getAuditInfo(@RequestParam String host) {
+        return auditService.getLastSuccessfulDates(host);
     }
 }

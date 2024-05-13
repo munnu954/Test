@@ -1,31 +1,58 @@
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.vdsi.space.collections.customauditengine.model.SpaceCollector;
+import org.vdsi.space.collections.customauditengine.services.AuditService;
+import org.vdsi.space.collections.lucene.model.CollectionAudit;
+import org.vdsi.space.collections.lucene.repositories.CollectionAuditLuceneRepository;
 
-public class SpaceCollectorWithAuditData {
-    private SpaceCollector spaceCollector;
-    private String lastCollectionSuccessful;
-    private String lastTransformationSuccessful;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
-    public SpaceCollector getSpaceCollector() {
-        return spaceCollector;
-    }
+@RestController
+@RequestMapping("/api/spaceCollectors")
+public class SpaceCollectorController {
 
-    public void setSpaceCollector(SpaceCollector spaceCollector) {
-        this.spaceCollector = spaceCollector;
-    }
+    @Autowired
+    private AuditService auditService;
 
-    public String getLastCollectionSuccessful() {
-        return lastCollectionSuccessful;
-    }
+    @Autowired
+    private CollectionAuditLuceneRepository collectionAuditLuceneRepository;
 
-    public void setLastCollectionSuccessful(String lastCollectionSuccessful) {
-        this.lastCollectionSuccessful = lastCollectionSuccessful;
-    }
+    @GetMapping("/checkStatus")
+    public ResponseEntity<List<SpaceCollectorWithAuditData>> checkStatus(@RequestParam("host") String host) {
+        try {
+            // Get the SpaceCollector data
+            List<SpaceCollector> spaceCollectors = auditService.checkStatus(host);
 
-    public String getLastTransformationSuccessful() {
-        return lastTransformationSuccessful;
-    }
+            // Prepare the response list
+            List<SpaceCollectorWithAuditData> response = new ArrayList<>();
 
-    public void setLastTransformationSuccessful(String lastTransformationSuccessful) {
-        this.lastTransformationSuccessful = lastTransformationSuccessful;
+            // Populate SpaceCollectorWithAuditData for each SpaceCollector
+            for (SpaceCollector spaceCollector : spaceCollectors) {
+                SpaceCollectorWithAuditData spaceCollectorWithAuditData = new SpaceCollectorWithAuditData();
+                spaceCollectorWithAuditData.setSpaceCollector(spaceCollector);
+
+                // Fetch last processed data from CollectionAudit
+                CollectionAudit lastCollectionAudit = collectionAuditLuceneRepository.findByJobStatusOrderByDateProcessedDesc("COLLECTION_SUCCESSFUL").get(0);
+                CollectionAudit lastTransformationAudit = collectionAuditLuceneRepository.findByJobStatusOrderByDateProcessedDesc("FLINK_JOB_SUCCESSFUL").get(0);
+
+                // Set last processed dates in the wrapper class
+                spaceCollectorWithAuditData.setLastCollectionSuccessful(lastCollectionAudit.getDateProcessed());
+                spaceCollectorWithAuditData.setLastTransformationSuccessful(lastTransformationAudit.getDateProcessed());
+
+                response.add(spaceCollectorWithAuditData);
+            }
+
+            return new ResponseEntity<>(response, HttpStatus.OK);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 }

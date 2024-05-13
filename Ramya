@@ -1,31 +1,45 @@
-package org.vdsi.space.collections.customauditengine.services;
+package org.vdsi.space.collections.customauditengine.controllers;
 
 import org.json.JSONException;
-import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.vdsi.space.collections.customauditengine.model.SpaceCollector;
-import org.vdsi.space.collections.lucene.SpaceCollectorLuceneRepository;
+import org.vdsi.space.collections.customauditengine.services.AuditService;
 import org.vdsi.space.collections.customauditengine.utils.Transformer;
 
 import java.util.List;
 
-@Service
-public class AuditService {
+@RestController
+@RequestMapping("/custom-audit-engine")
+public class CollectionAuditController {
 
     @Autowired
-    private SpaceCollectorLuceneRepository spaceCollectorLuceneRepository;
+    private AuditService auditService;
 
     @Autowired
     private Transformer transformer;
 
-    public List<SpaceCollector> checkStatus(String host) throws JSONException {
-        // Build the query to fetch COLLECTION_SUCCESSFUL and FLINK_JOB_SUCCESSFUL data
-        JSONObject query = transformer.buildAuditQuery();
+    @GetMapping("/checkStatus")
+    public ResponseEntity<List<SpaceCollector>> checkStatus(@RequestParam("host") String host) {
+        try {
+            // Fetch space collectors data
+            List<SpaceCollector> spaceCollectors = auditService.checkStatus(host);
 
-        // Fetch space collector data based on the host and query
-        List<SpaceCollector> spaceCollectors = spaceCollectorLuceneRepository.findByQuery(query.toString());
+            // Update response with additional fields
+            for (SpaceCollector spaceCollector : spaceCollectors) {
+                // Format and add lastCollectionSuccessful and lastTransformationSuccessful fields
+                JSONObject lastProcessedData = transformer.getLastProcessedData(spaceCollector.getUrl());
+                spaceCollector.setLastCollectionSuccessful(lastProcessedData.getString("lastCollectionSuccessful"));
+                spaceCollector.setLastTransformationSuccessful(lastProcessedData.getString("lastTransformationSuccessful"));
+            }
 
-        return spaceCollectors;
+            return new ResponseEntity<>(spaceCollectors, HttpStatus.OK);
+        } catch (JSONException e) {
+            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 }

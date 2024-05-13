@@ -1,89 +1,31 @@
-import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Service;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.json.JSONException;
-import org.json.JSONObject;
-import java.io.IOException;
-import java.lang.reflect.Field;
-import java.util.List;
-
-@Service
-public class AuditService {
-    private static final Logger logger = LogManager.getLogger(AuditService.class);
-    
-    private final CollectionAuditLuceneRepository luceneRepository;
-
-    public AuditService(CollectionAuditLuceneRepository luceneRepository) {
-        this.luceneRepository = luceneRepository;
-    }
-
-    public ResponseEntity<CollectionAudit> findById(String id) throws IOException {
-        logger.info("Hitting Lucene Repo to get data for id: " + id);
-        CollectionAudit audit = luceneRepository.findById(id);
-        if (audit != null) {
-            logger.info("Data found for id: " + id);
-            return ResponseEntity.ok(audit);
-        } else {
-            logger.info("No data found for id: " + id);
-            return ResponseEntity.ok(new CollectionAudit());
-        }
-    }
-
-    public ResponseEntity<List<CollectionAudit>> findAll() {
-        logger.info("Retrieving all the data from Lucene index");
-        return ResponseEntity.ok(luceneRepository.findAll());
-    }
-
-    public JSONObject transformToLucene(JSONObject inputJson) throws JSONException {
-        // Create a "must" array for query conditions
-        JSONObject result = new JSONObject();
-        JSONArray mustClauses = new JSONArray();
-        
-        // Iterate through input key-value pairs to build the "must" clauses
-        for (String key : inputJson.keySet()) {
-            JSONObject term = new JSONObject();
-            term.put(key, inputJson.get(key));
-            JSONObject termWrapper = new JSONObject();
-            termWrapper.put("term", term);
-            mustClauses.put(termWrapper);
-        }
-        
-        // Build the final JSON object with "bool" and "sort" elements
-        JSONObject query = new JSONObject();
-        JSONObject bool = new JSONObject();
-        bool.put("must", mustClauses);
-        query.put("bool", bool);
-        
-        // Add sorting condition
-        JSONArray sort = new JSONArray();
-        JSONObject sortField = new JSONObject();
-        sortField.put("createdAt", "desc");
-        sort.put(sortField);
-        
-        result.put("query", query);
-        result.put("sort", sort);
-        
-        return result;
-    }
-
-    public <T> JSONObject transformToJSONObject(T object) {
+public ResponseEntity<Map<String, List<?>>> checkStatus(String url) {
+    try {
         JSONObject jsonObject = new JSONObject();
-        // Use reflection to get the fields of the object
-        Field[] fields = object.getClass().getDeclaredFields();
-        for (Field field : fields) {
-            try {
-                // Ensure we can access the field's value
-                field.setAccessible(true);
-                // Get the field name and value
-                String fieldName = field.getName();
-                Object fieldValue = field.get(object);
-                // Add the field to the JSONObject
-                jsonObject.put(fieldName, fieldValue);
-            } catch (IllegalAccessException e) {
-                throw new RuntimeException("Error accessing field: " + field.getName(), e);
-            }
-        }
-        return jsonObject;
+        jsonObject.put("url", url);
+
+        JSONObject transformedToLucene = transformer.transformToLucene(jsonObject);
+        System.out.println("Transformed query: " + transformedToLucene.toString());
+
+        List<SpaceCollector> spaceCollectorList = spaceCollectorLuceneRepository.findByQuery(transformedToLucene.toString());
+
+        String collectionSuccessQuery = "{\"query\": {\"bool\": {\"must\": [{\"term\": {\"url\": \"" + url + "\"}}, {\"term\": {\"jobstatus\": \"" + JobStatus.COLLECTION_SUCCESSFUL + "\"}}]}, \"sort\": [{\"dateProcessed\": \"desc\"}]}}";
+        List<CollectionAudit> collectionSuccessList = collectionAuditLuceneRepository.findByQuery(collectionSuccessQuery);
+
+        String flinkJobSuccessQuery = "{\"query\": {\"bool\": {\"must\": [{\"term\": {\"url\": \"" + url + "\"}}, {\"term\": {\"jobstatus\": \"" + JobStatus.FLINK_JOB_SUCCESSFUL + "\"}}]}, \"sort\": [{\"dateProcessed\": \"desc\"}]}}";
+        List<CollectionAudit> flinkJobSuccessList = collectionAuditLuceneRepository.findByQuery(flinkJobSuccessQuery);
+
+        // Concatenate all lists into one
+        List<Object> resultList = new ArrayList<>();
+        resultList.addAll(collectionSuccessList);
+        resultList.addAll(flinkJobSuccessList);
+        resultList.addAll(spaceCollectorList);
+
+        Map<String, List<?>> response = new HashMap<>();
+        response.put("result", resultList);
+
+        return new ResponseEntity<>(response, HttpStatus.OK);
+    } catch (Exception e) {
+        e.printStackTrace();
+        return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
     }
 }

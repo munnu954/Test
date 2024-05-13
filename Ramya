@@ -1,17 +1,61 @@
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.vdsi.space.collections.customauditengine.model.CollectionAudit;
-import org.vdsi.space.collections.customauditengine.repositories.CollectionAuditLuceneRepository;
+import org.vdsi.space.collections.customauditengine.model.SpaceCollector;
+import org.vdsi.space.collections.customauditengine.services.AuditService;
 
+import java.util.ArrayList;
 import java.util.List;
 
-@Service
-public class AuditService {
+@RestController
+@RequestMapping("/custom-audit-engine")
+public class SpaceCollectorController {
 
     @Autowired
-    private CollectionAuditLuceneRepository collectionAuditLuceneRepository;
+    private AuditService auditService;
 
-    public List<CollectionAudit> findLastProcessedData(String status) {
-        return collectionAuditLuceneRepository.findByJobStatusOrderByDateProcessedDesc(status);
+    @GetMapping("/checkStatus")
+    public ResponseEntity<List<SpaceCollector>> checkStatus(@RequestParam("host") String host) {
+        try {
+            // Fetch last processed data for COLLECTION_SUCCESSFUL status
+            List<CollectionAudit> collectionSuccessData = auditService.findLastProcessedData("COLLECTION_SUCCESSFUL");
+
+            // Fetch last processed data for FLINK_JOB_SUCCESSFUL status
+            List<CollectionAudit> flinkJobSuccessData = auditService.findLastProcessedData("FLINK_JOB_SUCCESSFUL");
+
+            // Process the data and prepare the response
+            List<SpaceCollector> spaceCollectors = processSpaceCollectorsData(collectionSuccessData, flinkJobSuccessData);
+
+            return new ResponseEntity<>(spaceCollectors, HttpStatus.OK);
+        } catch (Exception e) {
+            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private List<SpaceCollector> processSpaceCollectorsData(List<CollectionAudit> collectionSuccessData, List<CollectionAudit> flinkJobSuccessData) {
+        List<SpaceCollector> spaceCollectors = new ArrayList<>();
+
+        // Process collectionSuccessData
+        for (CollectionAudit audit : collectionSuccessData) {
+            SpaceCollector spaceCollector = new SpaceCollector();
+            spaceCollector.setLastCollectionSuccessful(audit.getDateProcessed());
+            spaceCollectors.add(spaceCollector);
+        }
+
+        // Process flinkJobSuccessData
+        for (CollectionAudit audit : flinkJobSuccessData) {
+            for (SpaceCollector spaceCollector : spaceCollectors) {
+                if (spaceCollector.getUrl().equals(audit.getUrl())) {
+                    spaceCollector.setLastTransformationSuccessful(audit.getDateProcessed());
+                    break;
+                }
+            }
+        }
+
+        return spaceCollectors;
     }
 }

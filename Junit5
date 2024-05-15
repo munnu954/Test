@@ -1,120 +1,47 @@
-Here is the JUnit5 test case for the `FlinkApiService` class:
+It seems like the test case is failing because the actual time when the test is run does not match the expected `parentAlarmMatchedTimeStamp`. This discrepancy is likely due to the fact that the `parentAlarmMatchedTimeStamp` is being set statically in the test, but the actual time is dynamically generated during the test run.
+
+To fix this, you should mock the system time or the method that provides the current time to ensure it returns a consistent value that matches the `parentAlarmMatchedTimeStamp`. Here's how you can refactor the test case to make it pass:
 
 ```java
-import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
-import org.springframework.web.client.RestTemplate;
+@Test
+public void testApplyRootCauseAlarmSuppression_AlarmAfterTimeWindow_BeforeExpiryTime() throws Exception {
+    String suppressionkey = "suppressionkey";
+    CbrsSuppressionAlarm cbrsSuppressionAlarm = TestUtils.mockCbrsSuppressionAlarm();
+    HashMap<String, Object> alarmMap = TestUtils.getMapData("src/test/resources/testdata/alarmMap/Samsung_USM.json");
+    SuppressionRule suppressionRule = Mockito.mock(SuppressionRule.class);
+    TreeMap<Long, SuppressionRule> treeMap = new TreeMap<>();
+    treeMap.put(1L, suppressionRule);
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.*;
+    Mockito.when(rulesLoadingService.getRuleMap()).thenReturn(treeMap);
+    Mockito.when(utils.calculateSupressionKey(suppressionRule, alarmMap)).thenReturn(suppressionkey);
+    Mockito.when(repo.findBySuppressionKey(suppressionkey)).thenReturn(Optional.of(cbrsSuppressionAlarm));
+    Mockito.when(suppressionRule.matchFilter(alarmMap)).thenReturn(true);
+    Mockito.when(utils.isActiveAlarm(alarmMap)).thenReturn(true);
 
-@SpringBootTest
-public class FlinkApiServiceTest {
+    // Mock the current time to match the parentAlarmMatchedTimeStamp
+    OffsetDateTime fixedCurrentTime = OffsetDateTime.parse("2024-05-14T10:58:55+00", DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+    Mockito.when(utils.getCurrentTime()).thenReturn(fixedCurrentTime);
 
-    @InjectMocks
-    FlinkApiService flinkApiService;
+    // Set the parentAlarmMatchedTimeStamp to the fixed current time
+    ReflectionTestUtils.setField(cbrsSuppressionService, "parentAlarmMatchedTimestamp", fixedCurrentTime);
 
-    @Mock
-    KafkaConsumer kafkaConsumer;
+    cbrsSuppressionService.processAlarm(alarmMap, "");
 
-    @Mock
-    KafkaAuditProducer kafkaAuditProducer;
+    Mockito.verify(repo, Mockito.times(1)).findBySuppressionKey(suppressionkey);
+    assertTrue(cbrsSuppressionAlarm.isSuppressionActive());
+    assertEquals(fixedCurrentTime, cbrsSuppressionAlarm.getFirstActivatedTime());
+    assertEquals(fixedCurrentTime, cbrsSuppressionAlarm.getLastActivatedTime());
 
-    @Mock
-    FlinkJobDataSource flinkJobDataSource;
+    Mockito.when(suppressionRule.getSuppressionInterval()).thenReturn(10);
+    Mockito.when(suppressionRule.getSuppressionIntervalUnits()).thenReturn("MINUTES");
 
-    @Mock
-    FlinkJobService flinkJobService;
+    OffsetDateTime expectedExpiryTime = fixedCurrentTime.plusMinutes(10);
+    assertEquals(expectedExpiryTime, cbrsSuppressionAlarm.getExpiryTime());
 
-    @Mock
-    RestTemplate restTemplate;
-
-    @Test
-    public void triggerJobTest() throws Exception {
-        CollectionAudit auditMsg = new CollectionAudit();
-        auditMsg.setJobStatus("OK");
-        auditMsg.setProcessType("CSV");
-        auditMsg.setFileType("csv_transform");
-        auditMsg.setInputFilePath("input.csv");
-        auditMsg.setDelimiters(",");
-        auditMsg.setUrl("http://localhost");
-        auditMsg.setPort(8080);
-        auditMsg.setCollectorId("collector1");
-
-        FlinkJob flinkJob = new FlinkJob();
-        flinkJob.setFlinkJarFilePath("flinkJobJarid");
-
-        when(flinkJobDataSource.getFlinkJobDetails(anyString())).thenReturn(flinkJob);
-
-        ResponseEntity<String> response = new ResponseEntity<>("{\"jobid\":\"job1\"}", HttpStatus.OK);
-
-        when(restTemplate.postForEntity(anyString(), any(), any())).thenReturn(response);
-
-        String result = flinkApiService.triggerJob(auditMsg);
-
-        assertEquals("Job submitted", result);
-    }
-
-    @Test
-    public void triggerJobTest_Exception() throws Exception {
-        CollectionAudit auditMsg = new CollectionAudit();
-        auditMsg.setJobStatus("OK");
-        auditMsg.setProcessType("CSV");
-        auditMsg.setFileType("csv_transform");
-        auditMsg.setInputFilePath("input.csv");
-        auditMsg.setDelimiters(",");
-        auditMsg.setUrl("http://localhost");
-        auditMsg.setPort(8080);
-        auditMsg.setCollectorId("collector1");
-
-        when(flinkJobDataSource.getFlinkJobDetails(anyString())).thenReturn(null);
-
-        when(restTemplate.postForEntity(anyString(), any(), any())).thenThrow(HttpClientErrorException.class);
-
-        String result = flinkApiService.triggerJob(auditMsg);
-
-        assertEquals("Job is not triggered", result);
-    }
-
-    @Test
-    public void triggerJobTest_ServerErrorException() throws Exception {
-        CollectionAudit auditMsg = new CollectionAudit();
-        auditMsg.setJobStatus("OK");
-        auditMsg.setProcessType("CSV");
-        auditMsg.setFileType("csv_transform");
-        auditMsg.setInputFilePath("input.csv");
-        auditMsg.setDelimiters(",");
-        auditMsg.setUrl("http://localhost");
-        auditMsg.setPort(8080);
-        auditMsg.setCollectorId("collector1");
-
-        when(flinkJobDataSource.getFlinkJobDetails(anyString())).thenReturn(null);
-
-        when(restTemplate.postForEntity(anyString(), any(), any())).thenThrow(HttpServerErrorException.class);
-
-        String result = flinkApiService.triggerJob(auditMsg);
-
-        assertEquals("Job is not triggered", result);
-    }
-
-    @Test
-    public void triggerJobTest_NullJobDetails() {
-        CollectionAudit auditMsg = new CollectionAudit();
-        auditMsg.setJobStatus(null);
-        auditMsg.setProcessType(null);
-
-        String result = flinkApiService.triggerJob(auditMsg);
-
-        assertEquals("Job details are null", result);
-    }
+    Mockito.verify(generateCbrsFloodAlarmService, Mockito.times(1)).generateCbrsFloodAlarm(alarmMap, suppressionRule.getRuleId());
 }
 ```
 
-Please note that this example test case is simplified for illustration purposes and doesn't cover all possible scenarios. You would need to add more test cases to cover all possible paths and exceptions in your actual code. For example, you might want to add separate test cases for each file type (csv, xml, txt) and for other exceptional cases.
+In the refactored code, I've added a `utils.getCurrentTime()` method that should return the current time. This method needs to be mocked to return a fixed time (`fixedCurrentTime`) that matches the `parentAlarmMatchedTimeStamp`. This way, the test will always have a consistent current time and the assertions will pass.
+
+Please ensure that the `utils` class has the `getCurrentTime()` method implemented and that it is used wherever the current time is needed in the `cbrsSuppressionService`. If such a method doesn't exist, you'll need to create it and use it accordingly. Remember to adjust the method names and logic to fit the actual implementation details of your project.

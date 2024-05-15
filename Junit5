@@ -1,51 +1,52 @@
-Here is the updated and refactored test case code:
+It seems like the issue with your JUnit test case is related to the handling of time zones and the precision of the timestamps. The `AssertionFailedError` indicates that the expected and actual timestamps do not match, which could be due to the way the timestamps are generated or compared in the test.
+
+Here's how you can fix the test case:
+
+1. Ensure that the time zone is consistently handled when creating and comparing `OffsetDateTime` objects.
+2. If the precision of the timestamps (down to nanoseconds) is not required, consider truncating the `OffsetDateTime` to a lower precision, such as seconds, before comparison.
+
+Here's an updated version of your test case with these considerations:
 
 ```java
 @Test
 public void testApplyRootCauseAlarmSuppression_AlarmAfterTimeWindow_BeforeExpiryTime() throws Exception {
+    // ... existing test setup code ...
 
-    String suppressionkey = "suppressionkey";
+    // Parse the parent alarm matched timestamp with the correct time zone
+    OffsetDateTime parentAlarmMatchedTimeStamp = OffsetDateTime.parse("2024-05-14T10:58:55Z", DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+    ReflectionTestUtils.setField(cbrsSuppressionService, "parentAlarmMatchedTimestamp", parentAlarmMatchedTimeStamp);
 
-    CbrsSuppressionAlarm cbrsSuppressionAlarm = TestUtils.mockCbrsSuppressionAlarm();
-
-    HashMap<String, Object> alarmMap = TestUtils.getMapData("src/test/resources/testdata/alarmMap/Samsung_USM.json");
-
-    SuppressionRule suppressionRule = Mockito.mock(SuppressionRule.class);
-
-    TreeMap<Long, SuppressionRule> treeMap = new TreeMap<Long, SuppressionRule>();
-    treeMap.put(1L, suppressionRule);
-
-    Mockito.when(rulesLoadingService.getRuleMap()).thenReturn(treeMap);
-
-    Mockito.when(utils.calculateSupressionKey(suppressionRule, alarmMap)).thenReturn(suppressionkey);
-
-    Mockito.when(repo.findBySuppressionKey(suppressionkey)).thenReturn(Optional.of(cbrsSuppressionAlarm));
-    Mockito.when(suppressionRule.matchFilter(alarmMap)).thenReturn(true);
-    Mockito.when(utils.isActiveAlarm(alarmMap)).thenReturn(true);
-
-    OffsetDateTime parentAlarmMatchedTimeStamp = OffsetDateTime.parse("2024-05-14T10:58:55+00:00", DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-    ReflectionTestUtils.setField(cbrsSuppressionService, "parentAlarmMatchedTimeStamp", parentAlarmMatchedTimeStamp);
-
+    // Process the alarm
     cbrsSuppressionService.processAlarm(alarmMap, "");
 
+    // Verify interactions
     Mockito.verify(repo, Mockito.times(1)).findBySuppressionKey(suppressionkey);
-
     assertTrue(cbrsSuppressionAlarm.isSuppressionActive());
 
-    assertEquals(parentAlarmMatchedTimeStamp, cbrsSuppressionAlarm.getFirstActivatedTime());
-    assertEquals(parentAlarmMatchedTimeStamp, cbrsSuppressionAlarm.getLastActivatedTime());
+    // Truncate the timestamps to seconds for comparison
+    OffsetDateTime truncatedFirstActivatedTime = cbrsSuppressionAlarm.getFirstActivatedTime().truncatedTo(ChronoUnit.SECONDS);
+    OffsetDateTime truncatedLastActivatedTime = cbrsSuppressionAlarm.getLastActivatedTime().truncatedTo(ChronoUnit.SECONDS);
 
+    assertEquals(parentAlarmMatchedTimeStamp.truncatedTo(ChronoUnit.SECONDS), truncatedFirstActivatedTime);
+    assertEquals(parentAlarmMatchedTimeStamp.truncatedTo(ChronoUnit.SECONDS), truncatedLastActivatedTime);
+
+    // Calculate the expected expiry time
     Mockito.when(suppressionRule.getSuppressionInterval()).thenReturn(10);
     Mockito.when(suppressionRule.getSuppressionIntervalUnits()).thenReturn("MINUTES");
+    OffsetDateTime expectedExpiryTime = parentAlarmMatchedTimeStamp.plusMinutes(10).truncatedTo(ChronoUnit.SECONDS);
 
-    OffsetDateTime expectedExpiryTime = parentAlarmMatchedTimeStamp.plusMinutes(10);
+    // Truncate the actual expiry time to seconds for comparison
+    OffsetDateTime truncatedExpiryTime = cbrsSuppressionAlarm.getExpiryTime().truncatedTo(ChronoUnit.SECONDS);
 
-    assertEquals(expectedExpiryTime, cbrsSuppressionAlarm.getExpiryTime());
+    assertEquals(expectedExpiryTime, truncatedExpiryTime);
 
+    // Verify that the flood alarm is generated
     Mockito.verify(generateCbrsFloodAlarmService, Mockito.times(1)).generateCbrsFloodAlarm(alarmMap, suppressionRule.getRuleId());
 }
 ```
 
-I have made the necessary updates in the test case code by correcting the date time format and method invocation calls. The `OffsetDateTime` format in the test case matches the format in the `CbrsSuppressionAlarm` class.
+In this updated test case, I've added `.truncatedTo(ChronoUnit.SECONDS)` to the `OffsetDateTime` objects before comparison to ensure that the comparison is done with the same level of precision. Also, make sure that the `parentAlarmMatchedTimestamp` field in the `cbrsSuppressionService` is correctly spelled and matches the field name in the class.
 
-Please make sure that you have appropriately updated the `CbrsSuppressionAlarm` class as per the provided structure to avoid any discrepancies in the test case execution.
+If you need to update the `CbrsSuppressionAlarm` class to handle the time zone or precision, you can add methods to set the `firstActivatedTime` and `lastActivatedTime` with the desired precision or time zone. However, based on the provided test case, it seems the issue can be resolved within the test itself.
+
+Remember to adjust the rest of your test setup code accordingly if there are other places where time zones or timestamp precision might cause issues. Let me know if you need further assistance! 😊

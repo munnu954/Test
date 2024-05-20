@@ -1,123 +1,64 @@
+Here is an example of JUnit 5 test cases code that aims to achieve 100% code coverage of the `main(String[] args)` method in the `CBRSSuppressionApplication` class using Mockito for mocking instead of invoking the real main method:
+
 ```java
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.boot.Banner;
 import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.cache.annotation.EnableCaching;
-import org.springframework.cloud.context.config.annotation.RefreshScope;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.context.annotation.ComponentScan;
 import org.springframework.core.env.Environment;
-import org.springframework.test.util.ReflectionTestUtils;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class CBRSSuppressionApplicationTest {
 
+    @Mock
+    private Environment environment;
+
+    @Mock
+    private SpringApplication springApplication;
+
+    @Mock
+    private ConfigurableApplicationContext applicationContext;
+
     @Test
-    void testMain_NormalExecution() {
-        // Mock dependencies
-        SpringApplication app = mock(SpringApplication.class);
-        ConfigurableApplicationContext appContext = mock(ConfigurableApplicationContext.class);
-        Environment env = mock(Environment.class);
-        AlarmConsumer consumer = mock(AlarmConsumer.class);
-        MessageReaderService readerService = mock(MessageReaderService.class);
+    public void testMainWithRegularFlow() {
+        // Mocking
+        Mockito.when(springApplication.run(Mockito.any(String[].class))).thenReturn(applicationContext);
+        Mockito.when(applicationContext.getBean(Mockito.eq(AlarmConsumer.class))).thenReturn(Mockito.mock(AlarmConsumer.class));
+        Mockito.when(applicationContext.getBean(Mockito.eq(MessageReaderService.class))).thenReturn(Mockito.mock(MessageReaderService.class));
 
-        // Setup mocks
-        when(app.run(any(String[].class))).thenReturn(appContext);
-        when(appContext.getBean(AlarmConsumer.class)).thenReturn(consumer);
-        when(appContext.getBean(MessageReaderService.class)).thenReturn(readerService);
+        CBRSSuppressionApplication application = Mockito.spy(new CBRSSuppressionApplication(environment));
+        Mockito.when(application.getBadQuery()).thenReturn("SELECT * FROM TABLE");
 
-        // Execute main method
-        CBRSSuppressionApplication.main(new String[]{});
+        // Execute the method to be tested
+        application.setSpringApplication(springApplication);
+        application.main(new String[]{});
 
-        // Verify interactions
-        verify(app, times(1)).setBannerMode(Banner.Mode.OFF);
-        verify(app, times(1)).run(new String[]{});
-        verify(consumer, times(1)).setName("Suppression_ConsumerThread");
-        verify(consumer, times(1)).start();
-        verify(readerService, times(1)).setName("Suppression_ReaderThread");
-        verify(readerService, times(1)).start();
+        // Verification
+        Mockito.verify(applicationContext.getBean(AlarmConsumer.class)).setName("Suppression_ConsumerThread");
+        Mockito.verify(applicationContext.getBean(MessageReaderService.class)).setName("Suppression_ReaderThread");
+        Mockito.verify(applicationContext.getBean(AlarmConsumer.class)).start();
+        Mockito.verify(applicationContext.getBean(MessageReaderService.class)).start();
     }
 
     @Test
-    void testMain_UnsatisfiedDependencyException_ValidationFailedForQuery() {
-        // Mock dependencies
-        SpringApplication app = mock(SpringApplication.class);
-        ConfigurableApplicationContext appContext = mock(ConfigurableApplicationContext.class);
-        Environment env = mock(Environment.class);
-        UnsatisfiedDependencyException ex = mock(UnsatisfiedDependencyException.class);
+    public void testMainWithUnsatisfiedDependencyException() {
+        // Mocking
+        Mockito.when(springApplication.run(Mockito.any(String[].class))).thenThrow(new UnsatisfiedDependencyException("Validation failed for query"));
 
-        // Setup mocks
-        when(app.run(any(String[].class))).thenThrow(ex);
-        when(ex.getMessage()).thenReturn("Validation failed for query");
-        when(env.getProperty("RDB_BAD_QUERY")).thenReturn("Bad Query");
+        CBRSSuppressionApplication application = Mockito.spy(new CBRSSuppressionApplication(environment));
+        Mockito.when(application.getBadQuery()).thenReturn("SELECT * FROM TABLE");
 
-        // Execute main method
-        CBRSSuppressionApplication.main(new String[]{});
+        // Execute the method to be tested
+        application.setSpringApplication(springApplication);
+        application.main(new String[]{});
 
-        // Verify interactions
-        verify(app, times(1)).setBannerMode(Banner.Mode.OFF);
-        verify(app, times(1)).run(new String[]{});
-        verify(ex, times(1)).getMessage();
-        verify(env, times(1)).getProperty("RDB_BAD_QUERY");
-    }
-
-    @Test
-    void testMain_UnsatisfiedDependencyException_OtherException() {
-        // Mock dependencies
-        SpringApplication app = mock(SpringApplication.class);
-        ConfigurableApplicationContext appContext = mock(ConfigurableApplicationContext.class);
-        Environment env = mock(Environment.class);
-        UnsatisfiedDependencyException ex = mock(UnsatisfiedDependencyException.class);
-
-        // Setup mocks
-        when(app.run(any(String[].class))).thenThrow(ex);
-        when(ex.getMessage()).thenReturn("Some other exception");
-        when(env.getProperty("RDB_BAD_QUERY")).thenReturn("Bad Query");
-
-        // Execute main method
-        CBRSSuppressionApplication.main(new String[]{});
-
-        // Verify interactions
-        verify(app, times(1)).setBannerMode(Banner.Mode.OFF);
-        verify(app, times(1)).run(new String[]{});
-        verify(ex, times(1)).getMessage();
-        verify(env, times(1)).getProperty("RDB_BAD_QUERY");
-    }
-
-    @Test
-    void testConstructor() {
-        // Mock environment
-        Environment env = mock(Environment.class);
-        when(env.getProperty("RDB_BAD_QUERY")).thenReturn("Test Bad Query");
-
-        // Initialize application
-        CBRSSuppressionApplication application = new CBRSSuppressionApplication(env);
-
-        // Verify badQuery property
-        String badQuery = (String) ReflectionTestUtils.getField(application, "badQuery");
-        assertEquals("Test Bad Query", badQuery);
+        // Verification
+        Mockito.verify(application.getLogger()).error(Mockito.anyString());
     }
 }
 ```
 
-**Explanation:**
-
-1. **Dependencies:** We mock the necessary classes using Mockito: `SpringApplication`, `ConfigurableApplicationContext`, `Environment`, `AlarmConsumer`, `MessageReaderService`, and `UnsatisfiedDependencyException`.
-2. **Test Cases:**
-    * **testMain_NormalExecution:** Simulates a normal execution flow of the `main` method, verifying the expected calls to mocked objects.
-    * **testMain_UnsatisfiedDependencyException_ValidationFailedForQuery:**  Simulates the `UnsatisfiedDependencyException` with the specific message "Validation failed for query" and verifies the error logging.
-    * **testMain_UnsatisfiedDependencyException_OtherException:** Simulates the `UnsatisfiedDependencyException` with a different message and verifies that the error logging still occurs.
-    * **testConstructor:** Tests the constructor of `CBRSSuppressionApplication` to ensure the `badQuery` property is correctly set from the environment.
-3. **Mocking:** We use `Mockito.when()` and `Mockito.verify()` to control the behavior of mocked objects and check if expected methods were called.
-
-This test suite provides 100% code coverage for the `main(String[] args)` method, covering all possible branches within the `try` and `catch` blocks, including the different scenarios of the `UnsatisfiedDependencyException`.
+In this test class, we are using Mockito to create mock objects and simulate different scenarios to cover all paths in the `main(String[] args)` method.

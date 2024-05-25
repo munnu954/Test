@@ -1,185 +1,81 @@
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.api.common.functions.MapFunction;
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.connectors.kafka.KafkaSource;
+import org.apache.flink.api.common.accumulators.IntCounter;
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.util.Collector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.json.JSONObject;
 
-import java.util.Map;
-
-public class CsvTransformerJob {
-    private static final Logger LOGGER = LoggerFactory.getLogger(CsvTransformerJob.class);
-    private static final String FLINK_JOB_NAME = "Csv to JSON Transformer Job";
+public class CsvToJsonMRFCnTransformer extends RichFlatMapFunction<Tuple2<String, CollectionAudit>, Tuple2<JSONObject, CollectionAudit>> {
+    private static final Logger LOGGER = LoggerFactory.getLogger(CsvToJsonMRFCnTransformer.class);
     
-    private KafkaProducerService kProducerService = new KafkaProducerService();
-    private static final ApProperties appProp = ApProperties.getInstance();
-    private static final ClassicHttpClient classicHttpClient = new ClassicHttpClient();
-    private static final PublishAuditMessage pubAuditMsg = new PublishAuditMessage();
+    private final String fileName;
+    private String[] headers;
+    private final IntCounter successIntCounter = new IntCounter();
+    private final IntCounter failureIntCounter = new IntCounter();
+    private final PublishAuditMessage pubAuditMsg = new PublishAuditMessage();
 
-    public void execute() throws Exception {
-        String bootstrapServer = appProp.getAppProperties("spring.kafka.consumer.bootstrap-servers");
-        String auditTopic = appProp.getAppProperties("spring.kafka.audit-topic-name");
-        String groupId = appProp.getAppProperties("spring.kafka.consumer-group-id");
-        String offsets = appProp.getAppProperties("spring.kafka.consumer.auto-offset-reset");
+    public CsvToJsonMRFCnTransformer(String fileName) {
+        this.fileName = fileName;
+    }
 
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        
+    @Override
+    public void open(Configuration parameters) throws Exception {
+        getRuntimeContext().addAccumulator("successIntCounter", this.successIntCounter);
+        getRuntimeContext().addAccumulator("failureIntCounter", this.failureIntCounter);
+    }
+
+    @Override
+    public void flatMap(Tuple2<String, CollectionAudit> tupleValue, Collector<Tuple2<JSONObject, CollectionAudit>> out) {
+        CollectionAudit message = tupleValue.f1;
+        String csvContent = tupleValue.f0;
+
         try {
-            CollectionAudit collectionAudit = getCollectionAudit(bootstrapServer);
-            CsvDataTransformerUtil.validateKafka(collectionAudit.getBootstrapServer(), collectionAudit.getOutputFilePath(), auditTopic);
-            
-            DataStream<CollectionAudit> collectionAuditStream = getCollectionAuditStream(env, bootstrapServer, auditTopic, groupId, offsets, collectionAudit);
-            DataStream<Tuple2<String, CollectionAudit>> csvDataStream = getCsvDataStream(collectionAuditStream);
-            DataStream<Tuple2<JSONObject, CollectionAudit>> jsonNodeStream = getJsonNodeStream(csvDataStream, collectionAudit.getFileType());
-            DataStream<Tuple2<String, CollectionAudit>> finalDataStream = getFinalDataStream(jsonNodeStream);
-            
-            if (finalDataStream != null) {
-                publishTransformedData(finalDataStream, null);
-            }
+            if (message != null && csvContent != null) {
+                String[] lines = csvContent.split(System.lineSeparator());
+                if (lines.length < 3) {
+                    throw new IllegalArgumentException("Invalid CSV format");
+                }
+                
+                String systemId = extractValue(lines[0], "=");
+                String nodeIp = extractValue(lines[1], ":");
+                headers = lines[2].split(",");
 
-            JobClient jobClient = env.executeAsync(FLINK_JOB_NAME);
-            JobID jobId = jobClient.getJobID();
-            LOGGER.info("JobID is {}", jobId);
+                for (int i = 3; i < lines.length; i++) {
+                    String line = lines[i];
+                    String[] values = line.split(",");
+
+                    if (headers.length != values.length) {
+                        this.failureIntCounter.add(1);
+                        continue;
+                    }
+
+                    JSONObject json = new JSONObject();
+                    json.put("SystemId", systemId);
+                    json.put("NodeIP", nodeIp);
+                    json.put("FILENAME", fileName);
+
+                    for (int j = 0; j < headers.length; j++) {
+                        String key = headers[j].trim().replace("\"", "");
+                        String value = values[j].trim().replace("\"", "");
+                        json.put(key, value);
+                    }
+
+                    this.successIntCounter.add(1);
+                    out.collect(Tuple2.of(json, message));
+                }
+            }
         } catch (Exception e) {
-            LOGGER.error("Error while executing CsvTransformerJob", e);
+            LOGGER.error("Error while trying to transform from CSV to JSON", e);
+            pubAuditMsg.publishFlinkConversionStatus(message, null, JobStatus.FLINK_JOB_FAILED);
         }
     }
 
-    private static DataStream<Tuple2<String, CollectionAudit>> getFinalDataStream(DataStream<Tuple2<JSONObject, CollectionAudit>> jsonNodeStream) {
-        return jsonNodeStream.map(new MapFunction<Tuple2<JSONObject, CollectionAudit>, Tuple2<String, CollectionAudit>>() {
-            @Override
-            public Tuple2<String, CollectionAudit> map(Tuple2<JSONObject, CollectionAudit> jsonObject) {
-                LOGGER.debug("jsonNodeStream json: {}", jsonObject.f0);
-                try {
-                    return Tuple2.of(new JsonEncapsulator().map(jsonObject.f0), jsonObject.f1);
-                } catch (Exception e) {
-                    LOGGER.error("Error while encapsulating the json record", e);
-                    pubAuditMsg.publishFlinkConversionStatus(jsonObject.f1, null, JobStatus.FLINK_JOB_FAILED);
-                    return null;
-                }
-            }
-        }).name("EncapsulateJson").returns(Types.TUPLE(Types.STRING, Types.POJO(CollectionAudit.class)));
-    }
-
-    private static DataStream<Tuple2<JSONObject, CollectionAudit>> getJsonNodeStream(DataStream<Tuple2<String, CollectionAudit>> csvDataStream, String fileType) {
-        DataStream<Tuple2<JSONObject, CollectionAudit>> jsonNodeStream;
-        String fileName = Constants.FILE_TYPE.getOrDefault(fileType, "defaultFileName");
-
-        switch (fileName) {
-            case "Gigamon":
-                jsonNodeStream = csvDataStream.flatMap(new CsvToJsonGigamonAndSAMSUNGFEMSnTransformer(fileName)).name("CsvToJsonFlatMap");
-                break;
-            case "SAMSUNGFEMS":
-                jsonNodeStream = csvDataStream.flatMap(new CsvToJsonGigamonAndSAMSUNGFEMSnTransformer(fileName)).name("CsvToJsonFlatMap");
-                break;
-            case "OracleSTP":
-                jsonNodeStream = csvDataStream.flatMap(new CsvToJsonOracleSTPnTransformer(fileName)).name("CsvToJsonFlatMap");
-                break;
-            case "Tones":
-                jsonNodeStream = csvDataStream.flatMap(new CsvToJsonTonesTransformer(fileName)).name("CsvToJsonFlatMap");
-                break;
-            case "MRFCn":
-                jsonNodeStream = csvDataStream.flatMap(new CsvToJsonMRFCnTransformer(fileName)).name("CsvToJsonFlatMap");
-                break;
-            case "RTROCSn":
-                jsonNodeStream = csvDataStream.flatMap(new CsvToJsonRTROCSnTransformer(fileName)).name("CsvToJsonFlatMap");
-                break;
-            case "DRA":
-                jsonNodeStream = csvDataStream.flatMap(new CsvToJsonDRAnTransformer(fileName)).name("CsvToJsonFlatMap");
-                break;
-            case "RCSMESSAGING":
-                jsonNodeStream = csvDataStream.flatMap(new CsvToJsonRCSMESSAGINGnTransformer(fileName)).name("CsvToJsonFlatMap");
-                break;
-            case "CISCO":
-                jsonNodeStream = csvDataStream.flatMap(new CsvToJsonCISCOTransformer(fileName)).name("CsvToJsonFlatMap");
-                break;
-            case "AFFIRMED":
-                jsonNodeStream = csvDataStream.flatMap(new CsvToJsonAFFIRMEDnTransformer(fileName)).name("CsvToJsonFlatMap");
-                break;
-            default:
-                jsonNodeStream = csvDataStream.flatMap(new CsvToJsonConversion()).name("ConvertCsvToJson");
-                break;
+    private String extractValue(String line, String delimiter) {
+        int index = line.indexOf(delimiter);
+        if (index == -1) {
+            throw new IllegalArgumentException("Invalid format: " + line);
         }
-
-        return jsonNodeStream;
-    }
-
-    private static DataStream<Tuple2<String, CollectionAudit>> getCsvDataStream(DataStream<CollectionAudit> collectionAuditStream) {
-        return collectionAuditStream.flatMap(new FlatMapFunction<CollectionAudit, Tuple2<String, CollectionAudit>>() {
-            @Override
-            public void flatMap(CollectionAudit collectionAudit, Collector<Tuple2<String, CollectionAudit>> out) {
-                try {
-                    if (collectionAudit != null && collectionAudit.getInputFilePath() != null && !collectionAudit.getInputFilePath().isEmpty()) {
-                        LOGGER.debug("collectionAudit inside Stream {}", collectionAudit);
-                        String csvContent = classicHttpClient.getData(collectionAudit.getInputFilePath());
-                        if (csvContent.contains("NoSuchKey")) {
-                            throw new CsvToJsonConverterException("No such File in S3: " + collectionAudit.getInputFilePath());
-                        }
-                        out.collect(Tuple2.of(csvContent, collectionAudit));
-                    }
-                } catch (Exception e) {
-                    LOGGER.error("Error while reading record from S3", e);
-                    pubAuditMsg.publishFlinkConversionStatus(collectionAudit, null, JobStatus.FLINK_JOB_FAILED);
-                }
-            }
-        }).name("ReadFileFromS3");
-    }
-
-    private DataStream<CollectionAudit> getCollectionAuditStream(StreamExecutionEnvironment env, String bootstrapServer, String auditTopic, String groupId, String offsets, CollectionAudit collectionAudit) {
-        KafkaSource<String> source = getKafkaSource(bootstrapServer, auditTopic, groupId, offsets);
-        DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Kafka Source");
-
-        return stream.map(new MapFunction<String, CollectionAudit>() {
-            @Override
-            public CollectionAudit map(String value) {
-                LOGGER.debug("KafkaSource value {}", value);
-                try {
-                    return CsvTransformerJobUtil.getCollectionAudit(value, collectionAudit);
-                } catch (Exception e) {
-                    LOGGER.error("Error while converting the input stream to CollectionAudit objects", e);
-                    try {
-                        pubAuditMsg.publishFlinkConversionStatus(new ObjectMapper().readValue(value, CollectionAudit.class), null, JobStatus.FLINK_JOB_FAILED);
-                    } catch (JsonProcessingException ex) {
-                        LOGGER.error("Error while publishing Audit msg inside collectionAuditStream", ex);
-                    }
-                    return null;
-                }
-            }
-        }).name("InputToAuditObjects");
-    }
-
-    private static KafkaSource<String> getKafkaSource(String bootstrapServer, String auditTopic, String groupId, String offsets) {
-        return KafkaSource.<String>builder()
-            .setBootstrapServers(bootstrapServer)
-            .setTopics(auditTopic)
-            .setGroupId(groupId)
-            .setStartingOffsets(getOffsetsInitializer(offsets))
-            .setValueOnlyDeserializer(new SimpleStringSchema())
-            .build();
-    }
-
-    private static CollectionAudit getCollectionAudit(String bootstrapServer) {
-        CollectionAudit collectionAudit = new CollectionAudit();
-        collectionAudit.setOutputFilePath(appProp.getAppProperties("spring-kafka.data-topic-name"));
-        collectionAudit.setFlinkURL(appProp.getAppProperties("flink.api.url"));
-        collectionAudit.setBootstrapServer(bootstrapServer);
-        return collectionAudit;
-    }
-
-    private static OffsetsInitializer getOffsetsInitializer(String offsets) {
-        if ("earliest".equals(offsets)) {
-            return OffsetsInitializer.earliest();
-        } else if ("latest".equals(offsets)) {
-            return OffsetsInitializer.latest();
-        } else {
-            throw new IllegalArgumentException("Invalid offset: " + offsets);
-        }
-    }
-
-    private void publishTransformedData(DataStream<Tuple2<String, CollectionAudit>> finalDataStream, Object someParameter) {
-        // Implement the logic to publish transformed data
+        return line.substring(index + 1).trim();
     }
 }

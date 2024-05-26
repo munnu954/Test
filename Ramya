@@ -2,22 +2,22 @@ import org.apache.flink.api.common.accumulators.IntCounter;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.util.Collector;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 public class CsvToJsonMRFCnTransformer extends RichFlatMapFunction<Tuple2<String, CollectionAudit>, Tuple2<JSONObject, CollectionAudit>> {
     private static final Logger LOGGER = LoggerFactory.getLogger(CsvToJsonMRFCnTransformer.class);
-    
-    private final String fileName;
+
+    private String[] commonHeaders;
     private String[] headers;
+    private JSONObject commonObj;
+    private int index = 0;
     private final IntCounter successIntCounter = new IntCounter();
     private final IntCounter failureIntCounter = new IntCounter();
     private final PublishAuditMessage pubAuditMsg = new PublishAuditMessage();
-
-    public CsvToJsonMRFCnTransformer(String fileName) {
-        this.fileName = fileName;
-    }
 
     @Override
     public void open(Configuration parameters) throws Exception {
@@ -33,37 +33,45 @@ public class CsvToJsonMRFCnTransformer extends RichFlatMapFunction<Tuple2<String
         try {
             if (message != null && csvContent != null) {
                 String[] lines = csvContent.split(System.lineSeparator());
-                if (lines.length < 3) {
-                    throw new IllegalArgumentException("Invalid CSV format");
-                }
-                
-                String systemId = extractValue(lines[0], "=");
-                String nodeIp = extractValue(lines[1], ":");
-                headers = lines[2].split(",");
+                String fileName = message.getInputFilePath().substring(message.getInputFilePath().lastIndexOf("/") + 1); // Extracting file name from inputFilePath
+                LOGGER.debug("Processing file: {}", fileName);
 
-                for (int i = 3; i < lines.length; i++) {
-                    String line = lines[i];
-                    String[] values = line.split(",");
-
-                    if (headers.length != values.length) {
-                        this.failureIntCounter.add(1);
+                for (String line : lines) {
+                    LOGGER.debug("Processing line: {}", line);
+                    String[] arr;
+                    if (index < 2) {
+                        arr = line.split(",");
+                        if (index == 0) {
+                            commonHeaders = arr;
+                            LOGGER.debug("Set common headers: {}", (Object) commonHeaders);
+                        } else if (index == 1) {
+                            commonObj = createJSONObject(commonHeaders, arr, null, fileName);
+                            LOGGER.debug("Created common JSON object: {}", commonObj);
+                        }
+                        index++;
                         continue;
                     }
 
-                    JSONObject json = new JSONObject();
-                    json.put("SystemId", systemId);
-                    json.put("NodeIP", nodeIp);
-                    json.put("FILENAME", fileName);
-
-                    for (int j = 0; j < headers.length; j++) {
-                        String key = headers[j].trim().replace("\"", "");
-                        String value = values[j].trim().replace("\"", "");
-                        json.put(key, value);
+                    arr = line.split(",");
+                    if (headers == null) {
+                        headers = arr;
+                        LOGGER.debug("Set headers: {}", (Object) headers);
+                        index++;
+                        continue;
                     }
 
-                    this.successIntCounter.add(1);
-                    out.collect(Tuple2.of(json, message));
+                    if (headers.length == arr.length) {
+                        JSONObject obj = createJSONObject(headers, arr, commonObj, fileName);
+                        LOGGER.debug("Created JSON object: {}", obj);
+                        this.successIntCounter.add(1);
+                        out.collect(Tuple2.of(obj, message));
+                    } else {
+                        this.failureIntCounter.add(1);
+                        LOGGER.error("Mismatched CSV line, header length: {}, data length: {}", headers.length, arr.length);
+                    }
                 }
+            } else {
+                LOGGER.error("Message or CSV content is null. Message: {}, CSV Content: {}", message, csvContent);
             }
         } catch (Exception e) {
             LOGGER.error("Error while trying to transform from CSV to JSON", e);
@@ -71,11 +79,22 @@ public class CsvToJsonMRFCnTransformer extends RichFlatMapFunction<Tuple2<String
         }
     }
 
-    private String extractValue(String line, String delimiter) {
-        int index = line.indexOf(delimiter);
-        if (index == -1) {
-            throw new IllegalArgumentException("Invalid format: " + line);
+    private JSONObject createJSONObject(String[] headerArr, String[] dataArr, JSONObject commonJSON, String fileName) throws JSONException {
+        JSONObject obj = (commonJSON == null) ? new JSONObject() : new JSONObject(commonJSON.toString());
+        for (int i = 0; i < dataArr.length; i++) {
+            String jsonKey = headerArr[i].trim().replace("\"", "");
+            String jsonValue = dataArr[i].trim().replace("\"", "");
+            obj.put(jsonKey, jsonValue);
         }
-        return line.substring(index + 1).trim();
+        obj.put("FILENAME", fileName);
+        return obj;
+    }
+
+    public Integer getSuccessIntCounter() {
+        return this.successIntCounter.getLocalValue();
+    }
+
+    public Integer getFailureIntCounter() {
+        return this.failureIntCounter.getLocalValue();
     }
 }

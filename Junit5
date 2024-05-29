@@ -1,69 +1,104 @@
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
+import com.verizon.apollo.UWAUpdatesHandlerApplication;
+import com.verizon.apollo.MessageConsumer;
 
-class UWAUpdatesHandlerApplicationTest {
+@ExtendWith(MockitoExtension.class)
+public class UWAUpdatesHandlerApplicationTest {
+
+    @InjectMocks
+    private UWAUpdatesHandlerApplication application;
 
     @Mock
-    private ConfigurableApplicationContext mockAppContext;
+    private SpringApplication springApplication;
 
-    @Test
-    void testMain() {
-        // Arrange
-        SpringApplication mockApp = mock(SpringApplication.class);
-        UWAUpdatesHandlerApplication application = new UWAUpdatesHandlerApplication();
+    @Mock
+    private ConfigurableApplicationContext applicationContext;
 
-        // Act
-        application.main(new String[]{"test"});
+    @Mock
+    private MessageConsumer messageConsumerService;
 
-        // Assert
-        verify(mockApp, times(1)).run(any(String[].class));
-        verify(mockAppContext, times(1)).start();
+    @BeforeEach
+    public void setUp() {
+        when(springApplication.run(any(String[].class))).thenReturn(applicationContext);
+        when(applicationContext.getBean(MessageConsumer.class)).thenReturn(messageConsumerService);
     }
 
     @Test
-    void testMainException() {
-        // Arrange
-        SpringApplication mockApp = mock(SpringApplication.class);
-        UWAUpdatesHandlerApplication application = new UWAUpdatesHandlerApplication() {
-            @Override
-            public SpringApplication createSpringApplication() {
-                return mockApp;
-            }
-        };
+    public void testMain_whenNoException() {
+        application.main(new String[0]);
 
-        // Act
-        application.main(new String[]{"test"});
-
-        // Assert
-        verify(mockApp, times(1)).run(any(String[].class));
-        verify(mockAppContext, times(1)).start();
+        verify(springApplication).run(any(String[].class));
+        verify(applicationContext).start();
+        verify(messageConsumerService).start();
+        verify(applicationContext).stop();
     }
 
     @Test
-    void testRunWithShutdown() {
-        // Arrange
-        UWAUpdatesHandlerApplication application = new UWAUpdatesHandlerApplication() {
-            @Override
-            public ConfigurableApplicationContext createSpringApplication() {
-                return mockAppContext;
-            }
-        };
+    public void testMain_whenExceptionInTryBlock() {
+        doThrow(new RuntimeException()).when(springApplication).run(any(String[].class));
 
-        // Act
-        application.main(new String[]{"test"});
+        Exception exception = assertThrows(Exception.class, () -> {
+            application.main(new String[0]);
+        });
 
-        application.run(new String[]{"test"});
+        assertEquals("Application startup failed. Exception : java.lang.RuntimeException", exception.getMessage());
+        verify(applicationContext, never()).start();
+        verify(messageConsumerService, never()).start();
+        verify(applicationContext, never()).stop();
+    }
 
-        // Assert
-        verify(mockAppContext, times(1)).start();
-        verify(mockAppContext, times(1)).stop();
+    @Test
+    public void testMain_whenExceptionInStartMessageConsumer() {
+        when(applicationContext.getBean(MessageConsumer.class)).thenThrow(new RuntimeException());
+
+        Exception exception = assertThrows(Exception.class, () -> {
+            application.main(new String[0]);
+        });
+
+        assertEquals("Application startup failed. Exception : java.lang.RuntimeException", exception.getMessage());
+        verify(applicationContext).start();
+        verify(messageConsumerService, never()).start();
+        verify(applicationContext).stop();
+    }
+
+    @Test
+    public void testMain_whenExceptionInAddShutdownHook() {
+        doThrow(new RuntimeException()).when(Runtime.getRuntime()).addShutdownHook(any(Thread.class));
+
+        Exception exception = assertThrows(Exception.class, () -> {
+            application.main(new String[0]);
+        });
+
+        assertEquals("Application startup failed. Exception : java.lang.RuntimeException", exception.getMessage());
+        verify(applicationContext).start();
+        verify(messageConsumerService).start();
+        verify(applicationContext, never()).stop();
+    }
+
+    @Test
+    public void testMain_whenExceptionInShutdownHook() {
+        doThrow(new RuntimeException()).when(messageConsumerService).shutdown();
+
+        application.main(new String[0]);
+
+        verify(applicationContext).start();
+        verify(messageConsumerService).start();
+        verify(applicationContext).stop();
     }
 }

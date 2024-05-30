@@ -1,50 +1,42 @@
-import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.boot.SpringApplication;
-import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.core.env.Environment;
-import org.springframework.core.env.PropertySource;
+@Test
+void testMain() {
+    // Mock Environment
+    Environment env = mock(Environment.class);
+    when(env.getProperty("RDB_BAD_QUERY")).thenReturn("Bad query");
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.*;
+    CBRSSuppressionApplication application = new CBRSSuppressionApplication(env);
 
-@ExtendWith(MockitoExtension.class)
-public class CBRSSuppressionApplicationTest {
+    // Mock SpringApplication
+    SpringApplication app = mock(SpringApplication.class);
+    when(app.run(any(String[].class))).thenReturn(mock(ConfigurableApplicationContext.class));
 
-    @Mock
-    Environment mockEnvironment;
+    // Mock AlarmConsumer and MessageReaderService
+    AlarmConsumer alarmConsumer = mock(AlarmConsumer.class);
+    MessageReaderService readerService = mock(MessageReaderService.class);
 
-    @Mock
-    SpringApplication mockSpringApplication;
+    ConfigurableApplicationContext appContext = mock(ConfigurableApplicationContext.class);
+    when(appContext.getBean(AlarmConsumer.class)).thenReturn(alarmConsumer);
+    when(appContext.getBean(MessageReaderService.class)).thenReturn(readerService);
 
-    @Mock
-    ConfigurableApplicationContext mockAppContext;
+    // Mock UnsatisfiedDependencyException
+    UnsatisfiedDependencyException ex = mock(UnsatisfiedDependencyException.class);
 
-    @Test
-    void testMain_UnsatisfiedDependencyException() {
-        // Arrange
-        when(mockEnvironment.getProperty(anyString())).thenReturn("RDB_BAD_QUERY");
-        when(mockSpringApplication.run(any(String[].class))).thenReturn(mockAppContext);
+    // Mock logger
+    Logger logger = mock(Logger.class);
+    ReflectionTestUtils.setField(CBRSSuppressionApplication.class, "logger", logger);
 
-        // Act & Assert
-        assertDoesNotThrow(() -> {
-            CBRSSuppressionApplication application = new CBRSSuppressionApplication(mockEnvironment);
-            application.main(new String[]{});
-        });
+    // Test try block
+    try (MockedStatic<SpringApplication> mockedStatic = Mockito.mockStatic(SpringApplication.class)) {
+        mockedStatic.when(() -> SpringApplication.run(any(), any())).thenReturn(app);
+        application.main(new String[]{"arg1", "arg2"});
     }
 
-    @Test
-    void testMain_OtherException() {
-        // Arrange
-        when(mockEnvironment.getProperty(anyString())).thenReturn(null);
-        when(mockSpringApplication.run(any(String[].class))).thenThrow(UnsatisfiedDependencyException.class);
+    // Test catch block - Validation failed for query
+    when(ex.getMessage()).thenReturn("Validation failed for query");
+    when(ex.getMostSpecificCause()).thenReturn(new Exception("Exception message"));
 
-        // Act & Assert
-        assertThrows(UnsatisfiedDependencyException.class, () -> {
-            CBRSSuppressionApplication application = new CBRSSuppressionApplication(mockEnvironment);
-            application.main(new String[]{});
-        });
-    }
+    doThrow(ex).when(app).run(any(String[].class));
+    application.main(new String[]{"arg1", "arg2"});
+
+    verify(logger).error("Bad query:Exception message");
 }

@@ -1,45 +1,50 @@
-To achieve 100% code coverage for the `main(String[] args)` method of the `CBRSSuppressionApplication` class using JUnit 5 and mocking, you can use a mocking framework like Mockito to simulate the behavior for different scenarios.
-
-Here is a brief example of what the JUnit test cases might look like:
-
-```java
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
 
-public class CBRSSuppressionApplicationTest {
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
 
-    @Test
-    public void testMainNoException() {
-        SpringApplication app = Mockito.mock(SpringApplication.class);
-        ConfigurableApplicationContext appContext = Mockito.mock(ConfigurableApplicationContext.class);
-        AlarmConsumer alarmConsumer = Mockito.mock(AlarmConsumer.class);
-        MessageReaderService readerService = Mockito.mock(MessageReaderService.class);
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.*;
 
-        when(app.run(Mockito.any())).thenReturn(appContext);
-        when(appContext.getBean(AlarmConsumer.class)).thenReturn(alarmConsumer);
-        when(appContext.getBean(MessageReaderService.class)).thenReturn(readerService);
+class CorsAlarmLifecycleProcessingServiceTest {
 
-        CBRSSuppressionApplication.main(new String[]{"arg1", "arg2"});
-
-        // Add assertions as needed to verify the behavior
-    }
+    private static final int expiryDurationMinutes = 30;
 
     @Test
-    public void testMainUnsatisfiedDependencyException() {
-        SpringApplication app = Mockito.mock(SpringApplication.class);
-        ConfigurableApplicationContext appContext = Mockito.mock(ConfigurableApplicationContext.class);
+    void testProcessAlarm_expiredAlarmActive() {
+        // Given
+        Long lastID = 0L;
+        OffsetDateTime currentTime = OffsetDateTime.now();
+        OffsetDateTime expiryTime = currentTime.minusMinutes(expiryDurationMinutes + 1);
 
-        when(app.run(Mockito.any())).thenThrow(new UnsatisfiedDependencyException("Validation failed for query"));
-        
-        CBRSSuppressionApplication.main(new String[]{"arg1", "arg2"});
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setID(1L);
+        alarm.setSuppressionKey("key");
+        alarm.setExpiryTime(expiryTime);
+        alarm.setSuppressionActive(true);
 
-        // Add assertions as needed to verify the behavior
+        ArgumentCaptor<OffsetDateTime> currentTimeCaptor = ArgumentCaptor.forClass(OffsetDateTime.class);
+        ArgumentCaptor<Long> lastIDCaptor = ArgumentCaptor.forClass(Long.class);
+
+        when(cbrsSuppressionRepo.findExpiredAlarmsWithLimit(currentTimeCaptor.capture(), lastIDCaptor.capture())).thenReturn(List.of(alarm));
+        when(generateCbrsFloodAlarmService.clearCbrsFloodAlarm(anyString())).thenReturn("cleared");
+
+        // When
+        Long result = corsAlarmLifecycleProcessingService.processAlarm(lastID);
+
+        // Then
+        assertEquals(alarm.getID(), result);
+        assertEquals(currentTimeCaptor.getValue().toEpochSecond(), currentTime.toEpochSecond());
+
+        assertEquals(lastID, lastIDCaptor.getValue());
+
+        verify(generateCbrsFloodAlarmService, times(1)).clearCbrsFloodAlarm(anyString());
+        verify(cbrsSuppressionRepo, times(1)).resetAlarmDetails(alarm.getSuppressionKey());
+
+        verifyNoMoreInteractions(corsSuppressionRepo, generateCbrsFloodAlarmService);
     }
-
-    // Add more tests to cover other possible scenarios
-
 }
-```
-
-Please note that you will need to further enhance these test cases based on your specific requirements and ensure that the necessary behavior is being asserted.

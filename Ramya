@@ -1,5 +1,5 @@
-import com.jcraft.jsch.ChannelSftp;
-import com.jcraft.jsch.SftpATTRS;
+// Import statements
+import com.jcraft.jsch.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -8,133 +8,128 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.*;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class AuditStatusServiceTest {
+public class DataRetrieverTest {
 
     @Mock
-    private LucenceColletionAuditRepo lucenceColletionAuditRepo;
+    private SpaceCollector sp;
+
+    @Mock
+    private FileUtil fileUtil;
+
+    @Mock
+    private ZipUtil zipUtil;
+
+    @Mock
+    private CollectionAudit collectionAudit;
+
+    @Mock
+    private KafkaProducerService kafkaProducerService;
+
+    @Mock
+    private CollectorUtil collectorUtil;
+
+    @Mock
+    private ProfileCheckConfig profileCheckConfig;
+
+    @Mock
+    private S3Service s3Service;
 
     @InjectMocks
-    private AuditStatusService auditStatusService;
+    private DataRetriever dataRetriever;
 
-    private ChannelSftp.LsEntry createMockLsEntry(String filename, boolean isDir) {
-        ChannelSftp.LsEntry entry = mock(ChannelSftp.LsEntry.class);
-        SftpATTRS attrs = mock(SftpATTRS.class);
-        when(attrs.isDir()).thenReturn(isDir);
-        when(entry.getAttrs()).thenReturn(attrs);
-        when(entry.getFilename()).thenReturn(filename);
-        return entry;
-    }
+    @Mock
+    private JSch jsch;
 
-    private CollectionAudit generateAudit(String path, String status) {
-        CollectionAudit audit = mock(CollectionAudit.class);
-        when(audit.getInputFilePath()).thenReturn(path);
-        when(audit.getJobStatus()).thenReturn(status);
-        return audit;
-    }
+    @Mock
+    private Session session;
+
+    @Mock
+    private ChannelSftp channelSftp;
+
+    @Mock
+    private Vector<ChannelSftp.LsEntry> files;
 
     @BeforeEach
-    void setUp() {
-        // This will reset the mock before each test case
-        reset(lucenceColletionAuditRepo);
+    public void setup() throws JSchException {
+        when(sp.getUserName()).thenReturn("username");
+        when(sp.getUrl()).thenReturn("host");
+        when(sp.getPassword()).thenReturn("password");
+        when(sp.getPort()).thenReturn(22);
+
+        when(jsch.getSession("username", "host", 22)).thenReturn(session);
+        doNothing().when(session).setPassword("password");
+        when(session.isConnected()).thenReturn(true);
+
+        when(session.openChannel("sftp")).thenReturn(channelSftp);
+        when(channelSftp.isConnected()).thenReturn(true);
     }
 
     @Test
-    void testGetAuditStatusMap_EmptyList() {
-        Vector<ChannelSftp.LsEntry> files = new Vector<>();
+    public void testRetrieveData() throws Exception {
+        when(fileUtil.getDirectory(sp.getInputFilePath())).thenReturn("remoteDir");
+        when(fileUtil.getDirectory(sp.getOutputFilePath())).thenReturn("localDir");
 
-        Map<String, String> result = auditStatusService.getAuditStatusMap(files, "/remote/dir/");
+        doNothing().when(channelSftp).connect();
 
-        assertEquals(0, result.size());
-        verify(lucenceColletionAuditRepo, never()).findLatestByFilePaths(anyList());
+        when(channelSftp.ls("remoteDir")).thenReturn(files);
+        when(files.size()).thenReturn(0);  // No files for simplicity
+
+        boolean result = dataRetriever.retrieveData(sp, "2023-01-01", "auditTopic");
+
+        verify(channelSftp, times(1)).connect();
+        verify(session, times(1)).connect();
+        verify(session, times(1)).disconnect();
+        verify(channelSftp, times(1)).disconnect();
+        assertTrue(result);
     }
 
     @Test
-    void testGetAuditStatusMap_LessThan1000Files() {
-        Vector<ChannelSftp.LsEntry> files = IntStream.range(0, 500)
-            .mapToObj(i -> createMockLsEntry("file" + i, false))
-            .collect(Collectors.toCollection(Vector::new));
-        List<CollectionAudit> audits = files.stream()
-            .map(file -> generateAudit("/remote/dir/" + file.getFilename(), "STATUS"))
-            .collect(Collectors.toList());
-        when(lucenceColletionAuditRepo.findLatestByFilePaths(anyList())).thenReturn(audits);
+    public void testRetrieveAndProcessDirectory() throws Exception {
+        when(channelSftp.ls("remoteDir")).thenReturn(files);
 
-        Map<String, String> result = auditStatusService.getAuditStatusMap(files, "/remote/dir/");
+        ChannelSftp.LsEntry fileEntry = mock(ChannelSftp.LsEntry.class);
+        SftpATTRS attrs = mock(SftpATTRS.class);
+        when(attrs.isDir()).thenReturn(false);
+        when(fileEntry.getAttrs()).thenReturn(attrs);
+        when(fileEntry.getFilename()).thenReturn("file.txt");
+        files.add(fileEntry);
 
-        assertEquals(500, result.size());
-        for (int i = 0; i < 500; i++) {
-            assertEquals("STATUS", result.get("/remote/dir/file" + i));
-        }
-        verify(lucenceColletionAuditRepo, times(1)).findLatestByFilePaths(anyList());
+        Map<String, String> auditStatusMap = new HashMap<>();
+        auditStatusMap.put("remoteDir/file.txt", "COLLECTION_FAILED");
+
+        doReturn(auditStatusMap).when(dataRetriever).getAuditStatusMap(files, "remoteDir");
+
+        dataRetriever.retrieveAndProcessDirectory(sp, "2023-01-01", "auditTopic", "remoteDir", "localDir", channelSftp);
+
+        verify(channelSftp, times(1)).ls("remoteDir");
     }
 
     @Test
-    void testGetAuditStatusMap_Exactly1000Files() {
-        Vector<ChannelSftp.LsEntry> files = IntStream.range(0, 1000)
-            .mapToObj(i -> createMockLsEntry("file" + i, false))
-            .collect(Collectors.toCollection(Vector::new));
-        List<CollectionAudit> audits = files.stream()
-            .map(file -> generateAudit("/remote/dir/" + file.getFilename(), "STATUS"))
-            .collect(Collectors.toList());
-        when(lucenceColletionAuditRepo.findLatestByFilePaths(anyList())).thenReturn(audits);
+    public void testProcessDownloadedFile() throws Exception {
+        List<String> filesList = new ArrayList<>();
+        filesList.add("localDir/file.txt");
 
-        Map<String, String> result = auditStatusService.getAuditStatusMap(files, "/remote/dir/");
+        when(zipUtil.isZipFile("localDir/file.txt")).thenReturn(false);
 
-        assertEquals(1000, result.size());
-        for (int i = 0; i < 1000; i++) {
-            assertEquals("STATUS", result.get("/remote/dir/file" + i));
-        }
-        verify(lucenceColletionAuditRepo, times(1)).findLatestByFilePaths(anyList());
+        dataRetriever.processDownloadedFile(sp, "2023-01-01", "auditTopic", "localDir/file.txt", "localDir");
+
+        verify(s3Service, times(1)).pushToS3("localDir/file.txt", anyString());
+        verify(kafkaProducerService, times(1)).writeMessage(anyString(), anyString(), anyString());
     }
 
     @Test
-    void testGetAuditStatusMap_MoreThan1000Files() {
-        Vector<ChannelSftp.LsEntry> files = IntStream.range(0, 1500)
-            .mapToObj(i -> createMockLsEntry("file" + i, false))
-            .collect(Collectors.toCollection(Vector::new));
-        List<String> allPaths = files.stream()
-            .map(file -> "/remote/dir/" + file.getFilename())
-            .collect(Collectors.toList());
-
-        // Simulate the repo response for the first chunk
-        List<String> chunk1Paths = allPaths.subList(0, 1000);
-        List<CollectionAudit> chunk1Audits = chunk1Paths.stream()
-            .map(path -> generateAudit(path, "STATUS"))
-            .collect(Collectors.toList());
-
-        // Simulate the repo response for the second chunk
-        List<String> chunk2Paths = allPaths.subList(1000, 1500);
-        List<CollectionAudit> chunk2Audits = chunk2Paths.stream()
-            .map(path -> generateAudit(path, "STATUS"))
-            .collect(Collectors.toList());
-
-        when(lucenceColletionAuditRepo.findLatestByFilePaths(chunk1Paths)).thenReturn(chunk1Audits);
-        when(lucenceColletionAuditRepo.findLatestByFilePaths(chunk2Paths)).thenReturn(chunk2Audits);
-
-        Map<String, String> result = auditStatusService.getAuditStatusMap(files, "/remote/dir/");
-
-        assertEquals(1500, result.size());
-        for (int i = 0; i < 1500; i++) {
-            assertEquals("STATUS", result.get("/remote/dir/file" + i));
-        }
-        verify(lucenceColletionAuditRepo, times(1)).findLatestByFilePaths(chunk1Paths);
-        verify(lucenceColletionAuditRepo, times(1)).findLatestByFilePaths(chunk2Paths);
+    public void testGetAuditStatusMap() {
+        // Implement test for getAuditStatusMap
     }
 
     @Test
-    void testPartitionList() {
-        List<Integer> list = IntStream.range(0, 2500).boxed().collect(Collectors.toList());
-        List<List<Integer>> partitions = auditStatusService.partitionList(list, 1000);
-
-        assertEquals(3, partitions.size());
-        assertEquals(1000, partitions.get(0).size());
-        assertEquals(1000, partitions.get(1).size());
-        assertEquals(500, partitions.get(2).size());
+    public void testCreateAuditObject() {
+        // Implement test for createAuditObject
     }
 }

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.io.OutputStream;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -66,10 +67,6 @@ class SSHServiceTest {
         when(jschFactory.createJSch()).thenReturn(jsch);
         when(jsch.getSession(anyString(), anyString(), anyInt())).thenReturn(session);
         when(session.openChannel("sftp")).thenReturn(channelSftp);
-        doNothing().when(session).connect();
-        doNothing().when(channelSftp).connect();
-        doNothing().when(channelSftp).disconnect();
-        doNothing().when(session).disconnect();
     }
 
     @Test
@@ -88,6 +85,17 @@ class SSHServiceTest {
     }
 
     @Test
+    void retrieveData_failure() throws Exception {
+        when(FileUtil.getDirectory(sp.getInputFilePath())).thenReturn("/remote/path");
+        when(FileUtil.getDirectory(sp.getOutputFilePath())).thenReturn("/local/path");
+        doThrow(new SftpException(ChannelSftp.SSH_FX_FAILURE, "failure")).when(channelSftp).ls(anyString());
+
+        assertThrows(Exception.class, () -> sshService.retrieveData(sp, dateReceived, auditTopic));
+        verify(channelSftp).disconnect();
+        verify(session).disconnect();
+    }
+
+    @Test
     void retrieveAndProcessDirectory() throws Exception {
         ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
         SftpATTRS attrs = mock(SftpATTRS.class);
@@ -98,7 +106,6 @@ class SSHServiceTest {
 
         when(channelSftp.ls(anyString())).thenReturn(files);
         when(file.getFilename()).thenReturn("file.txt");
-        when(channelSftp.get(anyString())).thenReturn(mock(OutputStream.class));
 
         sshService.retrieveAndProcessDirectory(sp, dateReceived, auditTopic, "/remote/path", "/local/path", channelSftp);
 
@@ -176,5 +183,53 @@ class SSHServiceTest {
         assertNotNull(result);
         verify(jsch).addIdentity("/prod/eclapp/lib/id_rsa_decoded");
         verify(jsch).setKnownHosts(System.getProperty("user.home") + SSHService.SSH_KNOWN_HOSTS);
+    }
+
+    @Test
+    void getSession() throws JSchException {
+        when(jsch.getSession(anyString(), anyString(), anyInt())).thenReturn(session);
+
+        Session result = sshService.getSession("user", "host", "password", 22, jsch);
+
+        assertNotNull(result);
+        verify(jsch).getSession("user", "host", 22);
+        verify(session).setPassword("password");
+        verify(session).setConfig("StrictHostKeyChecking", "no");
+    }
+
+    @Test
+    void getChannelSftp() throws JSchException, SftpException {
+        when(session.openChannel("sftp")).thenReturn(channelSftp);
+        doNothing().when(channelSftp).cd(anyString());
+
+        ChannelSftp result = sshService.getChannelSftp(session, "/remote/path");
+
+        assertNotNull(result);
+        verify(session).openChannel("sftp");
+        verify(channelSftp).cd("/remote/path");
+    }
+
+    @Test
+    void retrieveAttributesOfRemoteFile() throws SftpException {
+        ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
+        when(file.getFilename()).thenReturn("file.txt");
+        doNothing().when(channelSftp).stat(anyString());
+
+        sshService.retrieveAttributesOfRemoteFile(channelSftp, file, "/remote/path", "/remote/path/file.txt");
+
+        verify(channelSftp).stat("file.txt");
+    }
+
+    @Test
+    void retrieveAttributesOfRemoteFile_nonExistentFile() throws SftpException {
+        ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
+        when(file.getFilename()).thenReturn("file.txt");
+        SftpException exception = new SftpException(ChannelSftp.SSH_FX_NO_SUCH_FILE, "no such file");
+        doThrow(exception).when(channelSftp).stat(anyString());
+
+        SftpException thrownException = assertThrows(SftpException.class, () -> sshService.retrieveAttributesOfRemoteFile(channelSftp, file, "/remote/path", "/remote/path/file.txt"));
+
+        assertEquals(ChannelSftp.SSH_FX_NO_SUCH_FILE, thrownException.id);
+        assertEquals("no such file", thrownException.getMessage());
     }
 }

@@ -1,59 +1,55 @@
-// Import statements
 import com.jcraft.jsch.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
+import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class DataRetrieverTest {
-
-    @Mock
-    private SpaceCollector sp;
-
-    @Mock
-    private FileUtil fileUtil;
-
-    @Mock
-    private ZipUtil zipUtil;
-
-    @Mock
-    private CollectionAudit collectionAudit;
-
-    @Mock
-    private KafkaProducerService kafkaProducerService;
+public class SSHServiceTest {
 
     @Mock
     private CollectorUtil collectorUtil;
-
+    
     @Mock
-    private ProfileCheckConfig profileCheckConfig;
-
+    private DateUtil dateUtil;
+    
+    @Mock
+    private LuceneCollectionAuditRepository luceneCollectionAuditRepo;
+    
+    @Mock
+    private JSchFactory jschFactory;
+    
+    @Mock
+    private OutputStreamCreator outputStreamCreator;
+    
+    @Mock
+    private KafkaProducerService kafkaProducerService;
+    
     @Mock
     private S3Service s3Service;
-
-    @InjectMocks
-    private DataRetriever dataRetriever;
-
+    
     @Mock
-    private JSch jsch;
-
+    private SpaceCollector sp;
+    
+    @Mock
+    private ChannelSftp channelSftp;
+    
     @Mock
     private Session session;
 
-    @Mock
-    private ChannelSftp channelSftp;
+    @InjectMocks
+    private SSHService sshService;
 
-    @Mock
-    private Vector<ChannelSftp.LsEntry> files;
+    private static final Logger LOGGER = LoggerFactory.getLogger(SSHService.class);
 
     @BeforeEach
     public void setup() throws JSchException {
@@ -62,37 +58,29 @@ public class DataRetrieverTest {
         when(sp.getPassword()).thenReturn("password");
         when(sp.getPort()).thenReturn(22);
 
-        when(jsch.getSession("username", "host", 22)).thenReturn(session);
-        doNothing().when(session).setPassword("password");
-        when(session.isConnected()).thenReturn(true);
-
+        when(jschFactory.createJSch()).thenReturn(new JSch());
+        when(jschFactory.createJSch()).thenReturn(mock(JSch.class));
         when(session.openChannel("sftp")).thenReturn(channelSftp);
-        when(channelSftp.isConnected()).thenReturn(true);
     }
 
     @Test
     public void testRetrieveData() throws Exception {
-        when(fileUtil.getDirectory(sp.getInputFilePath())).thenReturn("remoteDir");
-        when(fileUtil.getDirectory(sp.getOutputFilePath())).thenReturn("localDir");
+        when(FileUtil.getDirectory(sp.getInputFilePath())).thenReturn("remoteDir");
+        when(FileUtil.getDirectory(sp.getOutputFilePath())).thenReturn("localDir");
 
-        doNothing().when(channelSftp).connect();
+        when(channelSftp.ls("remoteDir")).thenReturn(new Vector<>());
 
-        when(channelSftp.ls("remoteDir")).thenReturn(files);
-        when(files.size()).thenReturn(0);  // No files for simplicity
+        boolean result = sshService.retrieveData(sp, "2023-01-01", "auditTopic");
 
-        boolean result = dataRetriever.retrieveData(sp, "2023-01-01", "auditTopic");
-
-        verify(channelSftp, times(1)).connect();
+        assertTrue(result);
         verify(session, times(1)).connect();
         verify(session, times(1)).disconnect();
         verify(channelSftp, times(1)).disconnect();
-        assertTrue(result);
     }
 
     @Test
     public void testRetrieveAndProcessDirectory() throws Exception {
-        when(channelSftp.ls("remoteDir")).thenReturn(files);
-
+        Vector<ChannelSftp.LsEntry> files = new Vector<>();
         ChannelSftp.LsEntry fileEntry = mock(ChannelSftp.LsEntry.class);
         SftpATTRS attrs = mock(SftpATTRS.class);
         when(attrs.isDir()).thenReturn(false);
@@ -100,12 +88,13 @@ public class DataRetrieverTest {
         when(fileEntry.getFilename()).thenReturn("file.txt");
         files.add(fileEntry);
 
+        when(channelSftp.ls("remoteDir")).thenReturn(files);
         Map<String, String> auditStatusMap = new HashMap<>();
         auditStatusMap.put("remoteDir/file.txt", "COLLECTION_FAILED");
 
-        doReturn(auditStatusMap).when(dataRetriever).getAuditStatusMap(files, "remoteDir");
+        doReturn(auditStatusMap).when(sshService).getAuditStatusMap(files, "remoteDir");
 
-        dataRetriever.retrieveAndProcessDirectory(sp, "2023-01-01", "auditTopic", "remoteDir", "localDir", channelSftp);
+        sshService.retrieveAndProcessDirectory(sp, "2023-01-01", "auditTopic", "remoteDir", "localDir", channelSftp);
 
         verify(channelSftp, times(1)).ls("remoteDir");
     }
@@ -115,9 +104,9 @@ public class DataRetrieverTest {
         List<String> filesList = new ArrayList<>();
         filesList.add("localDir/file.txt");
 
-        when(zipUtil.isZipFile("localDir/file.txt")).thenReturn(false);
+        when(ZipUtil.isZipFile("localDir/file.txt")).thenReturn(false);
 
-        dataRetriever.processDownloadedFile(sp, "2023-01-01", "auditTopic", "localDir/file.txt", "localDir");
+        sshService.processDownloadedFile(sp, "2023-01-01", "auditTopic", "localDir/file.txt", "localDir");
 
         verify(s3Service, times(1)).pushToS3("localDir/file.txt", anyString());
         verify(kafkaProducerService, times(1)).writeMessage(anyString(), anyString(), anyString());
@@ -131,5 +120,61 @@ public class DataRetrieverTest {
     @Test
     public void testCreateAuditObject() {
         // Implement test for createAuditObject
+    }
+
+    @Test
+    public void testRetrieveAttributesOfRemoteFile() throws SftpException {
+        ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
+        when(file.getFilename()).thenReturn("file.txt");
+
+        sshService.retrieveAttributesOfRemoteFile(channelSftp, file, "remoteDir", "inputFilePath");
+
+        verify(channelSftp, times(1)).stat("file.txt");
+    }
+
+    @Test
+    public void testPartitionList() {
+        List<String> list = Arrays.asList("one", "two", "three", "four", "five");
+        List<List<String>> partitions = sshService.partitionList(list, 2);
+
+        assertEquals(3, partitions.size());
+        assertEquals(2, partitions.get(0).size());
+        assertEquals(2, partitions.get(1).size());
+        assertEquals(1, partitions.get(2).size());
+    }
+
+    @Test
+    public void testGetJsch() throws JSchException {
+        JSch jsch = sshService.getJsch("localhost", "password");
+
+        assertNotNull(jsch);
+        verify(jschFactory, times(1)).createJSch();
+    }
+
+    @Test
+    public void testGetChannelSftp() throws JSchException, SftpException {
+        when(session.openChannel("sftp")).thenReturn(channelSftp);
+
+        ChannelSftp result = sshService.getChannelSftp(session, "remoteDir");
+
+        assertEquals(channelSftp, result);
+        verify(channelSftp, times(1)).cd("remoteDir");
+    }
+
+    @Test
+    public void testCreateAuditObject() {
+        SpaceCollector sp = mock(SpaceCollector.class);
+        when(sp.getFileType()).thenReturn("fileType");
+        when(sp.getDelimiter()).thenReturn(",");
+        when(sp.getUrl()).thenReturn("url");
+        when(sp.getPort()).thenReturn(22);
+        when(sp.getId()).thenReturn("id");
+
+        CollectionAudit audit = sshService.createAuditObject(sp, "auditInputFilePath", "auditJobStatus", "auditExceptions");
+
+        assertNotNull(audit);
+        assertEquals("auditInputFilePath", audit.getInputFilePath());
+        assertEquals("auditJobStatus", audit.getJobStatus());
+        assertEquals("auditExceptions", audit.getExceptions());
     }
 }

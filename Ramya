@@ -1,3 +1,5 @@
+import com.jcraft.jsch.ChannelSftp;
+import com.jcraft.jsch.SftpATTRS;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -10,7 +12,6 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -22,17 +23,13 @@ public class AuditStatusServiceTest {
     @InjectMocks
     private AuditStatusService auditStatusService;
 
-    private Vector<ChannelSftp.LsEntry> generateFiles(int count, boolean includeDirs) {
-        Vector<ChannelSftp.LsEntry> files = new Vector<>();
-        for (int i = 0; i < count; i++) {
-            ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
-            ChannelSftp.Attributes attrs = mock(ChannelSftp.Attributes.class);
-            when(attrs.isDir()).thenReturn(includeDirs && i % 2 == 0);
-            when(file.getAttrs()).thenReturn(attrs);
-            when(file.getFilename()).thenReturn("file" + i);
-            files.add(file);
-        }
-        return files;
+    private ChannelSftp.LsEntry createMockLsEntry(String filename, boolean isDir) {
+        ChannelSftp.LsEntry entry = mock(ChannelSftp.LsEntry.class);
+        SftpATTRS attrs = mock(SftpATTRS.class);
+        when(attrs.isDir()).thenReturn(isDir);
+        when(entry.getAttrs()).thenReturn(attrs);
+        when(entry.getFilename()).thenReturn(filename);
+        return entry;
     }
 
     private CollectionAudit generateAudit(String path, String status) {
@@ -50,8 +47,7 @@ public class AuditStatusServiceTest {
 
     @Test
     void testGetAuditStatusMap_EmptyList() {
-        Vector<ChannelSftp.LsEntry> files = generateFiles(0, false);
-        when(lucenceColletionAuditRepo.findLatestByFilePaths(anyList())).thenReturn(Collections.emptyList());
+        Vector<ChannelSftp.LsEntry> files = new Vector<>();
 
         Map<String, String> result = auditStatusService.getAuditStatusMap(files, "/remote/dir/");
 
@@ -61,7 +57,9 @@ public class AuditStatusServiceTest {
 
     @Test
     void testGetAuditStatusMap_LessThan1000Files() {
-        Vector<ChannelSftp.LsEntry> files = generateFiles(500, false);
+        Vector<ChannelSftp.LsEntry> files = IntStream.range(0, 500)
+            .mapToObj(i -> createMockLsEntry("file" + i, false))
+            .collect(Collectors.toCollection(Vector::new));
         List<CollectionAudit> audits = files.stream()
             .map(file -> generateAudit("/remote/dir/" + file.getFilename(), "STATUS"))
             .collect(Collectors.toList());
@@ -78,7 +76,9 @@ public class AuditStatusServiceTest {
 
     @Test
     void testGetAuditStatusMap_Exactly1000Files() {
-        Vector<ChannelSftp.LsEntry> files = generateFiles(1000, false);
+        Vector<ChannelSftp.LsEntry> files = IntStream.range(0, 1000)
+            .mapToObj(i -> createMockLsEntry("file" + i, false))
+            .collect(Collectors.toCollection(Vector::new));
         List<CollectionAudit> audits = files.stream()
             .map(file -> generateAudit("/remote/dir/" + file.getFilename(), "STATUS"))
             .collect(Collectors.toList());
@@ -95,7 +95,9 @@ public class AuditStatusServiceTest {
 
     @Test
     void testGetAuditStatusMap_MoreThan1000Files() {
-        Vector<ChannelSftp.LsEntry> files = generateFiles(1500, false);
+        Vector<ChannelSftp.LsEntry> files = IntStream.range(0, 1500)
+            .mapToObj(i -> createMockLsEntry("file" + i, false))
+            .collect(Collectors.toCollection(Vector::new));
         List<String> allPaths = files.stream()
             .map(file -> "/remote/dir/" + file.getFilename())
             .collect(Collectors.toList());

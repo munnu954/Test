@@ -5,6 +5,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.io.OutputStream;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDateTime;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -88,35 +92,13 @@ class SSHServiceTest {
     }
 
     @Test
-    void retrieveAndProcessDirectory() throws Exception {
-        ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
-        SftpATTRS attrs = mock(SftpATTRS.class);
-        when(file.getAttrs()).thenReturn(attrs);
-        when(attrs.isDir()).thenReturn(true);
-        Vector<ChannelSftp.LsEntry> files = new Vector<>();
-        files.add(file);
+    void retrieveData_failure() throws Exception {
+        when(FileUtil.getDirectory(sp.getInputFilePath())).thenReturn("/remote/path");
+        when(FileUtil.getDirectory(sp.getOutputFilePath())).thenReturn("/local/path");
+        doThrow(new SftpException(ChannelSftp.SSH_FX_FAILURE, "failure")).when(channelSftp).ls(anyString());
 
-        when(channelSftp.ls(anyString())).thenReturn(files);
-        when(file.getFilename()).thenReturn("file.txt");
-        when(channelSftp.get(anyString())).thenReturn(mock(OutputStream.class));
-
-        sshService.retrieveAndProcessDirectory(sp, dateReceived, auditTopic, "/remote/path", "/local/path", channelSftp);
-
-        verify(channelSftp).ls("/remote/path");
-    }
-
-    @Test
-    void processDownloadedFile() throws Exception {
-        List<String> filesList = new ArrayList<>();
-        filesList.add("/local/path/file.txt");
-
-        when(FileUtil.readFilesInDirectory(anyString())).thenReturn(filesList);
-        when(FileUtil.getFileNameWithoutExtn(anyString())).thenReturn("file");
-        when(ZipUtil.isZipFile(anyString())).thenReturn(false);
-
-        sshService.processDownloadedFile(sp, dateReceived, auditTopic, "/local/path/file.txt", "/local/path");
-
-        verify(s3Service).pushToS3(anyString(), anyString());
+        assertThrows(Exception.class, () -> sshService.retrieveData(sp, dateReceived, auditTopic));
+        verify(session).disconnect();
     }
 
     @Test
@@ -177,4 +159,80 @@ class SSHServiceTest {
         verify(jsch).addIdentity("/prod/eclapp/lib/id_rsa_decoded");
         verify(jsch).setKnownHosts(System.getProperty("user.home") + SSHService.SSH_KNOWN_HOSTS);
     }
+
+    @Test
+    void getSession() throws JSchException {
+        when(jsch.getSession(anyString(), anyString(), anyInt())).thenReturn(session);
+
+        Session result = sshService.getSession("user", "host", "password", 22, jsch);
+
+        assertNotNull(result);
+        verify(jsch).getSession("user", "host", 22);
+        verify(session).setPassword("password");
+        verify(session).setConfig("StrictHostKeyChecking", "no");
+    }
+
+    @Test
+    void getChannelSftp() throws JSchException, SftpException {
+        when(session.openChannel("sftp")).thenReturn(channelSftp);
+        doNothing().when(channelSftp).cd(anyString());
+
+        ChannelSftp result = sshService.getChannelSftp(session, "/remote/path");
+
+        assertNotNull(result);
+        verify(session).openChannel("sftp");
+        verify(channelSftp).cd("/remote/path");
+    }
+
+    @Test
+    void retrieveAttributesOfRemoteFile() throws SftpException {
+        ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
+        when(file.getFilename()).thenReturn("file.txt");
+        doNothing().when(channelSftp).stat(anyString());
+
+        sshService.retrieveAttributesOfRemoteFile(channelSftp, file, "/remote/path", "/remote/path/file.txt");
+
+        verify(channelSftp).stat("file.txt");
+    }
+
+    @Test
+    void retrieveAttributesOfRemoteFile_nonExistentFile() throws SftpException {
+        ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
+        when(file.getFilename()).thenReturn("file.txt");
+        doThrow(new SftpException(ChannelSftp.SSH_FX_NO_SUCH_FILE, "no such file")).when(channelSftp).stat(anyString());
+
+        Exception exception = assertThrows(SftpException.class, () -> sshService.retrieveAttributesOfRemoteFile(channelSftp, file, "/remote/path", "/remote/path/file.txt"));
+        assertEquals(ChannelSftp.SSH_FX_NO_SUCH_FILE, ((SftpException) exception).id);
+    }
+
+    @Test
+    void processDownloadedFile() throws Exception {
+        List<String> filesList = new ArrayList<>();
+        filesList.add("/local/path/file.txt");
+
+        when(FileUtil.readFilesInDirectory(anyString())).thenReturn(filesList);
+        when(FileUtil.getFileNameWithoutExtn(anyString())).thenReturn("file");
+        when(ZipUtil.isZipFile(anyString())).thenReturn(false);
+
+        sshService.processDownloadedFile(sp, dateReceived, auditTopic, "/local/path/file.txt", "/local/path");
+
+        verify(s3Service).pushToS3(anyString(), anyString());
+    }
+
+    @Test
+    void processDownloadedFile_isZipFile() throws Exception {
+        List<String> filesList = new ArrayList<>();
+        filesList.add("/local/path/file.zip");
+
+        when(FileUtil.readFilesInDirectory(anyString())).thenReturn(filesList);
+        when(FileUtil.getFileNameWithoutExtn(anyString())).thenReturn("file");
+        when(ZipUtil.isZipFile(anyString())).thenReturn(true);
+        when(ZipUtil.extract(anyString(), anyString())).thenReturn(filesList);
+
+        sshService.processDownloadedFile(sp, dateReceived, auditTopic, "/local/path/file.zip", "/local/path");
+
+        verify(s3Service).pushToS3(anyString(), anyString());
+        verify(ZipUtil).extract(anyString(), anyString());
+    }
+
 }

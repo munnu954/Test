@@ -1,43 +1,159 @@
-Feature: Retrieve and process files from a remote server
+import static org.mockito.Mockito.*;
 
-  Background:
-    Given a SpaceCollector with the following details
-      | username    | url        | password | port | inputFilePath    | outputFilePath   |
-      | user        | host       | pass     | 22   | /remote/path     | /local/path      |
-    And the current date is "2023-01-01"
-    And the audit topic is "audit-topic"
+import com.jcraft.jsch.*;
+import io.cucumber.java.Before;
+import io.cucumber.java.en.*;
+import org.mockito.*;
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
 
-  Scenario: Successfully retrieve and process files including nested directories and files
-    Given the remote directory "/remote/path" contains the following files
-      | filename         | isDir |
-      | Sample1.csv      | false |
-      | nested           | true  |
-    And the nested directory "/remote/path/nested" contains the following files
-      | filename         | isDir |
-      | Sample2.csv      | false |
-    When the data retriever retrieves data
-    Then the following local files should be created
-      | filename               |
-      | /local/path/Sample1.csv |
-      | /local/path/nested/Sample2.csv |
-    And the following messages should be sent to Kafka
-      | key                                           | status                  |
-      | profile/fileType/host/01-01-2023/Sample1.csv  | COLLECTION_SUCCESSFUL   |
-      | profile/fileType/host/01-01-2023/nested/Sample2.csv | COLLECTION_SUCCESSFUL   |
+public class NestedFilesValidationSteps {
 
-  Scenario: Successfully process a nested ZIP file
-    Given the remote directory "/remote/path" contains the following files
-      | filename         | isDir |
-      | Sample.zip       | false |
-    And the ZIP file "/remote/path/Sample.zip" contains the following files
-      | filename         |
-      | nested/Sample2.csv |
-    When the data retriever retrieves data
-    Then the following local files should be created
-      | filename               |
-      | /local/path/Sample.zip |
-      | /local/path/Sample/nested/Sample2.csv |
-    And the following messages should be sent to Kafka
-      | key                                           | status                  |
-      | profile/fileType/host/01-01-2023/Sample.zip   | COLLECTION_SUCCESSFUL   |
-      | profile/fileType/host/01-01-2023/Sample/nested/Sample2.csv | COLLECTION_SUCCESSFUL   |
+    @InjectMocks
+    private DataRetriever dataRetriever;
+
+    @Mock
+    private CollectorUtil collectorUtil;
+
+    @Mock
+    private DateUtil dateUtil;
+
+    @Mock
+    private LuceneCollectionAuditRepository luceneCollectionAuditRepo;
+
+    @Mock
+    private JSchFactory jschFactory;
+
+    @Mock
+    private OutputStreamCreator outputStreamCreator;
+
+    @Mock
+    private KafkaProducerService kafkaProducerService;
+
+    @Mock
+    private S3Service s3Service;
+
+    @Mock
+    private JSch jsch;
+
+    @Mock
+    private Session session;
+
+    @Mock
+    private ChannelSftp channelSftp;
+
+    private SpaceCollector spaceCollector;
+    private String dateReceived;
+    private String auditTopic;
+
+    @Before
+    public void setUp() throws Exception {
+        MockitoAnnotations.openMocks(this);
+        spaceCollector = new SpaceCollector();
+        dateReceived = "2023-01-01";
+        auditTopic = "audit-topic";
+
+        when(jschFactory.createJSch()).thenReturn(jsch);
+        when(jsch.getSession(anyString(), anyString(), anyInt())).thenReturn(session);
+        when(session.openChannel("sftp")).thenReturn(channelSftp);
+        doNothing().when(session).connect();
+        doNothing().when(channelSftp).connect();
+        doNothing().when(channelSftp).disconnect();
+        doNothing().when(session).disconnect();
+
+        when(collectorUtil.getDateAsString(any())).thenReturn("2023-01-01");
+    }
+
+    @Given("a SpaceCollector with the following details")
+    public void givenASpaceCollectorWithTheFollowingDetails(io.cucumber.datatable.DataTable dataTable) {
+        Map<String, String> data = dataTable.asMaps().get(0);
+        spaceCollector.setUserName(data.get("username"));
+        spaceCollector.setUrl(data.get("url"));
+        spaceCollector.setPassword(data.get("password"));
+        spaceCollector.setPort(Integer.parseInt(data.get("port")));
+        spaceCollector.setInputFilePath(data.get("inputFilePath"));
+        spaceCollector.setOutputFilePath(data.get("outputFilePath"));
+    }
+
+    @Given("the current date is {string}")
+    public void givenTheCurrentDateIs(String date) {
+        dateReceived = date;
+    }
+
+    @Given("the audit topic is {string}")
+    public void givenTheAuditTopicIs(String topic) {
+        auditTopic = topic;
+    }
+
+    @Given("the remote directory {string} contains the following files")
+    public void givenTheRemoteDirectoryContainsTheFollowingFiles(String remoteDirectory, io.cucumber.datatable.DataTable dataTable) throws Exception {
+        Vector<ChannelSftp.LsEntry> files = new Vector<>();
+        for (Map<String, String> row : dataTable.asMaps()) {
+            String filename = row.get("filename");
+            boolean isDir = Boolean.parseBoolean(row.get("isDir"));
+            ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
+            SftpATTRS attrs = mock(SftpATTRS.class);
+            when(file.getFilename()).thenReturn(filename);
+            when(file.getAttrs()).thenReturn(attrs);
+            when(attrs.isDir()).thenReturn(isDir);
+            files.add(file);
+        }
+        when(channelSftp.ls(remoteDirectory)).thenReturn(files);
+    }
+
+    @Given("the nested directory {string} contains the following files")
+    public void givenTheNestedDirectoryContainsTheFollowingFiles(String nestedDirectory, io.cucumber.datatable.DataTable dataTable) throws Exception {
+        Vector<ChannelSftp.LsEntry> files = new Vector<>();
+        for (Map<String, String> row : dataTable.asMaps()) {
+            String filename = row.get("filename");
+            boolean isDir = Boolean.parseBoolean(row.get("isDir"));
+            ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
+            SftpATTRS attrs = mock(SftpATTRS.class);
+            when(file.getFilename()).thenReturn(filename);
+            when(file.getAttrs()).thenReturn(attrs);
+            when(attrs.isDir()).thenReturn(isDir);
+            files.add(file);
+        }
+        when(channelSftp.ls(nestedDirectory)).thenReturn(files);
+    }
+
+    @Given("the ZIP file {string} contains the following files")
+    public void givenTheZIPFileContainsTheFollowingFiles(String zipFile, io.cucumber.datatable.DataTable dataTable) throws Exception {
+        // Mock the ZIP file extraction
+        List<String> nestedFiles = new ArrayList<>();
+        for (Map<String, String> row : dataTable.asMaps()) {
+            nestedFiles.add("/local/path/Sample/" + row.get("filename"));
+        }
+        when(ZipUtil.extract(anyString(), anyString())).thenAnswer(invocation -> {
+            Files.createDirectories(Paths.get("/local/path/Sample/nested"));
+            return null;
+        });
+        when(FileUtil.readFilesInDirectory(anyString())).thenReturn(nestedFiles);
+        when(ZipUtil.isZipFile(anyString())).thenReturn(true);
+    }
+
+    @When("the data retriever retrieves data")
+    public void whenTheDataRetrieverRetrievesData() throws Exception {
+        when(outputStreamCreator.create(anyString())).thenReturn(mock(OutputStream.class));
+        when(channelSftp.get(anyString())).thenReturn(mock(InputStream.class));
+        dataRetriever.retrieveData(spaceCollector, dateReceived, auditTopic);
+    }
+
+    @Then("the following local files should be created")
+    public void thenTheFollowingLocalFilesShouldBeCreated(io.cucumber.datatable.DataTable dataTable) {
+        for (Map<String, String> row : dataTable.asMaps()) {
+            String filename = row.get("filename");
+            assertTrue(Files.exists(Paths.get(filename)));
+        }
+    }
+
+    @Then("the following messages should be sent to Kafka")
+    public void thenTheFollowingMessagesShouldBeSentToKafka(io.cucumber.datatable.DataTable dataTable) throws Exception {
+        for (Map<String, String> row : dataTable.asMaps()) {
+            String key = row.get("key");
+            String status = row.get("status");
+            verify(kafkaProducerService).writeMessage(contains(key), contains(status), eq(auditTopic));
+        }
+    }
+}

@@ -1,16 +1,124 @@
-Feature: Retrieve audit status map
+import com.jcraft.jsch.ChannelSftp;
+import com.jcraft.jsch.SftpATTRS;
+import io.cucumber.java.Before;
+import io.cucumber.java.en.Given;
+import io.cucumber.java.en.Then;
+import io.cucumber.java.en.When;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 
-  Scenario: Retrieve audit status map for an empty list of SFTP files
-    Given an empty list of SFTP files
-    And the remote directory is "/remote/dir"
-    When getAuditStatusMap is called with the remote directory "/remote/dir"
-    Then the audit status map should be empty
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
-  Scenario: Retrieve audit status map for a list of 500 SFTP files
-    Given a list of 500 SFTP files
-    And each file is not a directory
-    And the remote directory is "/remote/dir"
-    And the audit repository returns the latest audits for these files
-    When getAuditStatusMap is called with the remote directory "/remote/dir"
-    Then the audit status map should contain 500 entries
-    And each entry should have a status of "STATUS"
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+@SpringBootTest
+@ExtendWith(MockitoExtension.class)
+public class AuditStatusMapSteps {
+
+    @MockBean
+    private LuceneCollectionAuditRepository luceneCollectionAuditRepo;
+
+    @Autowired
+    private SSHService sshService;
+
+    private Vector<ChannelSftp.LsEntry> files;
+    private Map<String, String> auditStatusMap;
+    private String remoteDirectory;
+
+    @Before
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+        sshService = new SSHService(luceneCollectionAuditRepo, null, null);
+    }
+
+    @Given("an empty list of SFTP files")
+    public void an_empty_list_of_SFTP_files() {
+        files = new Vector<>();
+    }
+
+    @Given("a list of {int} SFTP files")
+    public void a_list_of_SFTP_files(int count) {
+        files = IntStream.range(0, count)
+                .mapToObj(i -> createMockLsEntry("file" + i, false))
+                .collect(Collectors.toCollection(Vector::new));
+    }
+
+    @Given("each file is not a directory")
+    public void each_file_is_not_a_directory() {
+        for (ChannelSftp.LsEntry file : files) {
+            when(file.getAttrs().isDir()).thenReturn(false);
+        }
+    }
+
+    @Given("the remote directory is {string}")
+    public void the_remote_directory_is(String directory) {
+        remoteDirectory = directory;
+    }
+
+    @Given("the audit repository returns the latest audits for these files")
+    public void the_audit_repository_returns_the_latest_audits_for_these_files() {
+        List<String> filePaths = files.stream()
+                .map(file -> remoteDirectory + "/" + file.getFilename())
+                .collect(Collectors.toList());
+
+        List<CollectionAudit> audits = filePaths.stream()
+                .map(path -> generateAudit(path, "STATUS"))
+                .collect(Collectors.toList());
+
+        when(luceneCollectionAuditRepo.findLatestByFilePaths(anyList())).thenReturn(audits);
+    }
+
+    @When("getAuditStatusMap is called")
+    public void getAuditStatusMap_is_called() {
+        auditStatusMap = sshService.getAuditStatusMap(files, remoteDirectory);
+    }
+
+    @When("getAuditStatusMap is called with the remote directory {string}")
+    public void getAuditStatusMap_is_called_with_the_remote_directory(String directory) {
+        auditStatusMap = sshService.getAuditStatusMap(files, directory);
+    }
+
+    @Then("the audit status map should be empty")
+    public void the_audit_status_map_should_be_empty() {
+        assertEquals(0, auditStatusMap.size());
+    }
+
+    @Then("the audit status map should contain {int} entries")
+    public void the_audit_status_map_should_contain_entries(int count) {
+        assertEquals(count, auditStatusMap.size());
+    }
+
+    @Then("each entry should have a status of {string}")
+    public void each_entry_should_have_a_status_of(String status) {
+        for (String value : auditStatusMap.values()) {
+            assertEquals(status, value);
+        }
+    }
+
+    private ChannelSftp.LsEntry createMockLsEntry(String filename, boolean isDir) {
+        ChannelSftp.LsEntry entry = mock(ChannelSftp.LsEntry.class);
+        SftpATTRS attrs = mock(SftpATTRS.class);
+        when(attrs.isDir()).thenReturn(isDir);
+        when(entry.getAttrs()).thenReturn(attrs);
+        when(entry.getFilename()).thenReturn(filename);
+        return entry;
+    }
+
+    private CollectionAudit generateAudit(String path, String status) {
+        CollectionAudit audit = mock(CollectionAudit.class);
+        when(audit.getInputFilePath()).thenReturn(path);
+        when(audit.getJobStatus()).thenReturn(status);
+        return audit;
+    }
+}

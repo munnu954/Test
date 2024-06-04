@@ -1,98 +1,33 @@
-import com.jcraft.jsch.ChannelSftp;
-import com.jcraft.jsch.SftpATTRS;
-import io.cucumber.java.en.*;
-import org.mockito.Mockito;
+Feature: Audit Status Map Retrieval
 
-import java.util.*;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
+  Scenario: Retrieve audit status map for an empty list of files
+    Given an empty list of SFTP files
+    When getAuditStatusMap is called with the remote directory "/remote/dir"
+    Then the audit status map should be empty
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.*;
+  Scenario: Retrieve audit status map for a list of less than 1000 files
+    Given a list of 500 SFTP files
+    And each file is not a directory
+    And the remote directory is "/remote/dir"
+    And the audit repository returns the latest audits for these files
+    When getAuditStatusMap is called
+    Then the audit status map should contain 500 entries
+    And each entry should have a status of "STATUS"
 
-public class AuditStatusServiceSteps {
+  Scenario: Retrieve audit status map for exactly 1000 files
+    Given a list of 1000 SFTP files
+    And each file is not a directory
+    And the remote directory is "/remote/dir"
+    And the audit repository returns the latest audits for these files
+    When getAuditStatusMap is called
+    Then the audit status map should contain 1000 entries
+    And each entry should have a status of "STATUS"
 
-    private LucenceColletionAuditRepo lucenceColletionAuditRepo;
-    private AuditStatusService auditStatusService;
-    private Vector<ChannelSftp.LsEntry> files;
-    private Map<String, String> result;
-
-    @Given("a mock Lucence Collection Audit Repository")
-    public void a_mock_lucence_collection_audit_repository() {
-        lucenceColletionAuditRepo = Mockito.mock(LucenceColletionAuditRepo.class);
-        auditStatusService = new AuditStatusService(lucenceColletionAuditRepo);
-    }
-
-    private ChannelSftp.LsEntry createMockLsEntry(String filename, boolean isDir) {
-        ChannelSftp.LsEntry entry = mock(ChannelSftp.LsEntry.class);
-        SftpATTRS attrs = mock(SftpATTRS.class);
-        when(attrs.isDir()).thenReturn(isDir);
-        when(entry.getAttrs()).thenReturn(attrs);
-        when(entry.getFilename()).thenReturn(filename);
-        return entry;
-    }
-
-    private CollectionAudit generateAudit(String path, String status) {
-        CollectionAudit audit = mock(CollectionAudit.class);
-        when(audit.getInputFilePath()).thenReturn(path);
-        when(audit.getJobStatus()).thenReturn(status);
-        return audit;
-    }
-
-    @Given("an empty list of files")
-    public void an_empty_list_of_files() {
-        files = new Vector<>();
-    }
-
-    @Given("a list of {int} files")
-    public void a_list_of_files(Integer count) {
-        files = IntStream.range(0, count)
-                .mapToObj(i -> createMockLsEntry("file" + i, false))
-                .collect(Collectors.toCollection(Vector::new));
-    }
-
-    @And("each file has a corresponding audit status")
-    public void each_file_has_a_corresponding_audit_status() {
-        List<CollectionAudit> audits = files.stream()
-                .map(file -> generateAudit("/remote/dir/" + file.getFilename(), "STATUS"))
-                .collect(Collectors.toList());
-        when(lucenceColletionAuditRepo.findLatestByFilePaths(anyList())).thenReturn(audits);
-    }
-
-    @When("the user requests the audit status map")
-    public void the_user_requests_the_audit_status_map() {
-        result = auditStatusService.getAuditStatusMap(files, "/remote/dir/");
-    }
-
-    @Then("the audit status map should be empty")
-    public void the_audit_status_map_should_be_empty() {
-        assertEquals(0, result.size());
-    }
-
-    @Then("the audit status map should contain {int} entries")
-    public void the_audit_status_map_should_contain_entries(Integer count) {
-        assertEquals(count.intValue(), result.size());
-    }
-
-    @Then("each entry should have a status of {string}")
-    public void each_entry_should_have_a_status_of(String status) {
-        for (String key : result.keySet()) {
-            assertEquals(status, result.get(key));
-        }
-    }
-
-    @Then("the repository should not be called")
-    public void the_repository_should_not_be_called() {
-        verify(lucenceColletionAuditRepo, never()).findLatestByFilePaths(anyList());
-    }
-
-    @Then("the repository should be called once")
-    public void the_repository_should_be_called_once() {
-        verify(lucenceColletionAuditRepo, times(1)).findLatestByFilePaths(anyList());
-    }
-
-    @Then("the repository should be called twice")
-    public void the_repository_should_be_called_twice() {
-        verify(lucenceColletionAuditRepo, times(2)).findLatestByFilePaths(anyList());
-    }
-}
+  Scenario: Retrieve audit status map for more than 1000 files
+    Given a list of 1500 SFTP files
+    And each file is not a directory
+    And the remote directory is "/remote/dir"
+    And the audit repository returns the latest audits for these files in chunks of 1000
+    When getAuditStatusMap is called
+    Then the audit status map should contain 1500 entries
+    And each entry should have a status of "STATUS"

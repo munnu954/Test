@@ -1,50 +1,72 @@
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-
-import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
-import java.util.List;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 
-class CorsAlarmLifecycleProcessingServiceTest {
+public class TransactionLoggerServiceTest {
 
-    private static final int expiryDurationMinutes = 30;
+    @Mock
+    private RestTemplate restTemplate;
+
+    @InjectMocks
+    private TransactionLoggerService transactionLoggerService;
+
+    @BeforeEach
+    public void setup() {
+        // Initialize any required setup for the test
+    }
 
     @Test
-    void testProcessAlarm_expiredAlarmActive() {
-        // Given
-        Long lastID = 0L;
-        OffsetDateTime currentTime = OffsetDateTime.now();
-        OffsetDateTime expiryTime = currentTime.minusMinutes(expiryDurationMinutes + 1);
+    public void testSendLoggerMessage_Success() {
+        // Arrange
+        String baseURL = "http://example.com/";
+        String logURL = "log";
+        String ruleName = "testRule";
+        ObjectNode logMsg = new ObjectMapper().createObjectNode();
+        HttpHeaders headers = new HttpHeaders();
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("alarmIdentity", "testAlarmIdentity");
 
-        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
-        alarm.setID(1L);
-        alarm.setSuppressionKey("key");
-        alarm.setExpiryTime(expiryTime);
-        alarm.setSuppressionActive(true);
+        transactionLoggerService.setBaseURL(baseURL);
+        transactionLoggerService.setLogURL(logURL);
+        transactionLoggerService.setHeaders(headers);
 
-        ArgumentCaptor<OffsetDateTime> currentTimeCaptor = ArgumentCaptor.forClass(OffsetDateTime.class);
-        ArgumentCaptor<Long> lastIDCaptor = ArgumentCaptor.forClass(Long.class);
+        ResponseEntity<String> mockResponse = ResponseEntity.ok("Success");
+        Mockito.when(restTemplate.exchange(eq(baseURL + logURL), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(mockResponse);
 
-        when(cbrsSuppressionRepo.findExpiredAlarmsWithLimit(currentTimeCaptor.capture(), lastIDCaptor.capture())).thenReturn(List.of(alarm));
-        when(generateCbrsFloodAlarmService.clearCbrsFloodAlarm(anyString())).thenReturn("cleared");
+        // Act
+        transactionLoggerService.sendLoggerMessage(ruleName, alarmMap);
 
-        // When
-        Long result = corsAlarmLifecycleProcessingService.processAlarm(lastID);
+        // Assert
+        // Add assertions as per your requirements
+    }
 
-        // Then
-        assertEquals(alarm.getID(), result);
-        assertEquals(currentTimeCaptor.getValue().toEpochSecond(), currentTime.toEpochSecond());
+    @Test
+    public void testSendLoggerMessage_Exception() {
+        // Arrange
+        // Set up the necessary mocks and inputs to simulate an exception scenario
+        String ruleName = "testRule";
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("alarmIdentity", "testAlarmIdentity");
 
-        assertEquals(lastID, lastIDCaptor.getValue());
+        Mockito.when(restTemplate.exchange(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any()))
+                .thenThrow(new HttpClientErrorException(null, null, null));
 
-        verify(generateCbrsFloodAlarmService, times(1)).clearCbrsFloodAlarm(anyString());
-        verify(cbrsSuppressionRepo, times(1)).resetAlarmDetails(alarm.getSuppressionKey());
+        // Act
+        transactionLoggerService.sendLoggerMessage(ruleName, alarmMap);
 
-        verifyNoMoreInteractions(corsSuppressionRepo, generateCbrsFloodAlarmService);
+        // Assert
+        // Add assertions as per your requirements, e.g., assert that logger.error is called with expected parameters
     }
 }

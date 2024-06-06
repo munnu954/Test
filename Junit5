@@ -1,30 +1,34 @@
-To write comprehensive JUnit 5 test cases that cover the specified branches of the `enrichGeneratedCbrsSuppressionAlarm` method within the `EnrichmentService` class, we will use reflection to access and invoke the private method. Below is the test class with the required test cases:
-
-### Test Class
+Certainly! Here's an example of how you can write JUnit 5 test cases to cover the branches of the `enrichGeneratedCbrsSuppressionAlarm` method in the `EnrichmentService` class using reflection to access the private method:
 
 ```java
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.verizon.apollo.suppression.repository.AlarmPostingRepository;
+import com.verizon.apollo.suppression.repository.CbrsSuppressionRepository;
+import com.verizon.apollo.suppression.repository.model.CbrsSuppressionAlarm;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.OptimisticLockingFailureException;
-import org.springframework.test.util.ReflectionTestUtils;
 
+import java.lang.reflect.Method;
 import java.time.OffsetDateTime;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class EnrichmentServiceTest {
+public class EnrichmentServiceTest {
+
+    @InjectMocks
+    private EnrichmentService enrichmentService;
 
     @Mock
     private CbrsSuppressionRepository cbrsSuppressionRepository;
@@ -32,106 +36,101 @@ class EnrichmentServiceTest {
     @Mock
     private AlarmPostingRepository alarmPostingRepository;
 
-    @InjectMocks
-    private EnrichmentService enrichmentService;
-
+    private static final String ALARM_IDENTITY = "alarmIdentity";
     private CbrsSuppressionAlarm cbrsSuppressionAlarm;
 
     @BeforeEach
-    void setUp() {
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
         cbrsSuppressionAlarm = new CbrsSuppressionAlarm();
-        cbrsSuppressionAlarm.setAlarmIdentity("alarm1");
-        cbrsSuppressionAlarm.setTotalActiveSuppressedCount(5);
-        cbrsSuppressionAlarm.setTotalSuppressedCount(10);
-
-        ReflectionTestUtils.setField(enrichmentService, "cbrsDBMaxAttempts", 3);
-    }
-
-    private void invokePrivateEnrichMethod(CbrsSuppressionAlarm alarm) throws Exception {
-        var method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
-        method.setAccessible(true);
-        method.invoke(enrichmentService, alarm);
+        cbrsSuppressionAlarm.setAlarmIdentity(ALARM_IDENTITY);
     }
 
     @Test
-    void testEnrichGeneratedCbrsSuppressionAlarm_SuccessfulEnrichment() throws Exception {
-        AlarmDetailsModel alarmDetailsModel = new AlarmDetailsModel("{\"key\":\"value\"}", 1L);
-        when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(Optional.of(alarmDetailsModel));
+    public void testEnrichGeneratedCbrsSuppressionAlarm_NoRetry() throws Exception {
+        when(alarmPostingRepository.findByAlarmIdentity(anyString()))
+                .thenReturn(Optional.of(new AlarmDetailsModel("{\"someKey\": \"someValue\"}", 1L)));
         when(alarmPostingRepository.updateAlarmDetails(anyString(), anyString(), anyLong())).thenReturn(1);
-        when(cbrsSuppressionRepository.updateAlarmEnrichmentTime(any(OffsetDateTime.class), anyString())).thenReturn(1);
+        when(cbrsSuppressionRepository.updateAlarmEnrichmentTime(any(), anyString())).thenReturn(1);
 
         invokePrivateEnrichMethod(cbrsSuppressionAlarm);
 
-        assertEquals(0, ReflectionTestUtils.getField(enrichmentService, "cbrsRetryCount"));
-        verify(alarmPostingRepository, times(1)).findByAlarmIdentity(anyString());
         verify(alarmPostingRepository, times(1)).updateAlarmDetails(anyString(), anyString(), anyLong());
-        verify(cbrsSuppressionRepository, times(1)).updateAlarmEnrichmentTime(any(OffsetDateTime.class), anyString());
+        verify(cbrsSuppressionRepository, times(1)).updateAlarmEnrichmentTime(any(), anyString());
     }
 
     @Test
-    void testEnrichGeneratedCbrsSuppressionAlarm_OptimisticLockingFailureRetryUntilMaxAttempts() throws Exception {
-        AlarmDetailsModel alarmDetailsModel = new AlarmDetailsModel("{\"key\":\"value\"}", 1L);
-        when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(Optional.of(alarmDetailsModel));
-        doThrow(new OptimisticLockingFailureException("Optimistic Locking Exception"))
-            .when(alarmPostingRepository).updateAlarmDetails(anyString(), anyString(), anyLong());
-
-        assertThrows(OptimisticLockingFailureException.class, () -> invokePrivateEnrichMethod(cbrsSuppressionAlarm));
-
-        int retryCount = (int) ReflectionTestUtils.getField(enrichmentService, "cbrsRetryCount");
-        assertEquals(4, retryCount); // cbrsRetryCount starts from 0, so 4 attempts include initial attempt + 3 retries
-        verify(alarmPostingRepository, times(4)).updateAlarmDetails(anyString(), anyString(), anyLong());
-    }
-
-    @Test
-    void testEnrichGeneratedCbrsSuppressionAlarm_OptimisticLockingFailureRetrySuccessOnSecondAttempt() throws Exception {
-        AlarmDetailsModel alarmDetailsModel = new AlarmDetailsModel("{\"key\":\"value\"}", 1L);
-        when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(Optional.of(alarmDetailsModel));
-        doThrow(new OptimisticLockingFailureException("Optimistic Locking Exception"))
-            .doNothing()
-            .when(alarmPostingRepository).updateAlarmDetails(anyString(), anyString(), anyLong());
+    public void testEnrichGeneratedCbrsSuppressionAlarm_WithRetry_Success() throws Exception {
+        when(alarmPostingRepository.findByAlarmIdentity(anyString()))
+                .thenReturn(Optional.of(new AlarmDetailsModel("{\"someKey\": \"someValue\"}", 1L)));
+        when(alarmPostingRepository.updateAlarmDetails(anyString(), anyString(), anyLong()))
+                .thenThrow(new OptimisticLockingFailureException("Optimistic Lock Exception"))
+                .thenReturn(1);
+        when(cbrsSuppressionRepository.updateAlarmEnrichmentTime(any(), anyString())).thenReturn(1);
 
         invokePrivateEnrichMethod(cbrsSuppressionAlarm);
 
-        assertEquals(0, ReflectionTestUtils.getField(enrichmentService, "cbrsRetryCount"));
         verify(alarmPostingRepository, times(2)).updateAlarmDetails(anyString(), anyString(), anyLong());
-        verify(cbrsSuppressionRepository, times(1)).updateAlarmEnrichmentTime(any(OffsetDateTime.class), anyString());
+        verify(cbrsSuppressionRepository, times(1)).updateAlarmEnrichmentTime(any(), anyString());
     }
 
     @Test
-    void testEnrichGeneratedCbrsSuppressionAlarm_JsonProcessingException() throws Exception {
-        AlarmDetailsModel alarmDetailsModel = new AlarmDetailsModel("{\"key\":\"value\"}", 1L);
-        when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(Optional.of(alarmDetailsModel));
-        when(alarmPostingRepository.updateAlarmDetails(anyString(), anyString(), anyLong())).thenReturn(1);
-        when(cbrsSuppressionRepository.updateAlarmEnrichmentTime(any(OffsetDateTime.class), anyString())).thenReturn(1);
+    public void testEnrichGeneratedCbrsSuppressionAlarm_WithRetry_Fail() throws Exception {
+        enrichmentService.setCbrsDBMaxAttempts(1); // Set max attempts to 1
 
-        ObjectMapper objectMapper = mock(ObjectMapper.class);
-        ReflectionTestUtils.setField(enrichmentService, "objectMapper", objectMapper);
-        when(objectMapper.readValue(anyString(), eq(Map.class))).thenThrow(new JsonProcessingException("") {});
+        when(alarmPostingRepository.findByAlarmIdentity(anyString()))
+                .thenReturn(Optional.of(new AlarmDetailsModel("{\"someKey\": \"someValue\"}", 1L)));
+        when(alarmPostingRepository.updateAlarmDetails(anyString(), anyString(), anyLong()))
+                .thenThrow(new OptimisticLockingFailureException("Optimistic Lock Exception"));
 
-        assertThrows(RuntimeException.class, () -> invokePrivateEnrichMethod(cbrsSuppressionAlarm));
+        assertThrows(OptimisticLockingFailureException.class, () -> {
+            invokePrivateEnrichMethod(cbrsSuppressionAlarm);
+        });
 
-        verify(objectMapper, times(1)).readValue(anyString(), eq(Map.class));
+        verify(alarmPostingRepository, times(2)).updateAlarmDetails(anyString(), anyString(), anyLong());
+        verify(cbrsSuppressionRepository, never()).updateAlarmEnrichmentTime(any(), anyString());
     }
 
     @Test
-    void testEnrichGeneratedCbrsSuppressionAlarm_GeneralException() throws Exception {
-        AlarmDetailsModel alarmDetailsModel = new AlarmDetailsModel("{\"key\":\"value\"}", 1L);
-        when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(Optional.of(alarmDetailsModel));
-        when(alarmPostingRepository.updateAlarmDetails(anyString(), anyString(), anyLong())).thenThrow(new RuntimeException("General Exception"));
+    public void testEnrichGeneratedCbrsSuppressionAlarm_JsonProcessingException() throws Exception {
+        when(alarmPostingRepository.findByAlarmIdentity(anyString()))
+                .thenReturn(Optional.of(new AlarmDetailsModel("{invalidJson}", 1L)));
 
-        assertThrows(RuntimeException.class, () -> invokePrivateEnrichMethod(cbrsSuppressionAlarm));
+        assertThrows(RuntimeException.class, () -> {
+            invokePrivateEnrichMethod(cbrsSuppressionAlarm);
+        });
 
-        verify(alarmPostingRepository, times(1)).updateAlarmDetails(anyString(), anyString(), anyLong());
+        verify(alarmPostingRepository, never()).updateAlarmDetails(anyString(), anyString(), anyLong());
+        verify(cbrsSuppressionRepository, never()).updateAlarmEnrichmentTime(any(), anyString());
+    }
+
+    @Test
+    public void testEnrichGeneratedCbrsSuppressionAlarm_GeneralException() throws Exception {
+        when(alarmPostingRepository.findByAlarmIdentity(anyString()))
+                .thenThrow(new RuntimeException("General Exception"));
+
+        assertThrows(RuntimeException.class, () -> {
+            invokePrivateEnrichMethod(cbrsSuppressionAlarm);
+        });
+
+        verify(alarmPostingRepository, never()).updateAlarmDetails(anyString(), anyString(), anyLong());
+        verify(cbrsSuppressionRepository, never()).updateAlarmEnrichmentTime(any(), anyString());
+    }
+
+    private void invokePrivateEnrichMethod(CbrsSuppressionAlarm cbrsSuppressionAlarm) throws Exception {
+        Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
+        method.setAccessible(true);
+        method.invoke(enrichmentService, cbrsSuppressionAlarm);
     }
 }
 ```
 
-### Explanation:
+In this example, the `invokePrivateEnrichMethod` method uses reflection to access and invoke the private `enrichGeneratedCbrsSuppressionAlarm` method. The test cases cover the different branches:
 
-1. **testEnrichGeneratedCbrsSuppressionAlarm_SuccessfulEnrichment:** Verifies the normal flow where the alarm enrichment is successful, and `cbrsRetryCount` is reset to 0.
-2. **testEnrichGeneratedCbrsSuppressionAlarm_OptimisticLockingFailureRetryUntilMaxAttempts:** Tests the scenario where an `OptimisticLockingFailureException` is thrown repeatedly until the maximum retry attempts are reached.
-3. **testEnrichGeneratedCbrsSuppressionAlarm_OptimisticLockingFailureRetrySuccessOnSecondAttempt:** Verifies that the enrichment succeeds on the second attempt after an initial `OptimisticLockingFailureException`.
-4. **testEnrichGeneratedCbrsSuppressionAlarm_JsonProcessingException:** Tests the scenario where a `JsonProcessingException` occurs during the enrichment process.
-5. **testEnrichGeneratedCbrsSuppressionAlarm_GeneralException:** Verifies that a general exception during the enrichment process is correctly handled.
+1. No retry needed
+2. Retry succeeds
+3. Retry fails after max attempts
+4. JSON processing exception
+5. General exception
 
-These tests cover the specified branches of the `enrichGeneratedCbrsSuppressionAlarm` method.
+Make sure to adjust the mock behavior and assertions according to your actual implementation and requirements.

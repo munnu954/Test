@@ -1,18 +1,20 @@
-In order to test a private method using reflection, you can access the private method of the EnrichmentService class using Java Reflection. Here is an example of how you can modify the test cases to invoke the private method:
-
-```java
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.verizon.apollo.suppression.repository.model.AlarmDetailsModel;
+import com.verizon.apollo.suppression.repository.model.CbrsSuppressionAlarm;
+import com.verizon.apollo.suppression.repository.CbrsSuppressionRepository;
+import com.verizon.apollo.suppression.repository.AlarmPostingRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.time.OffsetDateTime;
-import java.util.Optional;
+import java.util.ArrayList;
+import java.util.List;
 
-import static org.mockito.ArgumentMatchers.any;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -28,41 +30,40 @@ class EnrichmentServiceTest {
     private EnrichmentService enrichmentService;
 
     @Test
-    void enrichGeneratedCbrsSuppressionAlarm_AlarmDetailsExist_Success() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        CbrsSuppressionAlarm cbrsSuppressionAlarm = new CbrsSuppressionAlarm();
-        cbrsSuppressionAlarm.setAlarmIdentity("TestAlarmIdentity");
-        AlarmDetailsModel alarmDetailsModel = new AlarmDetailsModel("{\"key\": \"value\"}", 1L);
+    void testExecuteEnrichmentTask_WhenActiveCbrsSuppressionAlarmListIsEmpty() {
+        OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        Boolean isAlarmToBeEnriched = true;
 
-        when(alarmPostingRepository.findByAlarmIdentity(any())).thenReturn(Optional.of(alarmDetailsModel));
-        when(alarmPostingRepository.updateAlarmDetails(any(), any(), any())).thenReturn(1);
-        when(cbrsSuppressionRepository.updateAlarmEnrichmentTime(any(), any())).thenReturn(1);
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt())).thenReturn(Optional.empty());
 
-        // Accessing private method using reflection
-        Method privateMethod = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
-        privateMethod.setAccessible(true);
-        privateMethod.invoke(enrichmentService, cbrsSuppressionAlarm);
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
 
-        verify(alarmPostingRepository, times(1)).findByAlarmIdentity(any());
-        verify(alarmPostingRepository, times(1)).updateAlarmDetails(any(), any(), any());
-        verify(cbrsSuppressionRepository, times(1)).updateAlarmEnrichmentTime(any(), any());
+        assertFalse(result);
+        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
+        verifyNoInteractions(alarmPostingRepository);
     }
 
     @Test
-    void enrichGeneratedCbrsSuppressionAlarm_AlarmDetailsNotExist_NoActionTaken() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        CbrsSuppressionAlarm cbrsSuppressionAlarm = new CbrsSuppressionAlarm();
-        cbrsSuppressionAlarm.setAlarmIdentity("TestAlarmIdentity");
+    void testExecuteEnrichmentTask_WhenActiveCbrsSuppressionAlarmListIsNotEmpty() throws JsonProcessingException {
+        OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        Boolean isAlarmToBeEnriched = true;
 
-        when(alarmPostingRepository.findByAlarmIdentity(any())).thenReturn(Optional.empty());
+        List<CbrsSuppressionAlarm> activeCbrsSuppressionAlarmList = new ArrayList<>();
+        activeCbrsSuppressionAlarmList.add(new CbrsSuppressionAlarm());
 
-        // Accessing private method using reflection
-        Method privateMethod = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
-        privateMethod.setAccessible(true);
-        privateMethod.invoke(enrichmentService, cbrsSuppressionAlarm);
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt())).thenReturn(Optional.of(activeCbrsSuppressionAlarmList));
+        when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(Optional.of(new AlarmDetailsModel("", 1L));
+        when(alarmPostingRepository.updateAlarmDetails(anyString(), anyString(), anyLong())).thenReturn(1);
+        when(cbrsSuppressionRepository.updateAlarmEnrichmentTime(any(OffsetDateTime.class), anyString())).thenReturn(1);
 
-        verify(alarmPostingRepository, times(1)).findByAlarmIdentity(any());
-        verifyNoInteractions(alarmPostingRepository, cbrsSuppressionRepository);
+        ReflectionTestUtils.setField(enrichmentService, "cbrsDBMaxAttempts", 3);
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
+
+        assertFalse(result);
+        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
+        verify(alarmPostingRepository, times(1)).findByAlarmIdentity(anyString());
+        verify(alarmPostingRepository, times(1)).updateAlarmDetails(anyString(), anyString(), anyLong());
+        verify(cbrsSuppressionRepository, times(1)).updateAlarmEnrichmentTime(any(OffsetDateTime.class), anyString());
     }
 }
-```
-
-By using the Java Reflection API, you can access and invoke the private method of the EnrichmentService class in your test cases without making the method public.

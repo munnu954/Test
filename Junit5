@@ -1,13 +1,15 @@
-To write JUnit 5 test cases for the `executeEnrichmentTask` method in the `EnrichmentService` class, you'll need to mock dependencies and use reflection to access the private `enrichGeneratedCbrsSuppressionAlarm` method. 
+To cover the specified branches, we'll need to write JUnit 5 test cases for the following conditions:
 
-Here's how you can do it:
+1. **Filter where `lastEnrichmentTime` is not null and after `currentTimestamp`.**
+2. **Filter where `expiryTime` is not null and before `currentTimestamp`.**
+3. **Filter for `totalActiveSuppressedCount` greater than 0 or `totalSuppressedCount` greater than 0.**
 
-1. **Set up the test class with necessary annotations and mocks.**
-2. **Write test cases to cover different branches.**
+We'll also use the reflection API to call the private method `enrichGeneratedCbrsSuppressionAlarm`.
 
-### Setup
+### Complete Test Class
 
 ```java
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,13 +18,16 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.time.OffsetDateTime;
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -43,8 +48,9 @@ class EnrichmentServiceTest {
     void setUp() {
         currentTimestamp = OffsetDateTime.now();
         ReflectionTestUtils.setField(enrichmentService, "cbrsAlarmsEnrichmentLimit", 10);
+        ReflectionTestUtils.setField(enrichmentService, "cbrsDBMaxAttempts", 3);
     }
-    
+
     // Helper method to invoke private method
     private void invokePrivateEnrichMethod(CbrsSuppressionAlarm alarm) throws Exception {
         var method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
@@ -52,107 +58,164 @@ class EnrichmentServiceTest {
         method.invoke(enrichmentService, alarm);
     }
 
-    // Test cases go here
+    @Test
+    void testExecuteEnrichmentTask_AlarmAlreadyEnriched() {
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setLastEnrichmentTime(currentTimestamp.plusDays(1));
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+            .thenReturn(Optional.of(List.of(alarm)));
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
+
+        assertFalse(result);
+        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
+    }
+
+    @Test
+    void testExecuteEnrichmentTask_AlarmToBeEnriched() throws Exception {
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setExpiryTime(currentTimestamp.plusDays(1));
+        alarm.setTotalActiveSuppressedCount(5);
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+            .thenReturn(Optional.of(List.of(alarm)));
+        when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(Optional.empty());
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
+
+        assertTrue(result);
+        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
+        verify(alarmPostingRepository, times(1)).findByAlarmIdentity(anyString());
+
+        // Reflective call to private method inside the service
+        invokePrivateEnrichMethod(alarm);
+    }
+
+    @Test
+    void testExecuteEnrichmentTask_AlarmNoExpiryTime() {
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setTotalActiveSuppressedCount(5);
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+            .thenReturn(Optional.of(List.of(alarm)));
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
+
+        assertFalse(result);
+        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
+    }
+
+    @Test
+    void testExecuteEnrichmentTask_AlarmExpired() {
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setExpiryTime(currentTimestamp.minusDays(1));
+        alarm.setTotalActiveSuppressedCount(5);
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+            .thenReturn(Optional.of(List.of(alarm)));
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
+
+        assertFalse(result);
+        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
+    }
+
+    @Test
+    void testExecuteEnrichmentTask_AlarmNoSuppressedCounts() {
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setExpiryTime(currentTimestamp.plusDays(1));
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+            .thenReturn(Optional.of(List.of(alarm)));
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
+
+        assertFalse(result);
+        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
+    }
+
+    @Test
+    void testExecuteEnrichmentTask_NoActiveSuppressionAlarms() {
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+            .thenReturn(Optional.empty());
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
+
+        assertFalse(result);
+        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
+    }
+
+    @Test
+    void testExecuteEnrichmentTask_Exception() {
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+            .thenThrow(new RuntimeException("DB error"));
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
+
+        assertFalse(result);
+        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
+    }
+
+    @Test
+    void testExecuteEnrichmentTask_AlarmToBeEnriched_WithSuppressedCounts() throws Exception {
+        CbrsSuppressionAlarm alarm1 = new CbrsSuppressionAlarm();
+        alarm1.setExpiryTime(currentTimestamp.plusDays(1));
+        alarm1.setTotalActiveSuppressedCount(5);
+
+        CbrsSuppressionAlarm alarm2 = new CbrsSuppressionAlarm();
+        alarm2.setExpiryTime(currentTimestamp.plusDays(1));
+        alarm2.setTotalSuppressedCount(10);
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+            .thenReturn(Optional.of(List.of(alarm1, alarm2)));
+        when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(Optional.empty());
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
+
+        assertTrue(result);
+        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
+        verify(alarmPostingRepository, times(2)).findByAlarmIdentity(anyString());
+
+        // Reflective call to private method inside the service
+        invokePrivateEnrichMethod(alarm1);
+        invokePrivateEnrichMethod(alarm2);
+    }
+
+    @Test
+    void testExecuteEnrichmentTask_AlarmToBeEnriched_WithMultipleConditions() throws Exception {
+        CbrsSuppressionAlarm alarm1 = new CbrsSuppressionAlarm();
+        alarm1.setExpiryTime(currentTimestamp.plusDays(1));
+        alarm1.setTotalActiveSuppressedCount(5);
+
+        CbrsSuppressionAlarm alarm2 = new CbrsSuppressionAlarm();
+        alarm2.setExpiryTime(currentTimestamp.plusDays(1));
+        alarm2.setTotalSuppressedCount(0);
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+            .thenReturn(Optional.of(List.of(alarm1, alarm2)));
+        when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(Optional.empty());
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
+
+        assertTrue(result);
+        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
+        verify(alarmPostingRepository, times(2)).findByAlarmIdentity(anyString());
+
+        // Reflective call to private method inside the service
+        invokePrivateEnrichMethod(alarm1);
+        invokePrivateEnrichMethod(alarm2);
+    }
 }
 ```
 
-### Test Cases
+### Explanation:
 
-1. **Branch: Alarm already enriched**
-
-```java
-@Test
-void testExecuteEnrichmentTask_AlarmAlreadyEnriched() {
-    CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
-    alarm.setLastEnrichmentTime(currentTimestamp.plusDays(1));
-
-    when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
-        .thenReturn(Optional.of(List.of(alarm)));
-
-    Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
-
-    assertFalse(result);
-    verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
-}
-```
-
-2. **Branch: Alarm to be enriched (expiry time after current timestamp and has suppressed counts)**
-
-```java
-@Test
-void testExecuteEnrichmentTask_AlarmToBeEnriched() throws Exception {
-    CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
-    alarm.setExpiryTime(currentTimestamp.plusDays(1));
-    alarm.setTotalActiveSuppressedCount(5);
-    
-    when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
-        .thenReturn(Optional.of(List.of(alarm)));
-    when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(Optional.empty());
-
-    Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
-
-    assertTrue(result);
-    verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
-    verify(alarmPostingRepository, times(1)).findByAlarmIdentity(anyString());
-
-    // Reflective call to private method inside the service
-    invokePrivateEnrichMethod(alarm);
-}
-```
-
-3. **Branch: Alarm with no expiry time**
-
-```java
-@Test
-void testExecuteEnrichmentTask_AlarmNoExpiryTime() {
-    CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
-    alarm.setTotalActiveSuppressedCount(5);
-
-    when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
-        .thenReturn(Optional.of(List.of(alarm)));
-
-    Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
-
-    assertFalse(result);
-    verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
-}
-```
-
-4. **Branch: Alarm with expiry time before current timestamp**
-
-```java
-@Test
-void testExecuteEnrichmentTask_AlarmExpired() {
-    CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
-    alarm.setExpiryTime(currentTimestamp.minusDays(1));
-    alarm.setTotalActiveSuppressedCount(5);
-
-    when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
-        .thenReturn(Optional.of(List.of(alarm)));
-
-    Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
-
-    assertFalse(result);
-    verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
-}
-```
-
-5. **Branch: Alarm with no suppressed counts**
-
-```java
-@Test
-void testExecuteEnrichmentTask_AlarmNoSuppressedCounts() {
-    CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
-    alarm.setExpiryTime(currentTimestamp.plusDays(1));
-
-    when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
-        .thenReturn(Optional.of(List.of(alarm)));
-
-    Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
-
-    assertFalse(result);
-    verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
-}
-```
-
-These test cases cover the five branches of the specified lines in the `executeEnrichmentTask` method. Each test case mocks the necessary repository methods, sets up the conditions for the branch being tested, and then asserts the expected outcome. The private method `enrichGeneratedCbrsSuppressionAlarm` is invoked using reflection where necessary.
+1. **testExecuteEnrichmentTask_AlarmAlreadyEnriched:** Tests the branch where the alarm's last enrichment time is after the current timestamp.
+2. **testExecuteEnrichmentTask_AlarmToBeEnriched:** Tests the branch where the alarm needs to be enriched and has valid expiry time and suppressed counts.
+3. **testExecuteEnrichmentTask_AlarmNoExpiryTime:** Tests the branch where the alarm does not have an expiry time.
+4. **testExecuteEnrichmentTask_AlarmExpired:** Tests the branch where the alarm's expiry time is before the current timestamp.
+5. **testExecuteEnrichmentTask_AlarmNoSuppressedCounts:** Tests the branch where the alarm does not have suppressed counts.
+6. **testExecuteEnrichmentTask_NoActiveSuppressionAlarms:** Tests the branch where no active suppression alarms are present.
+7. **testExecuteEnrichmentTask_Exception:** Tests the branch where an exception occurs during the retrieval of active suppression alarms.
+8. **test

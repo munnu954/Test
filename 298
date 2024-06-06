@@ -1,71 +1,90 @@
-Certainly! Let's delve into the specifics of the updated test cases and the reasoning behind the changes to handle the exceptions correctly.
+To fix the test case, we need to ensure that the mocked behavior and method invocations align correctly with the `EnrichmentService` class's implementation. Without seeing the actual `EnrichmentService` class, I'll make some reasonable assumptions and adjustments based on the provided test case.
 
-### Understanding `InvocationTargetException`
-When you use reflection to invoke a method, Java wraps any exception thrown by the method in an `InvocationTargetException`. This can make it tricky to handle the actual exception since the `InvocationTargetException` itself is not the root cause but just a wrapper.
+### Adjusted Test Case
+First, let's identify potential issues:
+1. **Mocking Repository Calls**: Ensure that the repository returns the expected data.
+2. **Enrichment Method Invocation**: Ensure the enrichment method is invoked correctly.
+3. **Logger Mock**: Ensure that the logger is appropriately mocked.
 
-### Addressing the Issue
-The original test cases were expecting a `RuntimeException` directly. However, since the method is invoked via reflection, any `RuntimeException` thrown by the method is wrapped in an `InvocationTargetException`. Therefore, you need to:
-1. Catch the `InvocationTargetException`.
-2. Unwrap it to access the actual exception that was thrown.
+### Updated Test Case
+Here is the revised test case with the necessary adjustments:
 
-### Updated Test Cases
-Here's a detailed look at the updated test cases:
-
-#### Optimistic Locking Failure
 ```java
-@Test
-public void testEnrichGeneratedCbrsSuppressionAlarm_OptimisticLockingFailure() throws JsonProcessingException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-    CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
-    alarm.setAlarmIdentity("alarm1");
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.when;
 
-    AlarmDetailsModel alarmDetailsModel = new AlarmDetailsModel("{\"key\":\"value\"}", 1L);
+import java.net.UnknownHostException;
+import java.time.OffsetDateTime;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
 
-    when(alarmPostingRepository.findByAlarmIdentity(anyString()))
-            .thenReturn(Optional.of(alarmDetailsModel));
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
-    when(alarmPostingRepository.updateAlarmDetails(anyString(), anyString(), anyLong()))
-            .thenThrow(new OptimisticLockException("Locking error"));
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-    Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
-    method.setAccessible(true);
+public class EnrichmentServiceTest {
 
-    InvocationTargetException exception = assertThrows(InvocationTargetException.class, () -> method.invoke(enrichmentService, alarm));
-    assertTrue(exception.getCause() instanceof RuntimeException);
-    assertTrue(exception.getCause().getCause() instanceof OptimisticLockException);
+    @Mock
+    private CbrsSuppressionRepository cbrsSuppressionRepository;
+
+    @Mock
+    private Logger logger;
+
+    @InjectMocks
+    private EnrichmentService enrichmentService;
+
+    public EnrichmentServiceTest() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    public void testExecuteEnrichmentTask_AlarmsToBeEnriched() throws Exception {
+        OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        Boolean isAlarmToBeEnriched = true;
+
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setExpiryTime(currentTimestamp.plusMinutes(1));
+        alarm.setTotalActiveSuppressedCount(1);
+
+        List<CbrsSuppressionAlarm> alarms = Collections.singletonList(alarm);
+
+        // Mock repository to return a list of alarms
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+                .thenReturn(Optional.of(alarms));
+
+        // Mock the logger to simulate the enrichment process
+        doAnswer(invocation -> {
+            Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
+            method.setAccessible(true);
+            method.invoke(enrichmentService, alarm);
+            return null;
+        }).when(logger).log(any(), anyString(), any());
+
+        // Execute the task
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
+
+        // Verify the result
+        assertTrue(result);
+    }
 }
 ```
-In this test:
-1. **Setup**: A mock `AlarmDetailsModel` is returned when `findByAlarmIdentity` is called.
-2. **Simulate Exception**: The `updateAlarmDetails` method is mocked to throw an `OptimisticLockException`.
-3. **Reflection Invocation**: The private method `enrichGeneratedCbrsSuppressionAlarm` is invoked using reflection.
-4. **Assertion**: The test catches the `InvocationTargetException` and asserts that its cause is a `RuntimeException`, and further, that the root cause is an `OptimisticLockException`.
 
-#### JSON Processing Exception
-```java
-@Test
-public void testEnrichGeneratedCbrsSuppressionAlarm_JsonProcessingException() throws JsonProcessingException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-    CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
-    alarm.setAlarmIdentity("alarm1");
+### Explanation
+1. **Initialization**: The `MockitoAnnotations.openMocks(this)` initializes the mocks and injects them into the `enrichmentService`.
+2. **Mocking Repository**: The `retrieveActiveSuppressionPatterns` method of the `cbrsSuppressionRepository` is mocked to return an `Optional` containing the list of alarms.
+3. **Mocking Logger**: The logger is mocked to simulate the enrichment process by invoking the `enrichGeneratedCbrsSuppressionAlarm` method via reflection.
+4. **Executing the Task**: The `executeEnrichmentTask` method is called with the current timestamp and the flag indicating that alarms need to be enriched.
+5. **Assertion**: The test asserts that the result of the task execution is `true`.
 
-    when(alarmPostingRepository.findByAlarmIdentity(anyString()))
-            .thenReturn(Optional.of(new AlarmDetailsModel("invalid json", 1L)));
+### Additional Notes
+- Ensure that the `enrichGeneratedCbrsSuppressionAlarm` method and any other dependencies are correctly defined within the `EnrichmentService` class.
+- The actual logic within the `executeEnrichmentTask` method in the `EnrichmentService` class should align with the mocked behaviors to return the expected `true` result.
 
-    Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
-    method.setAccessible(true);
-
-    InvocationTargetException exception = assertThrows(InvocationTargetException.class, () -> method.invoke(enrichmentService, alarm));
-    assertTrue(exception.getCause() instanceof RuntimeException);
-    assertTrue(exception.getCause().getCause() instanceof JsonProcessingException);
-}
-```
-In this test:
-1. **Setup**: A mock `AlarmDetailsModel` with invalid JSON is returned when `findByAlarmIdentity` is called.
-2. **Reflection Invocation**: The private method `enrichGeneratedCbrsSuppressionAlarm` is invoked using reflection.
-3. **Assertion**: The test catches the `InvocationTargetException` and asserts that its cause is a `RuntimeException`, and further, that the root cause is a `JsonProcessingException`.
-
-### Key Points
-1. **Reflection Handling**: When using reflection, always be prepared to handle `InvocationTargetException` and unwrap it to check the actual exception thrown.
-2. **Mocks and Stubs**: Properly setting up mocks and stubs to simulate different scenarios is crucial for testing exception handling.
-3. **Assertions**: Ensure your assertions are checking the correct levels of exception wrapping, especially when dealing with nested exceptions.
-
-By following these steps, you ensure that your tests accurately reflect and handle the exceptions thrown by the underlying logic, even when using reflection to invoke private methods. This approach provides a robust mechanism to verify the behavior of your code under different exceptional conditions.
+If the issue persists, it may be helpful to review the `EnrichmentService` class's implementation to ensure all dependencies and logic paths are correctly handled.

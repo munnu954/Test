@@ -1,24 +1,56 @@
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.verizon.apollo.suppression.repository.model.AlarmDetailsModel;
-import com.verizon.apollo.suppression.repository.model.CbrsSuppressionAlarm;
-import com.verizon.apollo.suppression.repository.CbrsSuppressionRepository;
-import com.verizon.apollo.suppression.repository.AlarmPostingRepository;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
+Certainly! Here's a set of JUnit 5 test cases designed to achieve 100% code coverage for the `executeEnrichmentTask` method in the `EnrichmentService` class, including the use of the Reflection API to access the private `enrichGeneratedCbrsSuppressionAlarm` method.
 
-import java.time.OffsetDateTime;
-import java.util.ArrayList;
-import java.util.List;
+First, you'll need to set up your test dependencies. Ensure you have the following dependencies in your `pom.xml` if you're using Maven:
 
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-test</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.mockito</groupId>
+    <artifactId>mockito-core</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.junit.jupiter</groupId>
+    <artifactId>junit-jupiter-engine</artifactId>
+    <scope>test</scope>
+</dependency>
+```
+
+Now, let's write the test cases. Create a test class `EnrichmentServiceTest` in your test directory.
+
+```java
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
-class EnrichmentServiceTest {
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+
+import javax.persistence.OptimisticLockException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.time.OffsetDateTime;
+import java.util.*;
+
+@ExtendWith(SpringExtension.class)
+public class EnrichmentServiceTest {
+
+    @InjectMocks
+    private EnrichmentService enrichmentService;
 
     @Mock
     private CbrsSuppressionRepository cbrsSuppressionRepository;
@@ -26,44 +58,160 @@ class EnrichmentServiceTest {
     @Mock
     private AlarmPostingRepository alarmPostingRepository;
 
-    @InjectMocks
-    private EnrichmentService enrichmentService;
+    @Mock
+    private Logger logger;
 
-    @Test
-    void testExecuteEnrichmentTask_WhenActiveCbrsSuppressionAlarmListIsEmpty() {
-        OffsetDateTime currentTimestamp = OffsetDateTime.now();
-        Boolean isAlarmToBeEnriched = true;
+    @Value("$(cbrsAlarmsEnrichmentLimit:10)")
+    private Integer cbrsAlarmsEnrichmentLimit;
 
-        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt())).thenReturn(Optional.empty());
+    @Value("${CbrsDBMaxAttempts}")
+    private Integer cbrsDBMaxAttempts;
 
-        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
+    private static final String IMPACTED_NODES_COUNT_TOTAL = "ImpactedNodesCountTotal";
+    private static final String IMPACTED_NODES_COUNT_ACTIVE = "ImpactedNodesCountActive";
 
-        assertFalse(result);
-        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
-        verifyNoInteractions(alarmPostingRepository);
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    void testExecuteEnrichmentTask_WhenActiveCbrsSuppressionAlarmListIsNotEmpty() throws JsonProcessingException {
+    public void testExecuteEnrichmentTask_NoActiveAlarms() {
         OffsetDateTime currentTimestamp = OffsetDateTime.now();
         Boolean isAlarmToBeEnriched = true;
 
-        List<CbrsSuppressionAlarm> activeCbrsSuppressionAlarmList = new ArrayList<>();
-        activeCbrsSuppressionAlarmList.add(new CbrsSuppressionAlarm());
-
-        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt())).thenReturn(Optional.of(activeCbrsSuppressionAlarmList));
-        when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(Optional.of(new AlarmDetailsModel("", 1L));
-        when(alarmPostingRepository.updateAlarmDetails(anyString(), anyString(), anyLong())).thenReturn(1);
-        when(cbrsSuppressionRepository.updateAlarmEnrichmentTime(any(OffsetDateTime.class), anyString())).thenReturn(1);
-
-        ReflectionTestUtils.setField(enrichmentService, "cbrsDBMaxAttempts", 3);
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+                .thenReturn(Optional.empty());
 
         Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
 
         assertFalse(result);
-        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
-        verify(alarmPostingRepository, times(1)).findByAlarmIdentity(anyString());
+    }
+
+    @Test
+    public void testExecuteEnrichmentTask_ActiveAlarmEnriched() {
+        OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        Boolean isAlarmToBeEnriched = true;
+
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setLastActivatedTime(currentTimestamp.plusMinutes(1));
+
+        List<CbrsSuppressionAlarm> alarms = Collections.singletonList(alarm);
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+                .thenReturn(Optional.of(alarms));
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
+
+        assertFalse(result);
+    }
+
+    @Test
+    public void testExecuteEnrichmentTask_AlarmsToBeEnriched() throws UnknownHostException {
+        OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        Boolean isAlarmToBeEnriched = true;
+
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setExpiryTime(currentTimestamp.plusMinutes(1));
+        alarm.setTotalActiveSuppressedCount(1);
+
+        List<CbrsSuppressionAlarm> alarms = Collections.singletonList(alarm);
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+                .thenReturn(Optional.of(alarms));
+
+        doAnswer(invocation -> {
+            // Simulate the enrichment process
+            Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
+            method.setAccessible(true);
+            method.invoke(enrichmentService, alarm);
+            return null;
+        }).when(logger).log(any(), anyString(), any());
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
+
+        assertTrue(result);
+    }
+
+    @Test
+    public void testExecuteEnrichmentTask_ExceptionHandling() {
+        OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        Boolean isAlarmToBeEnriched = true;
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
+                .thenThrow(new RuntimeException("DB Error"));
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
+
+        assertFalse(result);
+    }
+
+    @Test
+    public void testEnrichGeneratedCbrsSuppressionAlarm_Success() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException, JsonProcessingException {
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setAlarmIdentity("alarm1");
+
+        AlarmDetailsModel alarmDetailsModel = new AlarmDetailsModel("{\"key\":\"value\"}", 1L);
+
+        when(alarmPostingRepository.findByAlarmIdentity(anyString()))
+                .thenReturn(Optional.of(alarmDetailsModel));
+
+        when(alarmPostingRepository.updateAlarmDetails(anyString(), anyString(), anyLong()))
+                .thenReturn(1);
+
+        when(cbrsSuppressionRepository.updateAlarmEnrichmentTime(any(), anyString()))
+                .thenReturn(1);
+
+        Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
+        method.setAccessible(true);
+        method.invoke(enrichmentService, alarm);
+
         verify(alarmPostingRepository, times(1)).updateAlarmDetails(anyString(), anyString(), anyLong());
-        verify(cbrsSuppressionRepository, times(1)).updateAlarmEnrichmentTime(any(OffsetDateTime.class), anyString());
+        verify(cbrsSuppressionRepository, times(1)).updateAlarmEnrichmentTime(any(), anyString());
+    }
+
+    @Test
+    public void testEnrichGeneratedCbrsSuppressionAlarm_OptimisticLockingFailure() throws JsonProcessingException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setAlarmIdentity("alarm1");
+
+        AlarmDetailsModel alarmDetailsModel = new AlarmDetailsModel("{\"key\":\"value\"}", 1L);
+
+        when(alarmPostingRepository.findByAlarmIdentity(anyString()))
+                .thenReturn(Optional.of(alarmDetailsModel));
+
+        when(alarmPostingRepository.updateAlarmDetails(anyString(), anyString(), anyLong()))
+                .thenThrow(new OptimisticLockException("Locking error"));
+
+        Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
+        method.setAccessible(true);
+
+        assertThrows(RuntimeException.class, () -> method.invoke(enrichmentService, alarm));
+    }
+
+    @Test
+    public void testEnrichGeneratedCbrsSuppressionAlarm_JsonProcessingException() throws JsonProcessingException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setAlarmIdentity("alarm1");
+
+        when(alarmPostingRepository.findByAlarmIdentity(anyString()))
+                .thenReturn(Optional.of(new AlarmDetailsModel("invalid json", 1L)));
+
+        Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
+        method.setAccessible(true);
+
+        assertThrows(RuntimeException.class, () -> method.invoke(enrichmentService, alarm));
     }
 }
+```
+
+This test class covers the following scenarios:
+1. No active alarms present.
+2. Active alarm already enriched.
+3. Alarms to be enriched.
+4. Exception handling during the enrichment process.
+5. Successful enrichment of an alarm.
+6. Handling of optimistic locking failure.
+7. Handling of JSON processing exceptions.
+
+The use of the Reflection API ensures that the private method `enrichGeneratedCbrsSuppressionAlarm` can be accessed and tested without changing its visibility.

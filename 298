@@ -1,85 +1,66 @@
-The ambiguity error occurs because the `log` method in the `Logger` class has multiple overloaded versions, and the Mockito `doAnswer` invocation is not specific enough to determine which version to use.
-
-To resolve this ambiguity, you can explicitly specify the method signature you are trying to mock. Here, I assume you are trying to mock the `log(Level, String, Supplier<?>...)` method. Use `doAnswer` with the correct argument matchers to disambiguate the method call.
-
-Here’s the revised test case:
-
-### Revised Test Case
-```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.when;
-
-import java.lang.reflect.Method;
-import java.net.UnknownHostException;
-import java.time.OffsetDateTime;
-import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
-import java.util.function.Supplier;
-
+import com.verizon.apollo.suppression.model.AlarmDetailsModel;
+import com.verizon.apollo.suppression.repository.CbrsSuppressionRepository;
+import com.verizon.apollo.suppression.model.CbrsSuppressionAlarm;
+import com.verizon.apollo.suppression.repository.AlarmPostingRepository;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
+import static org.mockito.ArgumentMatchers.*;
+
+@ExtendWith(MockitoExtension.class)
 public class EnrichmentServiceTest {
 
     @Mock
     private CbrsSuppressionRepository cbrsSuppressionRepository;
 
     @Mock
-    private Logger logger;
+    private AlarmPostingRepository alarmPostingRepository;
 
     @InjectMocks
     private EnrichmentService enrichmentService;
 
-    public EnrichmentServiceTest() {
-        MockitoAnnotations.openMocks(this);
+    @Test
+    public void testExecuteEnrichmentTask_AlarmListToBeEnrichedNotEmpty() {
+        OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        List<CbrsSuppressionAlarm> alarmList = new ArrayList<>();
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setTotalActiveSuppressedCount(5);
+        alarm.setTotalSuppressedCount(10);
+        alarmList.add(alarm);
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt())).thenReturn(java.util.Optional.of(alarmList));
+        when(alarmPostingRepository.findByAlarmIdentity(anyString())).thenReturn(java.util.Optional.of(new AlarmDetailsModel("{}", 1L));
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
+
+        assertEquals(false, result);
+        verify(cbrsSuppressionRepository, times(1)).updateAlarmEnrichmentTime(any(), anyString());
     }
 
     @Test
-    public void testExecuteEnrichmentTask_AlarmsToBeEnriched() throws Exception {
+    public void testExecuteEnrichmentTask_AlarmListToBeEnrichedEmpty() {
         OffsetDateTime currentTimestamp = OffsetDateTime.now();
-        Boolean isAlarmToBeEnriched = true;
 
-        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
-        alarm.setExpiryTime(currentTimestamp.plusMinutes(1));
-        alarm.setTotalActiveSuppressedCount(1);
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt())).thenReturn(java.util.Optional.of(new ArrayList<>()));
 
-        List<CbrsSuppressionAlarm> alarms = Collections.singletonList(alarm);
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
 
-        // Mock repository to return a list of alarms
-        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
-                .thenReturn(Optional.of(alarms));
-
-        // Mock the logger to simulate the enrichment process
-        doAnswer(invocation -> {
-            Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
-            method.setAccessible(true);
-            method.invoke(enrichmentService, alarm);
-            return null;
-        }).when(logger).log(any(), anyString(), any(Supplier.class));
-
-        // Execute the task
-        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
-
-        // Verify the result
-        assertTrue(result);
+        assertEquals(false, result);
     }
+
+    // Add more test cases to cover additional scenarios
+
 }
 ```
-
-### Explanation
-- **Ambiguity Resolution**: The `doAnswer` method now explicitly matches the `log(Level, String, Supplier<?>...)` method by using `any(Supplier.class)` for the last argument.
-- **Mocking Logger**: This ensures the correct method signature is used when mocking the logger.
-
-### Additional Notes
-- Ensure that the `Logger` class and the `EnrichmentService` class used in your project align with the method signatures provided.
-- If you need to mock a different overloaded method, adjust the argument matchers accordingly to match the exact method signature.
-
-If you have any specific details about the `Logger` class or the `EnrichmentService` class that differ from standard implementations, please provide them, and I can further tailor the solution.

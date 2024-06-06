@@ -5,6 +5,7 @@ import io.cucumber.java.en.*;
 import java.util.*;
 import org.mockito.*;
 import com.jcraft.jsch.ChannelSftp;
+import org.junit.jupiter.api.BeforeEach;
 
 public class AuditStatusMapSteps {
 
@@ -14,8 +15,8 @@ public class AuditStatusMapSteps {
     private LuceneCollectionAuditRepository luceneCollectionAuditRepo;
     private JSchFactory jschFactory;
     private OutputstreamCreator outputstreamCreator;
-    
-    @Before
+
+    @BeforeEach
     public void setUp() {
         luceneCollectionAuditRepo = mock(LuceneCollectionAuditRepository.class);
         jschFactory = mock(JSchFactory.class);
@@ -26,17 +27,17 @@ public class AuditStatusMapSteps {
 
     @Given("a list of files with more than 1000 entries in the remote directory")
     public void a_list_of_files_with_more_than_1000_entries() {
-        files = createFiles(1500, false);
+        files = createFiles(1500);
     }
 
     @Given("a list of files with less than or equal to 1000 entries in the remote directory")
     public void a_list_of_files_with_less_than_or_equal_to_1000_entries() {
-        files = createFiles(1000, false);
+        files = createFiles(1000);
     }
 
     @Given("a list of files in the remote directory")
     public void a_list_of_files_in_the_remote_directory() {
-        files = createFiles(500, false);
+        files = createFiles(500);
     }
 
     @Given("an empty list of files")
@@ -44,38 +45,39 @@ public class AuditStatusMapSteps {
         files = new ArrayList<>();
     }
 
-    @Given("the lucenceCollectionAuditRepo returns audit statuses for the file paths")
-    public void the_lucenceCollectionAuditRepo_returns_audit_statuses() {
-        when(luceneCollectionAuditRepo.findLatestByFilePaths(anyList()))
-            .thenReturn(createAudits(files, true));
-    }
-
-    @Given("the lucenceCollectionAuditRepo returns no audit statuses for the file paths")
-    public void the_lucenceCollectionAuditRepo_returns_no_audit_statuses() {
-        when(luceneCollectionAuditRepo.findLatestByFilePaths(anyList()))
-            .thenReturn(Collections.emptyList());
-    }
-
-    @Given("the lucenceCollectionAuditRepo returns some null audits for the file paths")
-    public void the_lucenceCollectionAuditRepo_returns_some_null_audits() {
-        when(luceneCollectionAuditRepo.findLatestByFilePaths(anyList()))
-            .thenReturn(createAudits(files, false));
-    }
-
     @Given("a list of files and directories in the remote directory")
     public void a_list_of_files_and_directories_in_the_remote_directory() {
         files = createFilesAndDirectories(500);
     }
 
+    @Given("the luceneCollectionAuditRepo returns audit statuses for the file paths")
+    public void the_luceneCollectionAuditRepo_returns_audit_statuses() {
+        when(luceneCollectionAuditRepo.findLatestByFilePaths(anyList()))
+            .thenReturn(createAudits(files, true));
+    }
+
+    @And("the luceneCollectionAuditRepo returns no audit statuses for the file paths")
+    public void the_luceneCollectionAuditRepo_returns_no_audit_statuses() {
+        when(luceneCollectionAuditRepo.findLatestByFilePaths(anyList()))
+            .thenReturn(Collections.emptyList());
+    }
+
+    @And("the luceneCollectionAuditRepo returns some null audits for the file paths")
+    public void the_luceneCollectionAuditRepo_returns_some_null_audits() {
+        when(luceneCollectionAuditRepo.findLatestByFilePaths(anyList()))
+            .thenReturn(createAudits(files, false));
+    }
+
     @When("the getAuditStatusMap method is called with the list of files and the remote directory")
     public void the_getAuditStatusMap_method_is_called() {
         AuditService auditService = new AuditService(luceneCollectionAuditRepo, jschFactory, outputstreamCreator);
-        auditStatusMap = auditService.getAuditStatusMap(files, remoteDirectory);
+        auditStatusMap = auditService.getAuditStatusMap(new Vector<>(files), remoteDirectory);
     }
 
     @Then("the audit status map should contain the audit statuses for all file paths")
     public void the_audit_status_map_should_contain_audit_statuses() {
-        assertEquals(files.size(), auditStatusMap.size());
+        int expectedFileCount = (int) files.stream().filter(file -> !file.getAttrs().isDir()).count();
+        assertEquals(expectedFileCount, auditStatusMap.size());
     }
 
     @Then("the audit status map should be empty")
@@ -90,10 +92,11 @@ public class AuditStatusMapSteps {
 
     @Then("the audit status map should contain the audit statuses for file paths only, excluding directories")
     public void the_audit_status_map_should_exclude_directories() {
-        assertEquals(files.size() - 50, auditStatusMap.size()); // Assuming 50 directories
+        long expectedFileCount = files.stream().filter(file -> !file.getAttrs().isDir()).count();
+        assertEquals(expectedFileCount, auditStatusMap.size());
     }
 
-    private List<ChannelSftp.LsEntry> createFiles(int count, boolean includeDirs) {
+    private List<ChannelSftp.LsEntry> createFiles(int count) {
         List<ChannelSftp.LsEntry> entries = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
@@ -122,7 +125,7 @@ public class AuditStatusMapSteps {
     private List<CollectionAudit> createAudits(List<ChannelSftp.LsEntry> files, boolean nonNull) {
         List<CollectionAudit> audits = new ArrayList<>();
         for (ChannelSftp.LsEntry file : files) {
-            if (nonNull || Math.random() > 0.1) { // 10% chance of null audit if nonNull is false
+            if (!file.getAttrs().isDir() && (nonNull || Math.random() > 0.1)) { // 10% chance of null audit if nonNull is false
                 CollectionAudit audit = mock(CollectionAudit.class);
                 when(audit.getInputFilePath()).thenReturn(file.getFilename());
                 when(audit.getJobStatus()).thenReturn("Completed");

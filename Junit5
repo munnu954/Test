@@ -1,26 +1,4 @@
-Certainly! Here's a set of JUnit 5 test cases designed to achieve 100% code coverage for the `executeEnrichmentTask` method in the `EnrichmentService` class, including the use of the Reflection API to access the private `enrichGeneratedCbrsSuppressionAlarm` method.
-
-First, you'll need to set up your test dependencies. Ensure you have the following dependencies in your `pom.xml` if you're using Maven:
-
-```xml
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-test</artifactId>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.mockito</groupId>
-    <artifactId>mockito-core</artifactId>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.junit.jupiter</groupId>
-    <artifactId>junit-jupiter-engine</artifactId>
-    <scope>test</scope>
-</dependency>
-```
-
-Now, let's write the test cases. Create a test class `EnrichmentServiceTest` in your test directory.
+The issue you're encountering is due to the fact that when you invoke a method using reflection, any exception thrown by the invoked method is wrapped inside an `InvocationTargetException`. To properly handle this, you need to unwrap the `InvocationTargetException` to check the cause of the actual exception thrown by the method. Here are the updated test cases with this fix:
 
 ```java
 import static org.junit.jupiter.api.Assertions.*;
@@ -28,20 +6,17 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 
 import javax.persistence.OptimisticLockException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.OffsetDateTime;
 import java.util.*;
@@ -186,7 +161,9 @@ public class EnrichmentServiceTest {
         Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
         method.setAccessible(true);
 
-        assertThrows(RuntimeException.class, () -> method.invoke(enrichmentService, alarm));
+        InvocationTargetException exception = assertThrows(InvocationTargetException.class, () -> method.invoke(enrichmentService, alarm));
+        assertTrue(exception.getCause() instanceof RuntimeException);
+        assertTrue(exception.getCause().getCause() instanceof OptimisticLockException);
     }
 
     @Test
@@ -200,18 +177,15 @@ public class EnrichmentServiceTest {
         Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
         method.setAccessible(true);
 
-        assertThrows(RuntimeException.class, () -> method.invoke(enrichmentService, alarm));
+        InvocationTargetException exception = assertThrows(InvocationTargetException.class, () -> method.invoke(enrichmentService, alarm));
+        assertTrue(exception.getCause() instanceof RuntimeException);
+        assertTrue(exception.getCause().getCause() instanceof JsonProcessingException);
     }
 }
 ```
 
-This test class covers the following scenarios:
-1. No active alarms present.
-2. Active alarm already enriched.
-3. Alarms to be enriched.
-4. Exception handling during the enrichment process.
-5. Successful enrichment of an alarm.
-6. Handling of optimistic locking failure.
-7. Handling of JSON processing exceptions.
+### Explanation:
+1. **Unwrapping InvocationTargetException**: The `InvocationTargetException` is caught, and its cause is checked to ensure it matches the expected exception type (`RuntimeException`), and further, the root cause is checked to ensure it matches the specific exception (`OptimisticLockException` for locking failures and `JsonProcessingException` for JSON parsing errors).
+2. **Assertions**: The assertions are updated to properly check the causes of the `InvocationTargetException` to ensure the correct exception is being thrown and handled.
 
-The use of the Reflection API ensures that the private method `enrichGeneratedCbrsSuppressionAlarm` can be accessed and tested without changing its visibility.
+With these changes, your tests should correctly handle and verify the exceptions thrown by the private method when invoked via reflection.

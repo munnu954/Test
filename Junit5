@@ -1,8 +1,18 @@
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.InjectMocks;
+
+import java.lang.reflect.InvocationTargetException;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -10,44 +20,91 @@ public class EnrichmentServiceTest {
 
     @Mock
     private CbrsSuppressionRepository cbrsSuppressionRepository;
-    
+
     @Mock
     private AlarmPostingRepository alarmPostingRepository;
-    
+
     @InjectMocks
     private EnrichmentService enrichmentService;
 
     @Test
-    void testExecuteEnrichmentTaskEnrichedAlarmPresent() {
+    public void testEnrichmentTaskAlreadyCompleted() {
         OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        List<CbrsSuppressionAlarm> activeAlarms = new ArrayList<>();
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setAlarmIdentity("alarm1");
+        alarm.setLastEnrichmentTime(currentTimestamp.plusMinutes(1));
+        activeAlarms.add(alarm);
+
+        Optional<List<CbrsSuppressionAlarm>> activeCbrsSuppressionAlarmListOptional = Optional.of(activeAlarms);
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(10)).thenReturn(activeCbrsSuppressionAlarmListOptional);
+
         Boolean isAlarmToBeEnriched = true;
+        isAlarmToBeEnriched = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
 
-        List<CbrsSuppressionAlarm> suppressionAlarms = new ArrayList<>();
-        CbrsSuppressionAlarm alarmWithEnrichment = new CbrsSuppressionAlarm(); // create an alarm with lastEnrichmentTime set
-        suppressionAlarms.add(alarmWithEnrichment);
-
-        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(enrichmentService.getCbrsAlarmsEnrichmentLimit()))
-                .thenReturn(Optional.of(suppressionAlarms));
-
-        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
-
-        assertFalse(result);
+        assertFalse(isAlarmToBeEnriched);
     }
 
     @Test
-    void testExecuteEnrichmentTaskAlarmListToBeEnriched() {
+    public void testEnrichmentTaskNotCompleted() {
         OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        List<CbrsSuppressionAlarm> activeAlarms = new ArrayList<>();
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setAlarmIdentity("alarm1");
+        alarm.setExpiryTime(currentTimestamp.plusMinutes(1));
+        alarm.setTotalActiveSuppressedCount(1);
+        activeAlarms.add(alarm);
+
+        Optional<List<CbrsSuppressionAlarm>> activeCbrsSuppressionAlarmListOptional = Optional.of(activeAlarms);
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(10)).thenReturn(activeCbrsSuppressionAlarmListOptional);
+
         Boolean isAlarmToBeEnriched = true;
+        isAlarmToBeEnriched = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
 
-        List<CbrsSuppressionAlarm> suppressionAlarms = new ArrayList<>();
-        CbrsSuppressionAlarm alarmToBeEnriched = new CbrsSuppressionAlarm(); // create an alarm that should be enriched
-        suppressionAlarms.add(alarmToBeEnriched);
+        assertTrue(isAlarmToBeEnriched);
+    }
 
-        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(enrichmentService.getCbrsAlarmsEnrichmentLimit()))
-                .thenReturn(Optional.of(suppressionAlarms));
+    @Test
+    public void testExceptionInEnrichmentTask() {
+        OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(10)).thenThrow(new RuntimeException("Error"));
 
-        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
+        Boolean isAlarmToBeEnriched = true;
+        isAlarmToBeEnriched = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
 
-        assertTrue(result); // check if the result is true when there are alarms to be enriched
+        assertFalse(isAlarmToBeEnriched);
+    }
+
+    @Test
+    public void testEnrichGeneratedCbrsSuppressionAlarmException() throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
+        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+        alarm.setAlarmIdentity("alarm1");
+
+        OffsetDateTime now = OffsetDateTime.now();
+        alarm.setLastEnrichmentTime(now);
+
+        List<CbrsSuppressionAlarm> alarms = new ArrayList<>();
+        alarms.add(alarm);
+
+        CbrsSuppressionAlarm alarm2 = new CbrsSuppressionAlarm();
+        alarm2.setAlarmIdentity("alarm2");
+
+        List<CbrsSuppressionAlarm> alarmsWithException = new ArrayList<>();
+        alarmsWithException.add(alarm2);
+
+        InvocationTargetException ex = assertThrows(InvocationTargetException.class, () -> {
+            enrichmentService.executeEnrichmentTask(now, true);
+
+            alarmsWithException.forEach(a -> {
+                try {
+                    EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class)
+                        .invoke(enrichmentService, a);
+                } catch (Exception e) {
+                    throw new InvocationTargetException(e, e.getMessage());
+                }
+            });
+        });
+
+        assertTrue(ex.getCause() instanceof RuntimeException);
     }
 }

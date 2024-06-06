@@ -1,28 +1,71 @@
-Sure, here is an updated version of the test case that should pass:
+Certainly! Let's delve into the specifics of the updated test cases and the reasoning behind the changes to handle the exceptions correctly.
 
+### Understanding `InvocationTargetException`
+When you use reflection to invoke a method, Java wraps any exception thrown by the method in an `InvocationTargetException`. This can make it tricky to handle the actual exception since the `InvocationTargetException` itself is not the root cause but just a wrapper.
 
+### Addressing the Issue
+The original test cases were expecting a `RuntimeException` directly. However, since the method is invoked via reflection, any `RuntimeException` thrown by the method is wrapped in an `InvocationTargetException`. Therefore, you need to:
+1. Catch the `InvocationTargetException`.
+2. Unwrap it to access the actual exception that was thrown.
+
+### Updated Test Cases
+Here's a detailed look at the updated test cases:
+
+#### Optimistic Locking Failure
+```java
 @Test
-void consume_ShouldNotWriteToExternalFileAndAuditQueue_WhenInputFileExistsAndTopicAccessible() throws IOException, ExecutionException, InterruptedException {
-    // Arrange
-    KafkaConsumer kafkaConsumer = Mockito.mock(KafkaConsumer.class);
-    Mockito.when(kafkaConsumer.util.isKafkaTopicPresent(any())).thenReturn(false); // Simulating topic accessible
-    Mockito.doNothing().when(kafkaConsumer).writeLogToFile(any(), any());
+public void testEnrichGeneratedCbrsSuppressionAlarm_OptimisticLockingFailure() throws JsonProcessingException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+    CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+    alarm.setAlarmIdentity("alarm1");
 
-    SpaceCollector spaceCollector = new SpaceCollector();
-    spaceCollector.setInputFilePath("C:/Temp/input.xml");
-    String data = "{\"inputFilePath\":\"C:/Temp/input.xml\"}";
+    AlarmDetailsModel alarmDetailsModel = new AlarmDetailsModel("{\"key\":\"value\"}", 1L);
 
-    // Act
-    kafkaConsumer.consume(data);
+    when(alarmPostingRepository.findByAlarmIdentity(anyString()))
+            .thenReturn(Optional.of(alarmDetailsModel));
 
-    // Assert
-    Mockito.verify(kafkaConsumer, never()).writeLogToFile(any(), any());
-    Mockito.verify(kafkaConsumer, never()).kafkaInputProducer.sendFailureMessage(any(), any(), any());
+    when(alarmPostingRepository.updateAlarmDetails(anyString(), anyString(), anyLong()))
+            .thenThrow(new OptimisticLockException("Locking error"));
+
+    Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
+    method.setAccessible(true);
+
+    InvocationTargetException exception = assertThrows(InvocationTargetException.class, () -> method.invoke(enrichmentService, alarm));
+    assertTrue(exception.getCause() instanceof RuntimeException);
+    assertTrue(exception.getCause().getCause() instanceof OptimisticLockException);
 }
+```
+In this test:
+1. **Setup**: A mock `AlarmDetailsModel` is returned when `findByAlarmIdentity` is called.
+2. **Simulate Exception**: The `updateAlarmDetails` method is mocked to throw an `OptimisticLockException`.
+3. **Reflection Invocation**: The private method `enrichGeneratedCbrsSuppressionAlarm` is invoked using reflection.
+4. **Assertion**: The test catches the `InvocationTargetException` and asserts that its cause is a `RuntimeException`, and further, that the root cause is an `OptimisticLockException`.
 
+#### JSON Processing Exception
+```java
+@Test
+public void testEnrichGeneratedCbrsSuppressionAlarm_JsonProcessingException() throws JsonProcessingException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+    CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
+    alarm.setAlarmIdentity("alarm1");
 
-The error you were getting was because you were trying to use the when() method on a non-mock object. The when() method is only meant to be used on mock objects, so you need to create a mock object of the KafkaConsumer class before you can use it.
+    when(alarmPostingRepository.findByAlarmIdentity(anyString()))
+            .thenReturn(Optional.of(new AlarmDetailsModel("invalid json", 1L)));
 
-I have updated the test case to create a mock object of the KafkaConsumer class and then use the when() method to stub out the isKafkaTopicPresent() method. I have also updated the verify() methods to verify that the writeLogToFile() and kafkaInputProducer.sendFailureMessage() methods were not called.
+    Method method = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
+    method.setAccessible(true);
 
-I hope this helps
+    InvocationTargetException exception = assertThrows(InvocationTargetException.class, () -> method.invoke(enrichmentService, alarm));
+    assertTrue(exception.getCause() instanceof RuntimeException);
+    assertTrue(exception.getCause().getCause() instanceof JsonProcessingException);
+}
+```
+In this test:
+1. **Setup**: A mock `AlarmDetailsModel` with invalid JSON is returned when `findByAlarmIdentity` is called.
+2. **Reflection Invocation**: The private method `enrichGeneratedCbrsSuppressionAlarm` is invoked using reflection.
+3. **Assertion**: The test catches the `InvocationTargetException` and asserts that its cause is a `RuntimeException`, and further, that the root cause is a `JsonProcessingException`.
+
+### Key Points
+1. **Reflection Handling**: When using reflection, always be prepared to handle `InvocationTargetException` and unwrap it to check the actual exception thrown.
+2. **Mocks and Stubs**: Properly setting up mocks and stubs to simulate different scenarios is crucial for testing exception handling.
+3. **Assertions**: Ensure your assertions are checking the correct levels of exception wrapping, especially when dealing with nested exceptions.
+
+By following these steps, you ensure that your tests accurately reflect and handle the exceptions thrown by the underlying logic, even when using reflection to invoke private methods. This approach provides a robust mechanism to verify the behavior of your code under different exceptional conditions.

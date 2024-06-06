@@ -1,138 +1,26 @@
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+Feature: Retrieving Audit Status for Files
 
-import io.cucumber.java.en.*;
-import java.util.*;
-import org.mockito.*;
-import com.jcraft.jsch.ChannelSftp;
-import com.jcraft.jsch.SftpATTRS;
-import org.junit.jupiter.api.BeforeEach;
+  Scenario: Retrieving audit status when file list is empty
+    Given the list of files is empty
+    When the audit status is retrieved
+    Then the audit status map should be empty
 
-public class AuditStatusMapSteps {
+  Scenario: Retrieving audit status for less than 1000 files
+    Given the list of files contains less than 1000 files
+    When the audit status is retrieved
+    Then the audit status map should contain status for each file
 
-    private List<ChannelSftp.LsEntry> files;
-    private String remoteDirectory;
-    private Map<String, String> auditStatusMap;
-    private LuceneCollectionAuditRepository luceneCollectionAuditRepo;
-    private JSchFactory jschFactory;
-    private OutputstreamCreator outputstreamCreator;
+  Scenario: Retrieving audit status for exactly 1000 files
+    Given the list of files contains exactly 1000 files
+    When the audit status is retrieved
+    Then the audit status map should contain status for each file
 
-    @BeforeEach
-    public void setUp() {
-        luceneCollectionAuditRepo = mock(LuceneCollectionAuditRepository.class);
-        jschFactory = mock(JSchFactory.class);
-        outputstreamCreator = mock(OutputstreamCreator.class);
-        files = new ArrayList<>();
-        remoteDirectory = "/remote/dir/";
-    }
+  Scenario: Retrieving audit status for more than 1000 files
+    Given the list of files contains more than 1000 files
+    When the audit status is retrieved
+    Then the audit status map should contain status for each file
 
-    @Given("a list of files with more than 1000 entries in the remote directory")
-    public void a_list_of_files_with_more_than_1000_entries() {
-        files = createFiles(1500);
-    }
-
-    @Given("a list of files with less than or equal to 1000 entries in the remote directory")
-    public void a_list_of_files_with_less_than_or_equal_to_1000_entries() {
-        files = createFiles(1000);
-    }
-
-    @Given("a list of files in the remote directory")
-    public void a_list_of_files_in_the_remote_directory() {
-        files = createFiles(500);
-    }
-
-    @Given("an empty list of files")
-    public void an_empty_list_of_files() {
-        files = new ArrayList<>();
-    }
-
-    @Given("a list of files and directories in the remote directory")
-    public void a_list_of_files_and_directories_in_the_remote_directory() {
-        files = createFilesAndDirectories(500);
-    }
-
-    @And("the luceneCollectionAuditRepo returns audit statuses for the file paths")
-    public void the_luceneCollectionAuditRepo_returns_audit_statuses() {
-        when(luceneCollectionAuditRepo.findLatestByFilePaths(anyList()))
-            .thenReturn(createAudits(files, true));
-    }
-
-    @And("the luceneCollectionAuditRepo returns no audit statuses for the file paths")
-    public void the_luceneCollectionAuditRepo_returns_no_audit_statuses() {
-        when(luceneCollectionAuditRepo.findLatestByFilePaths(anyList()))
-            .thenReturn(Collections.emptyList());
-    }
-
-    @And("the luceneCollectionAuditRepo returns some null audits for the file paths")
-    public void the_luceneCollectionAuditRepo_returns_some_null_audits() {
-        when(luceneCollectionAuditRepo.findLatestByFilePaths(anyList()))
-            .thenReturn(createAudits(files, false));
-    }
-
-    @When("the getAuditStatusMap method is called with the list of files and the remote directory")
-    public void the_getAuditStatusMap_method_is_called() {
-        AuditService auditService = new AuditService(luceneCollectionAuditRepo, jschFactory, outputstreamCreator);
-        auditStatusMap = auditService.getAuditStatusMap(new Vector<>(files), remoteDirectory);
-    }
-
-    @Then("the audit status map should contain the audit statuses for all file paths")
-    public void the_audit_status_map_should_contain_audit_statuses() {
-        int expectedFileCount = (int) files.stream().filter(file -> !file.getAttrs().isDir()).count();
-        assertEquals(expectedFileCount, auditStatusMap.size());
-    }
-
-    @Then("the audit status map should be empty")
-    public void the_audit_status_map_should_be_empty() {
-        assertTrue(auditStatusMap.isEmpty());
-    }
-
-    @Then("the audit status map should not contain any entries for null audits")
-    public void the_audit_status_map_should_not_contain_null_audits() {
-        assertTrue(auditStatusMap.values().stream().noneMatch(Objects::isNull));
-    }
-
-    @Then("the audit status map should contain the audit statuses for file paths only, excluding directories")
-    public void the_audit_status_map_should_exclude_directories() {
-        long expectedFileCount = files.stream().filter(file -> !file.getAttrs().isDir()).count();
-        assertEquals(expectedFileCount, auditStatusMap.size());
-    }
-
-    private List<ChannelSftp.LsEntry> createFiles(int count) {
-        List<ChannelSftp.LsEntry> entries = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            ChannelSftp.LsEntry file = mock(ChannelSftp.LsEntry.class);
-            SftpATTRS attrs = mock(SftpATTRS.class);
-            when(attrs.isDir()).thenReturn(false);
-            when(file.getAttrs()).thenReturn(attrs);
-            when(file.getFilename()).thenReturn("file" + i + ".txt");
-            entries.add(file);
-        }
-        return entries;
-    }
-
-    private List<ChannelSftp.LsEntry> createFilesAndDirectories(int count) {
-        List<ChannelSftp.LsEntry> entries = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            ChannelSftp.LsEntry entry = mock(ChannelSftp.LsEntry.class);
-            SftpATTRS attrs = mock(SftpATTRS.class);
-            when(attrs.isDir()).thenReturn(i % 10 == 0); // Every 10th entry is a directory
-            when(entry.getAttrs()).thenReturn(attrs);
-            when(entry.getFilename()).thenReturn((i % 10 == 0 ? "dir" : "file") + i);
-            entries.add(entry);
-        }
-        return entries;
-    }
-
-    private List<CollectionAudit> createAudits(List<ChannelSftp.LsEntry> files, boolean nonNull) {
-        List<CollectionAudit> audits = new ArrayList<>();
-        for (ChannelSftp.LsEntry file : files) {
-            if (!file.getAttrs().isDir() && (nonNull || Math.random() > 0.1)) { // 10% chance of null audit if nonNull is false
-                CollectionAudit audit = mock(CollectionAudit.class);
-                when(audit.getInputFilePath()).thenReturn(file.getFilename());
-                when(audit.getJobStatus()).thenReturn("Completed");
-                audits.add(audit);
-            }
-        }
-        return audits;
-    }
-}
+  Scenario: Partitioning list of files
+    Given a list of files
+    When the list is partitioned into chunks
+    Then each chunk should contain the specified number of files

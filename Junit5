@@ -1,91 +1,53 @@
-It looks like the approach of using Mockito's `doAnswer` to mock a private method isn't working directly. Instead, we need to use reflection directly within our test method to call the private method.
-
-Here's how you can do it:
-
-1. **Remove the mocking of the private method.**
-2. **Use reflection within the test case to call the private method directly.**
-
-Here's the updated test code:
-
-```java
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.lang.reflect.Method;
-import java.time.OffsetDateTime;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Optional;
-
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.Mockito.*;
+import org.mockito.InjectMocks;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 public class EnrichmentServiceTest {
 
     @Mock
     private CbrsSuppressionRepository cbrsSuppressionRepository;
-
+    
     @Mock
-    private AlarmPostingRepository alarmPostingRespository;
-
+    private AlarmPostingRepository alarmPostingRepository;
+    
     @InjectMocks
     private EnrichmentService enrichmentService;
 
-    private OffsetDateTime currentTimestamp;
+    @Test
+    void testExecuteEnrichmentTaskEnrichedAlarmPresent() {
+        OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        Boolean isAlarmToBeEnriched = true;
 
-    @BeforeEach
-    public void setUp() {
-        currentTimestamp = OffsetDateTime.now();
+        List<CbrsSuppressionAlarm> suppressionAlarms = new ArrayList<>();
+        CbrsSuppressionAlarm alarmWithEnrichment = new CbrsSuppressionAlarm(); // create an alarm with lastEnrichmentTime set
+        suppressionAlarms.add(alarmWithEnrichment);
+
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(enrichmentService.getCbrsAlarmsEnrichmentLimit()))
+                .thenReturn(Optional.of(suppressionAlarms));
+
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
+
+        assertFalse(result);
     }
 
     @Test
-    public void testExecuteEnrichmentTask_AlarmsToBeEnriched() throws Exception {
-        List<CbrsSuppressionAlarm> alarms = Arrays.asList(
-                createCbrsSuppressionAlarm("alarm1", currentTimestamp.minusMinutes(10)),
-                createCbrsSuppressionAlarm("alarm2", currentTimestamp.plusMinutes(5))
-        );
+    void testExecuteEnrichmentTaskAlarmListToBeEnriched() {
+        OffsetDateTime currentTimestamp = OffsetDateTime.now();
+        Boolean isAlarmToBeEnriched = true;
 
-        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(anyInt()))
-                .thenReturn(Optional.of(alarms));
+        List<CbrsSuppressionAlarm> suppressionAlarms = new ArrayList<>();
+        CbrsSuppressionAlarm alarmToBeEnriched = new CbrsSuppressionAlarm(); // create an alarm that should be enriched
+        suppressionAlarms.add(alarmToBeEnriched);
 
-        // Use reflection to access the private method
-        Method enrichMethod = EnrichmentService.class.getDeclaredMethod("enrichGeneratedCbrsSuppressionAlarm", CbrsSuppressionAlarm.class);
-        enrichMethod.setAccessible(true);
+        when(cbrsSuppressionRepository.retrieveActiveSuppressionPatterns(enrichmentService.getCbrsAlarmsEnrichmentLimit()))
+                .thenReturn(Optional.of(suppressionAlarms));
 
-        for (CbrsSuppressionAlarm alarm : alarms) {
-            enrichMethod.invoke(enrichmentService, alarm);
-        }
+        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, isAlarmToBeEnriched);
 
-        Boolean result = enrichmentService.executeEnrichmentTask(currentTimestamp, true);
-
-        assertTrue(result);
-        verify(cbrsSuppressionRepository, times(1)).retrieveActiveSuppressionPatterns(anyInt());
-    }
-
-    private CbrsSuppressionAlarm createCbrsSuppressionAlarm(String alarmIdentity, OffsetDateTime lastEnrichmentTime) {
-        CbrsSuppressionAlarm alarm = new CbrsSuppressionAlarm();
-        alarm.setAlarmIdentity(alarmIdentity);
-        alarm.setLastActivatedTime(lastEnrichmentTime);
-        return alarm;
+        assertTrue(result); // check if the result is true when there are alarms to be enriched
     }
 }
-```
-
-### Explanation:
-1. **Reflection Setup**:
-   - The method `EnrichmentService.class.getDeclaredMethod` is used to get the private method `enrichGeneratedCbrsSuppressionAlarm`.
-   - `setAccessible(true)` is called to bypass Java access control checks.
-
-2. **Invoke the Private Method**:
-   - We loop through the list of alarms and manually invoke the private method using `enrichMethod.invoke`.
-
-3. **Remove the Mockito `doAnswer`**:
-   - Since we are calling the private method directly using reflection, there's no need to mock it with Mockito.
-
-This should resolve the access issue while allowing you to test the private method using reflection.

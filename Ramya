@@ -1,90 +1,33 @@
-import com.jcraft.jsch.ChannelSftp;
-import com.jcraft.jsch.SftpATTRS;
-import io.cucumber.java.en.*;
-import org.mockito.Mockito;
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-import java.util.*;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
+private Map<String, String> getAuditStatusMap(Vector<ChannelSftp.LsEntry> files, String remoteDirectory) {
+    // Convert the list of files into a list of file paths, filtering out directories
+    List<String> filePaths = files.stream()
+            .filter(file -> !file.getAttrs().isDir())
+            .map(file -> remoteDirectory + file.getFilename()) // Use absolute file path
+            .collect(Collectors.toList());
 
-public class AuditStatusServiceSteps {
+    // Initialize the final map to hold the audit status
+    Map<String, String> auditStatusMap = new HashMap<>();
 
-    private LucenceColletionAuditRepo lucenceColletionAuditRepo = Mockito.mock(LucenceColletionAuditRepo.class);
-    private AuditStatusService auditStatusService = new AuditStatusService(lucenceColletionAuditRepo);
-    private Vector<ChannelSftp.LsEntry> files;
-    private Map<String, String> result;
+    // Process the file paths in chunks of 1000
+    final int chunkSize = 1000;
+    for (int i = 0; i < filePaths.size(); i += chunkSize) {
+        // Get the sublist for the current chunk
+        List<String> chunk = filePaths.subList(i, Math.min(filePaths.size(), i + chunkSize));
 
-    private ChannelSftp.LsEntry createMockLsEntry(String filename, boolean isDir) {
-        ChannelSftp.LsEntry entry = mock(ChannelSftp.LsEntry.class);
-        SftpATTRS attrs = mock(SftpATTRS.class);
-        when(attrs.isDir()).thenReturn(isDir);
-        when(entry.getAttrs()).thenReturn(attrs);
-        when(entry.getFilename()).thenReturn(filename);
-        return entry;
+        // Get the latest status for each file path in the current chunk
+        List<CollectionAudit> audits = lucenceColletionAuditRepo.findLatestByFilePaths(chunk);
+
+        // Filter non-null audits and add them to the map
+        Map<String, String> chunkAuditStatusMap = audits.stream()
+                .filter(audit -> audit != null)
+                .collect(Collectors.toMap(
+                        CollectionAudit::getInputFilePath, 
+                        CollectionAudit::getJobStatus
+                ));
+
+        // Add the current chunk's audit status to the final map
+        auditStatusMap.putAll(chunkAuditStatusMap);
     }
 
-    private CollectionAudit generateAudit(String path, String status) {
-        CollectionAudit audit = mock(CollectionAudit.class);
-        when(audit.getInputFilePath()).thenReturn(path);
-        when(audit.getJobStatus()).thenReturn(status);
-        return audit;
-    }
-
-    @Given("an empty list of files")
-    public void an_empty_list_of_files() {
-        files = new Vector<>();
-    }
-
-    @Given("a list of {int} files")
-    public void a_list_of_files(Integer count) {
-        files = IntStream.range(0, count)
-                .mapToObj(i -> createMockLsEntry("file" + i, false))
-                .collect(Collectors.toCollection(Vector::new));
-    }
-
-    @And("each file has a corresponding audit status")
-    public void each_file_has_a_corresponding_audit_status() {
-        List<CollectionAudit> audits = files.stream()
-                .map(file -> generateAudit("/remote/dir/" + file.getFilename(), "STATUS"))
-                .collect(Collectors.toList());
-        when(lucenceColletionAuditRepo.findLatestByFilePaths(anyList())).thenReturn(audits);
-    }
-
-    @When("the user requests the audit status map")
-    public void the_user_requests_the_audit_status_map() {
-        result = auditStatusService.getAuditStatusMap(files, "/remote/dir/");
-    }
-
-    @Then("the audit status map should be empty")
-    public void the_audit_status_map_should_be_empty() {
-        assertEquals(0, result.size());
-    }
-
-    @Then("the audit status map should contain {int} entries")
-    public void the_audit_status_map_should_contain_entries(Integer count) {
-        assertEquals(count.intValue(), result.size());
-    }
-
-    @Then("each entry should have a status of {string}")
-    public void each_entry_should_have_a_status_of(String status) {
-        for (String key : result.keySet()) {
-            assertEquals(status, result.get(key));
-        }
-    }
-
-    @Then("the repository should not be called")
-    public void the_repository_should_not_be_called() {
-        verify(lucenceColletionAuditRepo, never()).findLatestByFilePaths(anyList());
-    }
-
-    @Then("the repository should be called once")
-    public void the_repository_should_be_called_once() {
-        verify(lucenceColletionAuditRepo, times(1)).findLatestByFilePaths(anyList());
-    }
-
-    @Then("the repository should be called twice")
-    public void the_repository_should_be_called_twice() {
-        verify(lucenceColletionAuditRepo, times(2)).findLatestByFilePaths(anyList());
-    }
+    return auditStatusMap;
 }

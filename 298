@@ -1,86 +1,140 @@
+To achieve 100% code coverage for the `fetchRuleDetails` method, we need to cover all possible execution paths, including successful execution, exception handling, retry logic, and exceeding the retry threshold.
+
+Here's how you can write JUnit 5 test cases to cover these branches:
+
+1. Successful API call.
+2. Exception occurs on the first call and retry succeeds.
+3. Exception occurs and exceeds retry threshold.
+4. Exception occurs and retry within threshold.
+
+Here is the JUnit 5 test code:
+
+```java
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+import java.lang.reflect.Field;
+
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class RMFApiClientTest {
 
+    @InjectMocks
+    private RMFApiClient rmfApiClient;
+
     @Mock
     private RestTemplate restTemplate;
 
-    private RMFApiClient rmfApiClient = new RMFApiClient();
+    @Value("${rmf.url}")
+    private String RMF_FETCH_URL = "http://dummyurl.com";
+
+    @Value("${AUTH_APIGEE_KEY}")
+    private String RMF_Auth_Key = "dummykey";
+
+    @Value("${RMF_API_RETRY_THRESHOLD_COUNT}")
+    private Integer RMFApiThresholdCount = 3;
+
+    @BeforeEach
+    public void setUp() throws Exception {
+        // Setting the private fields
+        setPrivateField(rmfApiClient, "RMF_FETCH_URL", RMF_FETCH_URL);
+        setPrivateField(rmfApiClient, "RMF_Auth_Key", RMF_Auth_Key);
+        setPrivateField(rmfApiClient, "RMFApiThresholdCount", RMFApiThresholdCount);
+        setPrivateField(rmfApiClient, "rmfAPIRetry", 0);
+    }
+
+    private void setPrivateField(Object target, String fieldName, Object value) throws Exception {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
 
     @Test
-    public void testFetchRuleDetails_SuccessfulResponse() {
-        // Given
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "dummyAuthKey");
-        HttpEntity<Object> httpEntity = new HttpEntity<>(new Object(), headers);
-        ResponseEntity<Object> mockResponse = ResponseEntity.ok().body(new Object());
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), eq(httpEntity), eq(Object.class)))
-                .thenReturn(mockResponse);
+    public void testFetchRuleDetails_Success() {
+        Object requestParam = new Object();
+        ResponseEntity<Object> expectedResponse = new ResponseEntity<>(HttpStatus.OK);
 
-        // When
-        ResponseEntity<Object> response = rmfApiClient.fetchRuleDetails(new Object());
+        when(restTemplate.exchange(eq(RMF_FETCH_URL), eq(HttpMethod.POST), any(HttpEntity.class), eq(Object.class)))
+                .thenReturn(expectedResponse);
 
-        // Then
+        ResponseEntity<Object> response = rmfApiClient.fetchRuleDetails(requestParam);
+
         assertNotNull(response);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        verify(restTemplate, times(1)).exchange(eq(RMF_FETCH_URL), eq(HttpMethod.POST), any(HttpEntity.class), eq(Object.class));
     }
 
     @Test
-    public void testFetchRuleDetails_ExceptionThrown_RetryLimitReached() {
-        // Given
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(Object.class)))
-                .thenThrow(new RestClientException("Error"));
+    public void testFetchRuleDetails_ExceptionAndRetrySuccess() throws Exception {
+        Object requestParam = new Object();
+        ResponseEntity<Object> expectedResponse = new ResponseEntity<>(HttpStatus.OK);
 
-        // When
-        ResponseEntity<Object> response = rmfApiClient.fetchRuleDetails(new Object());
+        when(restTemplate.exchange(eq(RMF_FETCH_URL), eq(HttpMethod.POST), any(HttpEntity.class), eq(Object.class)))
+                .thenThrow(new RestClientException("Exception"))
+                .thenReturn(expectedResponse);
 
-        // Then
-        assertNull(response);
-    }
+        ResponseEntity<Object> response = rmfApiClient.fetchRuleDetails(requestParam);
 
-    @Test
-    public void testFetchRuleDetails_ExceptionThrown_RetryAttempt() {
-        // Given
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "dummyAuthKey");
-        HttpEntity<Object> httpEntity = new HttpEntity<>(new Object(), headers);
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), eq(httpEntity), eq(Object.class)))
-                .thenThrow(new RestClientException("Error"));
-
-        // When
-        ResponseEntity<Object> response = rmfApiClient.fetchRuleDetails(new Object());
-
-        // Then
-        assertNull(response);
-    }
-
-    @Test
-    public void testFetchRuleDetails_SuccessfulResponse_RetryAttempt() {
-        // Given
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "dummyAuthKey");
-        HttpEntity<Object> httpEntity = new HttpEntity<>(new Object(), headers);
-        ResponseEntity<Object> mockResponse = ResponseEntity.ok().body(new Object());
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), eq(httpEntity), eq(Object.class)))
-                .thenReturn(mockResponse, mockResponse, mockResponse)
-                .thenThrow(new RestClientException("Error"));
-
-        // When
-        ResponseEntity<Object> response = rmfApiClient.fetchRuleDetails(new Object());
-
-        // Then
         assertNotNull(response);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        verify(restTemplate, times(2)).exchange(eq(RMF_FETCH_URL), eq(HttpMethod.POST), any(HttpEntity.class), eq(Object.class));
+    }
+
+    @Test
+    public void testFetchRuleDetails_ExceptionAndExceedRetryThreshold() throws Exception {
+        Object requestParam = new Object();
+
+        when(restTemplate.exchange(eq(RMF_FETCH_URL), eq(HttpMethod.POST), any(HttpEntity.class), eq(Object.class)))
+                .thenThrow(new RestClientException("Exception"));
+
+        setPrivateField(rmfApiClient, "rmfAPIRetry", 3);
+
+        ResponseEntity<Object> response = rmfApiClient.fetchRuleDetails(requestParam);
+
+        assertNull(response);
+        verify(restTemplate, times(1)).exchange(eq(RMF_FETCH_URL), eq(HttpMethod.POST), any(HttpEntity.class), eq(Object.class));
+    }
+
+    @Test
+    public void testFetchRuleDetails_ExceptionAndRetryWithinThreshold() throws Exception {
+        Object requestParam = new Object();
+        ResponseEntity<Object> expectedResponse = new ResponseEntity<>(HttpStatus.OK);
+
+        when(restTemplate.exchange(eq(RMF_FETCH_URL), eq(HttpMethod.POST), any(HttpEntity.class), eq(Object.class)))
+                .thenThrow(new RestClientException("Exception"))
+                .thenReturn(expectedResponse);
+
+        setPrivateField(rmfApiClient, "rmfAPIRetry", 1);
+
+        ResponseEntity<Object> response = rmfApiClient.fetchRuleDetails(requestParam);
+
+        assertNotNull(response);
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        verify(restTemplate, times(2)).exchange(eq(RMF_FETCH_URL), eq(HttpMethod.POST), any(HttpEntity.class), eq(Object.class));
     }
 }
+```
+
+In the above code:
+
+- `setUp()` method initializes the required private fields of the `RMFApiClient` using reflection.
+- `setPrivateField()` is a utility method to set private fields via reflection.
+- Test cases cover all scenarios:
+  - `testFetchRuleDetails_Success`: Covers the successful API call.
+  - `testFetchRuleDetails_ExceptionAndRetrySuccess`: Covers the scenario where an exception occurs and retry succeeds.
+  - `testFetchRuleDetails_ExceptionAndExceedRetryThreshold`: Covers the scenario where exceptions occur and retry threshold is exceeded.
+  - `testFetchRuleDetails_ExceptionAndRetryWithinThreshold`: Covers the scenario where an exception occurs and retry is attempted within the threshold limit.
+
+This should give you 100% code coverage for the `fetchRuleDetails` method.

@@ -1,119 +1,61 @@
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.util.concurrent.TimeUnit;
-
-import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.PulsarClientException;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import java.util.HashMap;
+import java.util.Map;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+class AlarmPostingUtilsTest {
 
-class TestAlarmReceiver {
-
-    @Mock
-    private VMBParams params;
-
-    @Mock
-    private PostingService alarmPointLookupService;
-
-    @Mock
-    private Consumer<byte[]> consumer;
-
+    private Map<String, Object> srcMap;
+    
     @BeforeEach
-    void setup() throws Exception {
-        MockitoAnnotations.initMocks(this);
+    void setUp() {
+        srcMap = new HashMap<>();
+        srcMap.put("testList", List.of("value1", "value2", "value3"));
+        srcMap.put("testMap", Map.of("key1", "val1", "key2", "val2"));
     }
 
     @Test
-    void testGetConnection() throws Exception {
-        VMBConfig vmbConfig = mock(VMBConfig.class);
-        when(params.getConsumerVMBConfig()).thenReturn(vmbConfig);
-
-        Consumer<byte[]> consumer = mock(Consumer.class);
-        when(VMBUtil.createConsumerConnection(vmbConfig, null)).thenReturn(consumer);
-
-        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, null);
-
-        Method getConnectionMethod = AlarmReceiver.class.getDeclaredMethod("getConnection");
-        getConnectionMethod.setAccessible(true);
-        getConnectionMethod.invoke(alarmReceiver);
-
+    void testParse_withSimpleAttribute() throws JsonMappingException, JsonProcessingException {
+        String value = "%test%";
+        String result = AlarmPostingUtils.parse(value, srcMap, "test");
+        assertEquals("value", result);
     }
 
     @Test
-    void testGetConnectionThrowsException() throws Exception {
-        VMBConfig vmbConfig = mock(VMBConfig.class);
-        when(params.getConsumerVMBConfig()).thenReturn(vmbConfig);
-        when(VMBUtil.createConsumerConnection(vmbConfig, null)).thenThrow(new PulsarClientException("Test Exception"));
-
-        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, null);
-
-        Method getConnectionMethod = AlarmReceiver.class.getDeclaredMethod("getConnection");
-        getConnectionMethod.setAccessible(true);
-        getConnectionMethod.invoke(alarmReceiver);
+    void testParse_withNestedAttribute() throws JsonMappingException, JsonProcessingException {
+        String value = "%testMap:key1%";
+        String result = AlarmPostingUtils.parse(value, srcMap, "test");
+        assertEquals("val1", result);
     }
 
     @Test
-    void testGetConnectionReturnsNull() throws Exception {
-        VMBConfig vmbConfig = mock(VMBConfig.class);
-
-        when(params.getConsumerVMBConfig()).thenReturn(vmbConfig);
-
-        when(VMBUtil.createConsumerConnection(vmbConfig, null)).thenReturn(null);
-
-        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, null);
-
-        Method getConnectionMethod = AlarmReceiver.class.getDeclaredMethod("getConnection");
-        getConnectionMethod.setAccessible(true);
-        getConnectionMethod.invoke(alarmReceiver);
+    void testParse_withNestedListAttribute() throws JsonMappingException, JsonProcessingException {
+        String value = "%testList[1]%";
+        String result = AlarmPostingUtils.parse(value, srcMap, "test");
+        assertEquals("value2", result);
     }
 
     @Test
-    void testReceiveMessages() throws Exception {
-        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, alarmPointLookupService);
-
-        Message<byte[]> message = mock(Message.class);
-        when(consumer.getStats()).thenReturn(mock(Consumer.ConsumerStats.class));
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenReturn(message);
-
-        Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
-        receiveMessagesMethod.setAccessible(true);
-        receiveMessagesMethod.invoke(alarmReceiver);
-
-        verify(alarmPointLookupService).addMsgToQueue(message, Instant.class);
+    void testParse_withInvalidAttribute_shouldReturnEmptyString() throws JsonMappingException, JsonProcessingException {
+        String value = "%invalid%";
+        String result = AlarmPostingUtils.parse(value, srcMap, "test");
+        assertEquals("", result);
     }
 
     @Test
-    void testReceiveMessagesNoMessage() throws Exception {
-        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, alarmPointLookupService);
-
-        when(consumer.getStats()).thenReturn(mock(Consumer.ConsumerStats.class));
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenReturn(null);
-
-        Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
-        receiveMessagesMethod.setAccessible(true);
-        receiveMessagesMethod.invoke(alarmReceiver);
-
-        verify(alarmPointLookupService, Mockito.never()).addMsgToQueue(any(), any());
+    void testParse_withInvalidNestedAttribute_shouldReturnEmptyString() throws JsonMappingException, JsonProcessingException {
+        String value = "%testMap:invalid%";
+        String result = AlarmPostingUtils.parse(value, srcMap, "test");
+        assertEquals("", result);
     }
 
     @Test
-    void testReceiveMessagesThrowsException() throws Exception {
-        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, alarmPointLookupService);
-
-        when(consumer.getStats()).thenReturn(mock(Consumer.ConsumerStats.class));
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenThrow(new PulsarClientException("Test Exception"));
-
-        Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
-        receiveMessagesMethod.setAccessible(true);
-        receiveMessagesMethod.invoke(alarmReceiver);
-
-        verify(alarmPointLookupService, Mockito.never()).addMsgToQueue(any(), any());
+    void testParse_withInvalidListIndex_shouldReturnEmptyString() throws JsonMappingException, JsonProcessingException {
+        String value = "%testList[5]%";
+        String result = AlarmPostingUtils.parse(value, srcMap, "test");
+        assertEquals("", result);
     }
 }

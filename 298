@@ -1,125 +1,119 @@
-Absolutely, I can help you write the JUnit 5 test cases to cover all branches of the `parse` method for 100% code coverage. Below is the JUnit 5 test class that aims to cover all the branches:
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.concurrent.TimeUnit;
 
-```java
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
+import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.client.api.PulsarClientException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
 
-import java.util.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+class TestAlarmReceiver {
 
-@ExtendWith(MockitoExtension.class)
-public class AlarmPostingUtilsTest {
+    @Mock
+    private VMBParams params;
 
-    @InjectMocks
-    private AlarmPostingUtils alarmPostingUtils;
+    @Mock
+    private PostingService alarmPointLookupService;
 
-    private Map<String, Object> srcMap;
+    @Mock
+    private Consumer<byte[]> consumer;
 
     @BeforeEach
-    public void setUp() {
-        srcMap = new HashMap<>();
+    void setup() throws Exception {
+        MockitoAnnotations.initMocks(this);
     }
 
     @Test
-    public void testParseWithNoMatches() throws JsonProcessingException {
-        String value = "No variables here";
-        String result = AlarmPostingUtils.parse(value, srcMap, "ruleName");
-        assertEquals(value, result);
+    void testGetConnection() throws Exception {
+        VMBConfig vmbConfig = mock(VMBConfig.class);
+        when(params.getConsumerVMBConfig()).thenReturn(vmbConfig);
+
+        Consumer<byte[]> consumer = mock(Consumer.class);
+        when(VMBUtil.createConsumerConnection(vmbConfig, null)).thenReturn(consumer);
+
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, null);
+
+        Method getConnectionMethod = AlarmReceiver.class.getDeclaredMethod("getConnection");
+        getConnectionMethod.setAccessible(true);
+        getConnectionMethod.invoke(alarmReceiver);
+
     }
 
     @Test
-    public void testParseWithSimpleVariable() throws JsonProcessingException {
-        String value = "Variable is %simpleVar%";
-        srcMap.put("simpleVar", "simpleValue");
-        String result = AlarmPostingUtils.parse(value, srcMap, "ruleName");
-        assertEquals("Variable is simpleValue", result);
+    void testGetConnectionThrowsException() throws Exception {
+        VMBConfig vmbConfig = mock(VMBConfig.class);
+        when(params.getConsumerVMBConfig()).thenReturn(vmbConfig);
+        when(VMBUtil.createConsumerConnection(vmbConfig, null)).thenThrow(new PulsarClientException("Test Exception"));
+
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, null);
+
+        Method getConnectionMethod = AlarmReceiver.class.getDeclaredMethod("getConnection");
+        getConnectionMethod.setAccessible(true);
+        getConnectionMethod.invoke(alarmReceiver);
     }
 
     @Test
-    public void testParseWithNestedVariable() throws JsonProcessingException {
-        String value = "Nested variable is %nestedVar.nestedKey%";
-        Map<String, Object> nestedMap = new HashMap<>();
-        nestedMap.put("nestedKey", "nestedValue");
-        srcMap.put("nestedVar", nestedMap);
-        String result = AlarmPostingUtils.parse(value, srcMap, "ruleName");
-        assertEquals("Nested variable is nestedValue", result);
+    void testGetConnectionReturnsNull() throws Exception {
+        VMBConfig vmbConfig = mock(VMBConfig.class);
+
+        when(params.getConsumerVMBConfig()).thenReturn(vmbConfig);
+
+        when(VMBUtil.createConsumerConnection(vmbConfig, null)).thenReturn(null);
+
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, null);
+
+        Method getConnectionMethod = AlarmReceiver.class.getDeclaredMethod("getConnection");
+        getConnectionMethod.setAccessible(true);
+        getConnectionMethod.invoke(alarmReceiver);
     }
 
     @Test
-    public void testParseWithArrayVariable() throws JsonProcessingException {
-        String value = "Array element is %arrayVar[1]%";
-        List<String> arrayList = Arrays.asList("value0", "value1", "value2");
-        srcMap.put("arrayVar", arrayList);
-        String result = AlarmPostingUtils.parse(value, srcMap, "ruleName");
-        assertEquals("Array element is value1", result);
+    void testReceiveMessages() throws Exception {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, alarmPointLookupService);
+
+        Message<byte[]> message = mock(Message.class);
+        when(consumer.getStats()).thenReturn(mock(Consumer.ConsumerStats.class));
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenReturn(message);
+
+        Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
+        receiveMessagesMethod.setAccessible(true);
+        receiveMessagesMethod.invoke(alarmReceiver);
+
+        verify(alarmPointLookupService).addMsgToQueue(message, Instant.class);
     }
 
     @Test
-    public void testParseWithInvalidArrayIndex() throws JsonProcessingException {
-        String value = "Invalid array index %arrayVar[-1]%";
-        List<String> arrayList = Arrays.asList("value0", "value1", "value2");
-        srcMap.put("arrayVar", arrayList);
-        String result = AlarmPostingUtils.parse(value, srcMap, "ruleName");
-        assertEquals("Invalid array index ", result);
+    void testReceiveMessagesNoMessage() throws Exception {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, alarmPointLookupService);
+
+        when(consumer.getStats()).thenReturn(mock(Consumer.ConsumerStats.class));
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenReturn(null);
+
+        Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
+        receiveMessagesMethod.setAccessible(true);
+        receiveMessagesMethod.invoke(alarmReceiver);
+
+        verify(alarmPointLookupService, Mockito.never()).addMsgToQueue(any(), any());
     }
 
     @Test
-    public void testParseWithNestedArrayVariable() throws JsonProcessingException {
-        String value = "Nested array element is %nestedVar.nestedArray[1]%";
-        Map<String, Object> nestedMap = new HashMap<>();
-        List<String> nestedArray = Arrays.asList("nestedValue0", "nestedValue1");
-        nestedMap.put("nestedArray", nestedArray);
-        srcMap.put("nestedVar", nestedMap);
-        String result = AlarmPostingUtils.parse(value, srcMap, "ruleName");
-        assertEquals("Nested array element is nestedValue1", result);
-    }
+    void testReceiveMessagesThrowsException() throws Exception {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, null, alarmPointLookupService);
 
-    @Test
-    public void testParseWithMissingVariable() throws JsonProcessingException {
-        String value = "Missing variable %missingVar%";
-        String result = AlarmPostingUtils.parse(value, srcMap, "ruleName");
-        assertEquals("Missing variable ", result);
-    }
+        when(consumer.getStats()).thenReturn(mock(Consumer.ConsumerStats.class));
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenThrow(new PulsarClientException("Test Exception"));
 
-    @Test
-    public void testParseWithInvalidNestedKey() throws JsonProcessingException {
-        String value = "Invalid nested key %nestedVar.invalidKey%";
-        Map<String, Object> nestedMap = new HashMap<>();
-        nestedMap.put("nestedKey", "nestedValue");
-        srcMap.put("nestedVar", nestedMap);
-        String result = AlarmPostingUtils.parse(value, srcMap, "ruleName");
-        assertEquals("Invalid nested key ", result);
-    }
+        Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
+        receiveMessagesMethod.setAccessible(true);
+        receiveMessagesMethod.invoke(alarmReceiver);
 
-    @Test
-    public void testParseWithInvalidJsonField() throws JsonProcessingException {
-        String value = "Invalid JSON field %nestedVar.invalidField[0]%";
-        Map<String, Object> nestedMap = new HashMap<>();
-        nestedMap.put("invalidField", "invalidValue");
-        srcMap.put("nestedVar", nestedMap);
-        String result = AlarmPostingUtils.parse(value, srcMap, "ruleName");
-        assertEquals("Invalid JSON field ", result);
+        verify(alarmPointLookupService, Mockito.never()).addMsgToQueue(any(), any());
     }
 }
-```
-
-These test cases cover a variety of scenarios including:
-1. Parsing without any matches.
-2. Parsing with a simple variable.
-3. Parsing with a nested variable.
-4. Parsing with an array variable.
-5. Parsing with an invalid array index.
-6. Parsing with a nested array variable.
-7. Parsing with a missing variable.
-8. Parsing with an invalid nested key.
-9. Parsing with an invalid JSON field.
-
-Make sure to adjust the imports and any necessary constants or methods (like `RulesConstants.getObjectMapper()`, `RulesConstants.EMPTYSTRING`) to fit the actual code in your project.
-
-This should help you achieve close to, if not 100%, code coverage for the `parse` method.

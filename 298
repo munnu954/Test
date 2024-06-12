@@ -1,151 +1,117 @@
-Certainly! Below is the JUnit 5 test case code for `MessageReaderService` class, covering each and every branch for 100% code coverage. The code makes use of reflection API to access the private methods.
+Here is an example of how you can write JUnit 5 test cases to achieve 100% code coverage for the AlarmReceiver class:
 
 ```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.ArgumentCaptor;
-import org.apache.logging.log4j.Logger;
-import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.PulsarClientException;
-import org.apache.pulsar.client.api.Reader;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.mockito.MockitoAnnotations;
 
-import java.util.HashMap;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.concurrent.TimeUnit;
 
-@ExtendWith(MockitoExtension.class)
-public class MessageReaderServiceTest {
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-    @Mock
-    private VMBParams params;
+public class AlarmReceiverTest {
+
+    private AlarmReceiver alarmReceiver;
 
     @Mock
-    private ApolloServiceHealth healthChecker;
+    private VMBParams vmbParams;
 
     @Mock
-    private RuleLoadingService rulesLoadingService;
+    private AlarmPostGreService alarmPostGreService;
 
     @Mock
-    private VMBConfig ruleUpdateNotifierVmbConfig;
+    private PostingService alarmPointLookupService;
 
     @Mock
-    private Logger logger;
-
-    @Mock
-    private Reader<byte[]> reader;
-
-    @InjectMocks
-    private MessageReaderService messageReaderService;
+    private Consumer<byte[]> consumer;
 
     @BeforeEach
     public void setUp() {
-        ReflectionTestUtils.setField(messageReaderService, "logger", logger);
-        ReflectionTestUtils.setField(messageReaderService, "ruleUpdateNotifierVmbConfig", ruleUpdateNotifierVmbConfig);
-        ReflectionTestUtils.setField(messageReaderService, "reader", reader);
-        ReflectionTestUtils.setField(messageReaderService, "_run", true);
+        MockitoAnnotations.initMocks(this);
+        alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
+        setField(alarmReceiver, "_consumer", consumer);
+    }
+
+    @AfterEach
+    public void tearDown() {
+        alarmReceiver.shutDown();
     }
 
     @Test
-    public void testInitializeMessageReaderService() {
-        when(params.getReaderVMBConfig()).thenReturn(ruleUpdateNotifierVmbConfig);
-        when(VMBUtil.createReaderConnection(ruleUpdateNotifierVmbConfig, MessageId.latest)).thenReturn(reader);
+    public void testSyncReconnect() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException, NoSuchFieldException {
+        Method syncReconnectMethod = AlarmReceiver.class.getDeclaredMethod("syncReconnect");
+        syncReconnectMethod.setAccessible(true);
 
-        messageReaderService.intialializeMessageReaderService();
+        // Test when reconnectStage is VMB_INITIATE_RECONNECT
+        setField(alarmReceiver, "reconnectStage", AlarmPostingConstants.VMB_INITIATE_RECONNECT);
+        syncReconnectMethod.invoke(alarmReceiver);
+        int reconnectStage = getField(alarmReceiver, "reconnectStage");
+        assertEquals(AlarmPostingConstants.VMB_RECONNECT_COMPLETE, reconnectStage);
 
-        verify(logger).info("---Started initializing MessageReader---");
-        verify(healthChecker, never()).setHealthy(false, "RuleUpdateNotifier is not created");
+        // Test when reconnectStage is not VMB_INITIATE_RECONNECT
+        setField(alarmReceiver, "reconnectStage", AlarmPostingConstants.VMB_RECONNECT_IN_PROGRESS);
+        syncReconnectMethod.invoke(alarmReceiver);
+        reconnectStage = getField(alarmReceiver, "reconnectStage");
+        assertEquals(AlarmPostingConstants.VMB_RECONNECT_COMPLETE, reconnectStage);
     }
 
     @Test
-    public void testInitializeMessageReaderService_NullReader() {
-        when(params.getReaderVMBConfig()).thenReturn(ruleUpdateNotifierVmbConfig);
-        when(VMBUtil.createReaderConnection(ruleUpdateNotifierVmbConfig, MessageId.latest)).thenReturn(null);
+    public void testAcknowledgeMessage() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException, NoSuchFieldException {
+        Method acknowledgeMessageMethod = AlarmReceiver.class.getDeclaredMethod("acknowledgeMessage", Message.class);
+        acknowledgeMessageMethod.setAccessible(true);
 
-        assertThrows(SystemExitException.class, () -> {
-            messageReaderService.intialializeMessageReaderService();
-        });
-
-        verify(logger).fatal("RuleUpdateNotifier reader is NULL. Exiting the program.");
-        verify(healthChecker).setHealthy(false, "RuleUpdateNotifier is not created");
-    }
-
-    @Test
-    public void testRun() throws Exception {
-        doNothing().when(messageReaderService).processMessageFromRuleNotifierVMB();
-        Thread thread = new Thread(messageReaderService);
-        thread.start();
-        Thread.sleep(1000); // let the thread run for a while
-        ReflectionTestUtils.setField(messageReaderService, "_run", false);
-        thread.join();
-    }
-
-    @Test
-    public void testProcessMessageFromRuleNotifierVMB() throws Exception {
         Message<byte[]> message = mock(Message.class);
-        byte[] messageData = "{\"ruleId\":1,\"operation\":\"UPDATE\"}".getBytes();
-        when(reader.isConnected()).thenReturn(true);
-        when(VMBUtil.readMessageThrows(any(), anyLong(), any())).thenReturn(message);
-        when(message.getData()).thenReturn(messageData);
 
-        messageReaderService.processMessageFromRuleNotifierVMB();
+        // Test when acknowledgeMessageThrowsPulsarClientException is successful
+        acknowledgeMessageMethod.invoke(alarmReceiver, message);
+        verify(consumer, times(1)).acknowledge(message);
 
-        verify(logger).info("TOTAL MESSAGES CONSUMED FROM RULEUPDATES VMB:" + 1);
+        // Test when acknowledgeMessageThrowsPulsarClientException throws PulsarClientException
+        doThrow(PulsarClientException.class).when(consumer).acknowledge(message);
+        acknowledgeMessageMethod.invoke(alarmReceiver, message);
+        verify(consumer, times(2)).acknowledge(message);
+
+        // Test when reconnectStage is less than transactionRetryCount
+        setField(alarmReceiver, "reconnectStage", AlarmPostingConstants.VMB_INITIATE_RECONNECT);
+        acknowledgeMessageMethod.invoke(alarmReceiver, message);
+        verify(consumer, times(3)).acknowledge(message);
+
+        // Test when reconnectStage is greater than or equal to transactionRetryCount
+        setField(alarmReceiver, "reconnectStage", AlarmPostingConstants.VMB_RECONNECT_IN_PROGRESS);
+        acknowledgeMessageMethod.invoke(alarmReceiver, message);
+        verify(consumer, times(3)).acknowledge(message);
+
+        // Test when acknowledgeMessageThrowsPulsarClientException throws exception
+        doThrow(Exception.class).when(consumer).acknowledge(message);
+        assertThrows(Exception.class, () -> acknowledgeMessageMethod.invoke(alarmReceiver, message));
     }
 
     @Test
-    public void testProcessMessageFromRuleNotifierVMB_Exception() throws Exception {
-        when(reader.isConnected()).thenReturn(true);
-        when(VMBUtil.readMessageThrows(any(), anyLong(), any())).thenThrow(PulsarClientException.class);
+    public void testRun() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException, NoSuchFieldException {
+        Method runMethod = AlarmReceiver.class.getDeclaredMethod("run");
+        runMethod.setAccessible(true);
 
-        messageReaderService.processMessageFromRuleNotifierVMB();
+        // Test when receiveMessages is successful
+        Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
+        receiveMessagesMethod.setAccessible(true);
+        doNothing().when(alarmReceiver).receiveMessages();
+        runMethod.invoke(alarmReceiver);
+        verify(alarmReceiver, times(1)).receiveMessages();
 
-        verify(logger).warn("PulsarClientException occurred while reading the messages from rule update notifier VMB and Failure count:" + 1);
+        // Test when receiveMessages throws PulsarClientException
+        doThrow(PulsarClientException.class).when(alarmReceiver).receiveMessages();
+        runMethod.invoke(alarmReceiver);
+        verify(alarmReceiver, times(2)).receiveMessages();
+
+        // Test when receiveMessages throws exception
+        doThrow(Exception.class).when(alarmReceiver).receiveMessages();
+        assertThrows(Exception.class, () -> runMethod.invoke(alarmReceiver));
     }
 
-    @Test
-    public void testRemoveOrloadRule() throws Exception {
-        HashMap<String, Object> ruleUpdateMap = new HashMap<>();
-        ruleUpdateMap.put("ruleId", 1);
-        ruleUpdateMap.put("operation", "UPDATE");
-
-        ReflectionTestUtils.invokeMethod(messageReaderService, "removeOrloadRule", ruleUpdateMap);
-
-        verify(rulesLoadingService).removeRule(1L);
-        verify(rulesLoadingService).loadPostingRule(1L);
-    }
-
-    @Test
-    public void testRetryReaderConnection() {
-        ReflectionTestUtils.setField(messageReaderService, "failureRuleUpdateVMBConnectionCount", 5);
-        when(params.getVMBConnectionFailureThresholdCount()).thenReturn(5);
-
-        ReflectionTestUtils.invokeMethod(messageReaderService, "retryReaderConnection");
-
-        verify(logger).fatal("VMB Connection failure threshold count reached in messageReader: 5 and Exiting the program..");
-        verify(healthChecker).setHealthy(false, "VMB Connection failure threshold count reached in messageReader");
-    }
-
-    @Test
-    public void testCloseReader() {
-        when(reader.isConnected()).thenReturn(true);
-
-        ReflectionTestUtils.invokeMethod(messageReaderService, "closeReader");
-
-        verify(logger).info("Closed reader connection successfully");
-    }
-}
-```
-
-#### Notes:
-1. **ReflectionTestUtils**: Used to access private methods and fields.
-2. **SystemExitException**: To handle `System.exit` calls in tests, you may need a custom `SecurityManager` or a similar approach to prevent the JVM from exiting.
-3. **Mocking**: Mockito is used to mock dependencies and verify interactions.
-4. **Branch Coverage**: Different branches and scenarios are tested by setting appropriate return values and verifying the expected behavior.
-
-This should provide comprehensive coverage of the `MessageReaderService` class.
+   

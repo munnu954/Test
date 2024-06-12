@@ -1,3 +1,23 @@
+To resolve the issue of accessing private fields and methods in your `MessageReaderService` class, you can use Java Reflection APIs to set and get private fields and to call private methods. Below is the updated `MessageReaderServiceTest` class with reflection-based access:
+
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.quality.Strictness;
+
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.*;
+
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class MessageReaderServiceTest {
@@ -29,52 +49,83 @@ class MessageReaderServiceTest {
     private static final Logger logger = LogManager.getLogger(MessageReaderService.class);
 
     @BeforeEach
-    void setup() {
+    void setup() throws Exception {
         MockitoAnnotations.openMocks(this);
         messageReaderService = new MessageReaderService();
-        messageReaderService.setParams(params);
-        messageReaderService.setHealthChecker(healthChecker);
-        messageReaderService.setRuleLoadingService(rulesLoadingService);
-        messageReaderService.setRuleUpdateNotifierVmbConfig(ruleUpdateNotifierVmbConfig);
-        messageReaderService.setReader(reader);
+        setPrivateField(messageReaderService, "params", params);
+        setPrivateField(messageReaderService, "healthChecker", healthChecker);
+        setPrivateField(messageReaderService, "ruleUpdateNotifierVmbConfig", ruleUpdateNotifierVmbConfig);
+        setPrivateField(messageReaderService, "rulesLoadingService", rulesLoadingService);
+        setPrivateField(messageReaderService, "reader", reader);
     }
 
     @Test
-    void testRetryReaderConnection() throws IOException {
+    void testRetryReaderConnection() throws Exception {
         when(params.getVMBConnectionFailureThresholdCount()).thenReturn(2);
-        messageReaderService.setFailureRuleUpdateVMBConnectionCount(2);
-        messageReaderService.retryReaderConnection();
+        setPrivateField(messageReaderService, "failureRuleUpdateVMBConnectionCount", 2);
+        callPrivateMethod(messageReaderService, "retryReaderConnection");
         verify(reader, times(1)).close();
     }
 
     @Test
-    void testRetryReaderConnectionWithThresholdCountReached() {
+    void testRetryReaderConnectionWithThresholdCountReached() throws Exception {
         when(params.getVMBConnectionFailureThresholdCount()).thenReturn(2);
-        messageReaderService.setFailureRuleUpdateVMBConnectionCount(3);
+        setPrivateField(messageReaderService, "failureRuleUpdateVMBConnectionCount", 3);
 
-        assertThrows(SystemExitException.class, () -> messageReaderService.retryReaderConnection());
+        assertThrows(SystemExitException.class, () -> callPrivateMethod(messageReaderService, "retryReaderConnection"));
     }
 
     @Test
-    void testCloseReader() throws IOException {
+    void testCloseReader() throws Exception {
         when(reader.isConnected()).thenReturn(true);
-        messageReaderService.closeReader();
+        callPrivateMethod(messageReaderService, "closeReader");
         verify(reader, times(1)).close();
     }
 
     @Test
-    void testCloseReaderWithNullReader() throws IOException {
-        messageReaderService.setReader(null);
-        messageReaderService.closeReader();
+    void testCloseReaderWithNullReader() throws Exception {
+        setPrivateField(messageReaderService, "reader", null);
+        callPrivateMethod(messageReaderService, "closeReader");
         verify(reader, never()).close();
     }
 
     @Test
-    void testShutdown() throws IOException {
-        messageReaderService.shutdown();
-        assertFalse(messageReaderService.getRun());
+    void testShutdown() throws Exception {
+        callPrivateMethod(messageReaderService, "shutdown");
+        assertFalse(getPrivateField(messageReaderService, "_run"));
         verify(reader, times(1)).close();
     }
-} 
 
-In the above updated test case, I have used setter methods in the setup method to set the values for private fields in the MessageReaderService class without needing to change their access level. This way, the test cases should be able to run successfully using the Mockito framework.
+    private Object getPrivateField(Object target, String fieldName) throws Exception {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return field.get(target);
+    }
+
+    private void setPrivateField(Object target, String fieldName, Object value) throws Exception {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
+
+    private void callPrivateMethod(Object target, String methodName, Object... args) throws Exception {
+        Method method = target.getClass().getDeclaredMethod(methodName, getParameterClasses(args));
+        method.setAccessible(true);
+        method.invoke(target, args);
+    }
+
+    private Class<?>[] getParameterClasses(Object[] args) {
+        return Arrays.stream(args)
+                .map(Object::getClass)
+                .toArray(Class<?>[]::new);
+    }
+}
+```
+
+In this updated code:
+- The `setup` method initializes the `MessageReaderService` instance and sets the private fields using the `setPrivateField` helper method.
+- Each test case uses the `callPrivateMethod` and `setPrivateField` helper methods to interact with the private methods and fields.
+- The `getPrivateField` helper method is used to retrieve the value of private fields.
+- Reflection is used to change the accessibility of fields and methods so they can be set or called in the tests.
+
+This approach ensures that you do not need to change the visibility of the private fields and methods in the `MessageReaderService` class, adhering to good encapsulation practices.

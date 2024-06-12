@@ -1,72 +1,97 @@
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+Sure, here is the JUnit 5 test code to cover each branch of the MessageReaderService class:
 
-import org.apache.logging.log4j.Level;
+```java
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.Mockito;
 
-@ExtendWith(MockitoExtension.class)
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.*;
+
 public class MessageReaderServiceTest {
 
-    @Mock
-    private VMBParams params;
-
-    @Mock
-    private ApolloServiceHealth healthChecker;
-
-    @Mock
-    private RuleLoadingService rulesLoadingService;
-
-    @Mock
-    private Reader<byte[]> reader;
-
     private MessageReaderService messageReaderService;
+    private VMBConfig ruleUpdateNotifierVmbConfig;
+    private Reader<byte[]> reader;
+    private ApolloServiceHealth healthChecker;
+    private RuleLoadingService rulesLoadingService;
 
     @BeforeEach
     public void setup() {
+        ruleUpdateNotifierVmbConfig = mock(VMBConfig.class);
+        reader = mock(Reader.class);
+        healthChecker = mock(ApolloServiceHealth.class);
+        rulesLoadingService = mock(RuleLoadingService.class);
+
         messageReaderService = new MessageReaderService();
-        messageReaderService.params = params;
+        messageReaderService.ruleUpdateNotifierVmbConfig = ruleUpdateNotifierVmbConfig;
+        messageReaderService.reader = reader;
         messageReaderService.healthChecker = healthChecker;
         messageReaderService.rulesLoadingService = rulesLoadingService;
-        messageReaderService.reader = reader;
     }
 
     @Test
-    public void testProcessMessageFromRuleNotifierVMB() {
-        // Test when reader is null
-        when(reader.isConnected()).thenReturn(false);
+    public void testInitializeMessageReaderService_whenReaderConnectionIsNull_shouldSetHealthCheckerUnhealthyAndExit() {
+        doReturn(null).when(ruleUpdateNotifierVmbConfig).getTopic();
+
+        messageReaderService.intialializeMessageReaderService();
+
+        verify(healthChecker).setHealthy(false, "RuleUpdateNotifier is not created");
+        assertEquals(1, getFailureRuleUpdateVMBConnectionCount());
+    }
+
+    @Test
+    public void testInitializeMessageReaderService_whenReaderConnectionIsNotNull_shouldNotSetHealthCheckerUnhealthy() {
+        doReturn("topic").when(ruleUpdateNotifierVmbConfig).getTopic();
+
+        messageReaderService.intialializeMessageReaderService();
+
+        verify(healthChecker, never()).setHealthy(false, "RuleUpdateNotifier is not created");
+        assertEquals(0, getFailureRuleUpdateVMBConnectionCount());
+    }
+
+    @Test
+    public void testProcessMessageFromRuleNotifierVMB_whenReaderIsConnectedAndMessageIsNotNull_shouldProcessMessage() throws Exception {
+        Message<byte[]> message = mock(Message.class);
+        doReturn(true).when(reader).isConnected();
+        doReturn(message).when(reader).readMessage(Mockito.anyInt(), Mockito.any());
+
         messageReaderService.processMessageFromRuleNotifierVMB();
-        verify(messageReaderService, times(1)).retryReaderConnection();
 
-        // Test when message is valid
-        when(reader.isConnected()).thenReturn(true);
-        when(VMBUtil.readMessageThrowsPulsarClientException(reader, 1, TimeUnit.SECONDS)).thenReturn(new Message<>(null));
+        verify(messageReaderService, times(1)).removeOrloadRule(Mockito.any());
+        verify(messageReaderService, never()).retryReaderConnection();
+        assertEquals(0, getFailureRuleUpdateVMBConnectionCount());
+    }
+
+    @Test
+    public void testProcessMessageFromRuleNotifierVMB_whenReaderIsNotConnected_shouldRetryReaderConnection() throws Exception {
+        doReturn(false).when(reader).isConnected();
+
         messageReaderService.processMessageFromRuleNotifierVMB();
+
+        verify(messageReaderService, never()).removeOrloadRule(Mockito.any());
         verify(messageReaderService, times(1)).retryReaderConnection();
     }
 
     @Test
-    public void testRetryReaderConnection() {
-        when(params.getVMBConnectionFailureThresholdCount()).thenReturn(3);
+    public void testProcessMessageFromRuleNotifierVMB_whenPulsarClientExceptionOccurs_shouldRetryReaderConnection() throws Exception {
+        doThrow(PulsarClientException.class).when(reader).readMessage(Mockito.anyInt(), Mockito.any());
 
-        // Test when failure count is less than threshold count
-        messageReaderService.failureRuleUpdateVMBConnectionCount = 2;
-        messageReaderService.retryReaderConnection();
-        verify(messageReaderService, times(1)).closeReader();
-        verify(reader, times(1)).close();
+        messageReaderService.processMessageFromRuleNotifierVMB();
 
-        // Test when failure count equals threshold count
-        messageReaderService.failureRuleUpdateVMBConnectionCount = 3;
-        assertThrows(SystemExitException.class, () -> messageReaderService.retryReaderConnection());
+        verify(messageReaderService, never()).removeOrloadRule(Mockito.any());
+        verify(messageReaderService, times(1)).retryReaderConnection();
     }
 
-    @Test
-    public void testRun() {
-        // TODO: Implement test for run method
+    private int getFailureRuleUpdateVMBConnectionCount() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        Method method = MessageReaderService.class.getDeclaredMethod("getFailureRuleUpdateVMBConnectionCount");
+        method.setAccessible(true);
+        return (int) method.invoke(messageReaderService);
     }
-
-    // You can add more test methods for other scenarios as needed
 }
+```
+
+Note: The test code uses Mockito to mock dependencies and uses reflection to access private methods. Make sure to include the necessary dependencies (e.g., Mockito, JUnit Jupiter) in your project.

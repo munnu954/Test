@@ -1,70 +1,63 @@
-Here is an example of JUnit5 test cases covering both branches of the `initializeMessageReaderService()` method using reflection APIs to access private methods in the `MessageReaderService` class:
-
-```java
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.BeforeEach;
-import java.lang.reflect.Method;
-import java.lang.reflect.InvocationTargetException;
-
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
+import java.lang.reflect.Method;
+import java.util.HashMap;
 
 public class MessageReaderServiceTest {
+
+    @Mock
+    private VMBParams vmbParams;
+
+    @Mock
+    private ApolloServiceHealth healthChecker;
+
+    @Mock
+    private RuleLoadingService ruleLoadingService;
 
     private MessageReaderService messageReaderService;
 
     @BeforeEach
-    public void setup() {
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
         messageReaderService = new MessageReaderService();
+        messageReaderService.params = vmbParams;
+        messageReaderService.healthChecker = healthChecker;
+        messageReaderService.rulesLoadingService = ruleLoadingService;
     }
 
     @Test
-    public void testInitializeMessageReaderServiceReaderNotNull() throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
-        // Mocking VMBConfig and Reader
-        VMBConfig vmbConfig = mock(VMBConfig.class);
-        Reader<byte[]> reader = mock(Reader.class);
+    void testIntialializeMessageReaderServiceSuccess() throws Exception {
+        VMBConfig vmbConfig = new VMBConfig();
+        Reader<byte[]> reader = Mockito.mock(Reader.class);
 
-        // Set up the private fields using reflection
-        Method setFieldMethod = MessageReaderService.class.getDeclaredMethod("setField", String.class, Object.class);
-        setFieldMethod.setAccessible(true);
-        setFieldMethod.invoke(messageReaderService, "ruleUpdateNotifierVmbConfig", vmbConfig);
-        setFieldMethod.invoke(messageReaderService, "reader", reader);
+        Mockito.when(vmbParams.getReaderVMBConfig()).thenReturn(vmbConfig);
+        Mockito.when(VMBUtil.createReaderConnection(vmbConfig, MessageId.latest)).thenReturn(reader);
 
-        // Call the initializeMessageReaderService method
-        Method initMethod = MessageReaderService.class.getDeclaredMethod("intialializeMessageReaderService");
-        initMethod.setAccessible(true);
-        initMethod.invoke(messageReaderService);
+        Method method = MessageReaderService.class.getDeclaredMethod("intialializeMessageReaderService");
+        method.setAccessible(true);
+        method.invoke(messageReaderService);
 
-        // Assertion
-        assertNotNull(messageReaderService.getReader());
+        assertNotNull(messageReaderService.reader);
     }
 
     @Test
-    public void testInitializeMessageReaderServiceReaderNull() throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
-        // Mocking VMBConfig
-        VMBConfig vmbConfig = mock(VMBConfig.class);
+    void testIntialializeMessageReaderServiceFailure() throws Exception {
+        VMBConfig vmbConfig = new VMBConfig();
 
-        // Set up the private fields using reflection
-        Method setFieldMethod = MessageReaderService.class.getDeclaredMethod("setField", String.class, Object.class);
-        setFieldMethod.setAccessible(true);
-        setFieldMethod.invoke(messageReaderService, "ruleUpdateNotifierVmbConfig", vmbConfig);
+        Mockito.when(vmbParams.getReaderVMBConfig()).thenReturn(vmbConfig);
+        Mockito.when(VMBUtil.createReaderConnection(vmbConfig, MessageId.latest)).thenReturn(null);
 
-        // Call the initializeMessageReaderService method
-        Method initMethod = MessageReaderService.class.getDeclaredMethod("intialializeMessageReaderService");
-        initMethod.setAccessible(true);
-        initMethod.invoke(messageReaderService);
+        Mockito.doNothing().when(healthChecker).setHealthy(false, "RuleUpdateNotifier is not created");
 
-        // Assertion
-        assertNull(messageReaderService.getReader());
-    }
+        Method method = MessageReaderService.class.getDeclaredMethod("intialializeMessageReaderService");
+        method.setAccessible(true);
 
-    // Helper method to set private fields using reflection
-    private void setField(String fieldName, Object value) throws NoSuchFieldException, IllegalAccessException {
-        Field field = MessageReaderService.class.getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(messageReaderService, value);
+        assertThrows(SystemExitException.class, () -> {
+            method.invoke(messageReaderService);
+        });
     }
 }
-```
-
-In the above test cases, we are using reflection to set the private fields `ruleUpdateNotifierVmbConfig` and `reader` in the `MessageReaderService` class. We then invoke the `initializeMessageReaderService` method and assert the expected behavior based on the set values.

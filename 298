@@ -114,4 +114,130 @@ public class AlarmReceiverTest {
         assertThrows(Exception.class, () -> runMethod.invoke(alarmReceiver));
     }
 
+
+
+
+____________________
+
+Certainly! Here are some additional JUnit 5 test cases to cover different branches for 100% code coverage of the AlarmReceiver class:
+
+```java
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+public class AlarmReceiverTest {
+
+    private AlarmReceiver alarmReceiver;
+
+    @Mock
+    private VMBParams vmbParams;
+
+    @Mock
+    private AlarmPostGreService alarmPostGreService;
+
+    @Mock
+    private PostingService alarmPointLookupService;
+
+    @Mock
+    private Consumer<byte[]> consumer;
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.initMocks(this);
+        alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
+        setField(alarmReceiver, "_consumer", consumer);
+    }
+
+    @AfterEach
+    public void tearDown() {
+        alarmReceiver.shutDown();
+    }
+
+    @Test
+    public void testSyncReconnect() throws Exception {
+        setField(alarmReceiver, "reconnectStage", AlarmPostingConstants.VMB_INITIATE_RECONNECT);
+
+        Method syncReconnectMethod = AlarmReceiver.class.getDeclaredMethod("syncReconnect");
+        syncReconnectMethod.setAccessible(true);
+        syncReconnectMethod.invoke(alarmReceiver);
+
+        int reconnectStage = getField(alarmReceiver, "reconnectStage");
+        assertEquals(AlarmPostingConstants.VMB_RECONNECT_COMPLETE, reconnectStage);
+    }
+
+    @Test
+    public void testAcknowledgeMessage() throws Exception {
+        Message<byte[]> message = mock(Message.class);
+        Method acknowledgeMessageMethod = AlarmReceiver.class.getDeclaredMethod("acknowledgeMessage", Message.class);
+        acknowledgeMessageMethod.setAccessible(true);
+
+        // Test when acknowledgeMessageThrowsPulsarClientException is successful
+        acknowledgeMessageMethod.invoke(alarmReceiver, message);
+        verify(consumer, times(1)).acknowledge(message);
+
+        // Test when acknowledgeMessageThrowsPulsarClientException throws PulsarClientException
+        doThrow(PulsarClientException.class).when(consumer).acknowledge(message);
+        acknowledgeMessageMethod.invoke(alarmReceiver, message);
+        verify(consumer, times(2)).acknowledge(message);
+
+        // Test when reconnectStage is less than transactionRetryCount
+        setField(alarmReceiver, "reconnectStage", AlarmPostingConstants.VMB_INITIATE_RECONNECT);
+        acknowledgeMessageMethod.invoke(alarmReceiver, message);
+        verify(consumer, times(3)).acknowledge(message);
+
+        // Test when reconnectStage is greater than or equal to transactionRetryCount
+        setField(alarmReceiver, "reconnectStage", AlarmPostingConstants.VMB_RECONNECT_IN_PROGRESS);
+        acknowledgeMessageMethod.invoke(alarmReceiver, message);
+        verify(consumer, times(3)).acknowledge(message);
+
+        // Test when acknowledgeMessageThrowsPulsarClientException throws exception
+        doThrow(Exception.class).when(consumer).acknowledge(message);
+        assertThrows(Exception.class, () -> acknowledgeMessageMethod.invoke(alarmReceiver, message));
+    }
+
+    @Test
+    public void testRun() throws Exception {
+        Method runMethod = AlarmReceiver.class.getDeclaredMethod("run");
+        runMethod.setAccessible(true);
+
+        // Test when receiveMessages is successful
+        Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
+        receiveMessagesMethod.setAccessible(true);
+        doNothing().when(alarmReceiver).receiveMessages();
+        runMethod.invoke(alarmReceiver);
+        verify(alarmReceiver, times(1)).receiveMessages();
+
+        // Test when receiveMessages throws PulsarClientException
+        doThrow(PulsarClientException.class).when(alarmReceiver).receiveMessages();
+        runMethod.invoke(alarmReceiver);
+        verify(alarmReceiver, times(2)).receiveMessages();
+
+        // Test when receiveMessages throws exception
+        doThrow(Exception.class).when(alarmReceiver).receiveMessages();
+        assertThrows(Exception.class, () -> runMethod.invoke(alarmReceiver));
+    }
+
+    @Test
+    public void testReceiveMessages() throws Exception {
+        Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
+        receiveMessagesMethod.setAccessible(true);
+
+        // Test when message is not null and data is not null
+        Message<byte[]> message = mock(Message.class);
+        when(message.getData()).thenReturn(new byte[1]);
+        setField(alarmReceiver, "counter", 1);
+        setField(alarmReceiver, "queueSizeToStartThrotlingMsg", 2000);
+        setField(alarmReceiver, "throtlingIntervalInMillis", 500);
+        when(alarmPointLookupService.getQueueSize()).thenReturn(1000);
+        
+        receiveMessagesMethod.invoke(alarmReceiver);
+        }
    

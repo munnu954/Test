@@ -1,79 +1,112 @@
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.pulsar.client.api.Consumer;
+import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.client.api.PulsarClientException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-
 @ExtendWith(MockitoExtension.class)
-public class MessageReaderServiceTest {
+class AlarmReceiverTest {
+
+    private AlarmReceiver alarmReceiver;
 
     @Mock
-    VMBParams params;
+    private VMBParams vmbParams;
+
     @Mock
-    ApolloServiceHealth healthChecker;
+    private AlarmPostGreService alarmPostGreService;
+
     @Mock
-    RuleLoadingService rulesLoadingService;
+    private PostingService alarmPointLookupService;
 
-    @Test
-    public void testInitializeMessageReaderService() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        MessageReaderService messageReaderService = new MessageReaderService();
-        Method method = MessageReaderService.class.getDeclaredMethod("initializeMessageReaderService");
-        method.setAccessible(true);
-
-        method.invoke(messageReaderService);
-
-        assertNotNull(messageReaderService.getRuleUpdateNotifierVmbConfig());
-        assertNotNull(messageReaderService.getReader());
+    @BeforeEach
+    void setUp() {
+        alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
     }
 
     @Test
-    public void testRun() {
-        MessageReaderService messageReaderService = new MessageReaderService();
-        assertFalse(messageReaderService.isRun());
-        messageReaderService.run();
+    void testSyncReconnect() throws Exception {
+        Field reconnectStage = AlarmReceiver.class.getDeclaredField("reconnectStage");
+        reconnectStage.setAccessible(true);
+        reconnectStage.set(null, 1);
+
+        Method syncReconnect = AlarmReceiver.class.getDeclaredMethod("syncReconnect");
+        syncReconnect.setAccessible(true);
+        syncReconnect.invoke(alarmReceiver);
+
+        assertEquals(2, (int) reconnectStage.get(null));
     }
 
     @Test
-    public void testProcessMessageFromRuleNotifierVMB() {
-        MessageReaderService messageReaderService = new MessageReaderService();
-        messageReaderService.setRun(true);
-        messageReaderService.setRuleUpdateNotifierVmbConfig(new VMBConfig());
-        messageReaderService.setReader(mock(Reader.class));
+    void testStaticField() throws Exception {
+        Field reconnectStage = AlarmReceiver.class.getDeclaredField("reconnectStage");
+        reconnectStage.setAccessible(true);
+        reconnectStage.set(null, 1);
 
-        messageReaderService.processMessageFromRuleNotifierVMB();
-
-        assertTrue(messageReaderService.getFailureRuleUpdateVMBConnectionCount() >= 0);
+        assertEquals(1, reconnectStage.get(null));
     }
 
     @Test
-    public void testRetryReaderConnection() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        MessageReaderService messageReaderService = new MessageReaderService();
-        messageReaderService.setFailureRuleUpdateVMBConnectionCount(3);
-        messageReaderService.setParams(params);
+    void testShutDown() throws Exception {
+        Consumer<byte[]> consumer = mock(Consumer.class);
+        Field consumerField = AlarmReceiver.class.getDeclaredField("_consumer");
+        consumerField.setAccessible(true);
+        consumerField.set(alarmReceiver, consumer);
 
-        Method method = MessageReaderService.class.getDeclaredMethod("retryReaderConnection");
-        method.setAccessible(true);
-        method.invoke(messageReaderService);
+        Method shutDown = AlarmReceiver.class.getDeclaredMethod("shutDown");
+        shutDown.setAccessible(true);
+        shutDown.invoke(alarmReceiver);
 
-        assertNotNull(messageReaderService.getReader());
+        verify(consumer, times(1)).close();
     }
 
     @Test
-    public void testCloseReader() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        MessageReaderService messageReaderService = new MessageReaderService();
-        messageReaderService.setReader(mock(Reader.class));
+    void testRun() throws Exception {
+        Method receiveMessages = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
+        receiveMessages.setAccessible(true);
+        receiveMessages.invoke(alarmReceiver);
 
-        Method method = MessageReaderService.class.getDeclaredMethod("closeReader");
-        method.setAccessible(true);
-        method.invoke(messageReaderService);
-
-        assertNull(messageReaderService.getReader());
+        // Add more test cases as per the logic in the run() method
     }
+
+    @Test
+    void testHealth() {
+        assertNotNull(alarmReceiver.health());
+    }
+
+    @Test
+    void testGetConnection() throws Exception {
+        Method getConnection = AlarmReceiver.class.getDeclaredMethod("getConnection");
+        getConnection.setAccessible(true);
+        getConnection.invoke(alarmReceiver);
+
+        // Add assertions based on the behavior of getConnection()
+    }
+
+    @Test
+    void testAcknowledgeMessage() throws Exception {
+        Message<byte[]> message = mock(Message.class);
+        Consumer<byte[]> consumer = mock(Consumer.class);
+
+        Field consumerField = AlarmReceiver.class.getDeclaredField("_consumer");
+        consumerField.setAccessible(true);
+        consumerField.set(alarmReceiver, consumer);
+
+        Method acknowledgeMessage = AlarmReceiver.class.getDeclaredMethod("acknowledgeMessage", Message.class);
+        acknowledgeMessage.setAccessible(true);
+        acknowledgeMessage.invoke(alarmReceiver, message);
+
+        // Add assertions based on the behavior of acknowledgeMessage()
+    }
+
 }
-
-In this test class, we have covered the test cases for initializing the MessageReaderService, running the service, processing messages, retrying reader connection, and closing the reader. We have used reflection to test private methods.
+``` 

@@ -1,78 +1,72 @@
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-
+import org.apache.logging.log4j.Level;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-class MessageReaderServiceTest {
+@ExtendWith(MockitoExtension.class)
+public class MessageReaderServiceTest {
 
     @Mock
-    private VMBConfig vmbConfig;
-    
-    @Mock
-    private Reader<byte[]> reader;
-    
+    private VMBParams params;
+
     @Mock
     private ApolloServiceHealth healthChecker;
-    
+
     @Mock
     private RuleLoadingService rulesLoadingService;
-    
+
+    @Mock
+    private Reader<byte[]> reader;
+
     private MessageReaderService messageReaderService;
-    
+
     @BeforeEach
-    void setup() {
-        MockitoAnnotations.openMocks(this);
-        this.messageReaderService = new MessageReaderService();
-        this.messageReaderService.ruleUpdateNotifierVmbConfig = vmbConfig;
-        this.messageReaderService.reader = reader;
-        this.messageReaderService.healthChecker = healthChecker;
-        this.messageReaderService.rulesLoadingService = rulesLoadingService;
+    public void setup() {
+        messageReaderService = new MessageReaderService();
+        messageReaderService.params = params;
+        messageReaderService.healthChecker = healthChecker;
+        messageReaderService.rulesLoadingService = rulesLoadingService;
+        messageReaderService.reader = reader;
     }
-    
+
     @Test
-    void testProcessMessageFromRuleNotifierVMB_Success() throws NoSuchMethodException, SecurityException, IllegalAccessException, IllegalArgumentException, InvocationTargetException {
-        Method method = MessageReaderService.class.getDeclaredMethod("processMessageFromRuleNotifierVMB");
-        method.setAccessible(true);
-        
-        // Mocking successful message retrieval
-        Message<byte[]> msg = mock(Message.class);
-        when(reader.isConnected()).thenReturn(true);
-        when(VMBUtil.readMessageThrowsPulsarClientException(reader, 1, TimeUnit.SECONDS)).thenReturn(msg);
-        when(msg.getData()).thenReturn("Test Message".getBytes());
-        
-        method.invoke(messageReaderService);
-        
-        // Add assertions here
-    }
-    
-    @Test
-    void testProcessMessageFromRuleNotifierVMB_FailureConnection() throws NoSuchMethodException, SecurityException, IllegalAccessException, IllegalArgumentException, InvocationTargetException {
-        Method method = MessageReaderService.class.getDeclaredMethod("processMessageFromRuleNotifierVMB");
-        method.setAccessible(true);
-        
-        // Mocking connection failure
+    public void testProcessMessageFromRuleNotifierVMB() {
+        // Test when reader is null
         when(reader.isConnected()).thenReturn(false);
-        
-        // Mocking retryReaderConnection method
-        Method retryMethod = MessageReaderService.class.getDeclaredMethod("retryReaderConnection");
-        retryMethod.setAccessible(true);
-        retryMethod.invoke(messageReaderService);
-        
-        method.invoke(messageReaderService);
-        
-        // Add assertions here
+        messageReaderService.processMessageFromRuleNotifierVMB();
+        verify(messageReaderService, times(1)).retryReaderConnection();
+
+        // Test when message is valid
+        when(reader.isConnected()).thenReturn(true);
+        when(VMBUtil.readMessageThrowsPulsarClientException(reader, 1, TimeUnit.SECONDS)).thenReturn(new Message<>(null));
+        messageReaderService.processMessageFromRuleNotifierVMB();
+        verify(messageReaderService, times(1)).retryReaderConnection();
     }
-    
-    // Add more test cases for other scenarios
-    
+
     @Test
-    void testRun_Success() {
-        // Implement test case for run method
+    public void testRetryReaderConnection() {
+        when(params.getVMBConnectionFailureThresholdCount()).thenReturn(3);
+
+        // Test when failure count is less than threshold count
+        messageReaderService.failureRuleUpdateVMBConnectionCount = 2;
+        messageReaderService.retryReaderConnection();
+        verify(messageReaderService, times(1)).closeReader();
+        verify(reader, times(1)).close();
+
+        // Test when failure count equals threshold count
+        messageReaderService.failureRuleUpdateVMBConnectionCount = 3;
+        assertThrows(SystemExitException.class, () -> messageReaderService.retryReaderConnection());
     }
+
+    @Test
+    public void testRun() {
+        // TODO: Implement test for run method
+    }
+
+    // You can add more test methods for other scenarios as needed
 }

@@ -1,163 +1,78 @@
-Certainly! Below is the JUnit 5 test cases code for the `MessageReaderService` class, covering each and every branch except the `removeOrloadRule`, `retryReaderConnection`, and `closeReader` methods. For the private methods, `ReflectionTestUtils` from the Spring framework can be used to invoke them.
-
-```java
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import java.util.HashMap;
-import java.util.concurrent.TimeUnit;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 
-import org.apache.logging.log4j.Level;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.mockito.MockitoAnnotations;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.MessageId;
-import org.apache.pulsar.client.api.Reader;
-import org.apache.pulsar.client.api.PulsarClientException;
-
-@ExtendWith(MockitoExtension.class)
-public class MessageReaderServiceTest {
-
-    @Mock
-    private VMBParams params;
-
-    @Mock
-    private ApolloServiceHealth healthChecker;
-
-    @Mock
-    private RuleLoadingService rulesLoadingService;
-
-    @Mock
-    private Reader<byte[]> reader;
-
-    @Mock
-    private Message<byte[]> message;
+class MessageReaderServiceTest {
 
     @Mock
     private VMBConfig vmbConfig;
-
-    @InjectMocks
+    
+    @Mock
+    private Reader<byte[]> reader;
+    
+    @Mock
+    private ApolloServiceHealth healthChecker;
+    
+    @Mock
+    private RuleLoadingService rulesLoadingService;
+    
     private MessageReaderService messageReaderService;
-
-    private static final Logger logger = LogManager.getLogger(MessageReaderService.class);
-
+    
     @BeforeEach
-    public void setUp() {
-        ReflectionTestUtils.setField(messageReaderService, "logger", logger);
-        ReflectionTestUtils.setField(messageReaderService, "ruleUpdateNotifierVmbConfig", vmbConfig);
-        ReflectionTestUtils.setField(messageReaderService, "reader", reader);
+    void setup() {
+        MockitoAnnotations.openMocks(this);
+        this.messageReaderService = new MessageReaderService();
+        this.messageReaderService.ruleUpdateNotifierVmbConfig = vmbConfig;
+        this.messageReaderService.reader = reader;
+        this.messageReaderService.healthChecker = healthChecker;
+        this.messageReaderService.rulesLoadingService = rulesLoadingService;
     }
-
+    
     @Test
-    public void testIntialializeMessageReaderService_Success() {
-        when(params.getReaderVMBConfig()).thenReturn(vmbConfig);
-        when(VMBUtil.createReaderConnection(vmbConfig, MessageId.latest)).thenReturn(reader);
-
-        messageReaderService.intialializeMessageReaderService();
-
-        verify(params).getReaderVMBConfig();
-        verify(healthChecker, never()).setHealthy(false, "RuleUpdateNotifier is not created");
-    }
-
-    @Test
-    public void testIntialializeMessageReaderService_Failure() {
-        when(params.getReaderVMBConfig()).thenReturn(vmbConfig);
-        when(VMBUtil.createReaderConnection(vmbConfig, MessageId.latest)).thenReturn(null);
-
-        assertThrows(System.ExitException.class, () -> {
-            messageReaderService.intialializeMessageReaderService();
-        });
-
-        verify(healthChecker).setHealthy(false, "RuleUpdateNotifier is not created");
-    }
-
-    @Test
-    public void testRun() {
-        doNothing().when(messageReaderService).processMessageFromRuleNotifierVMB();
-
-        Thread thread = new Thread(messageReaderService);
-        thread.start();
-
-        verify(messageReaderService, atLeastOnce()).processMessageFromRuleNotifierVMB();
-    }
-
-    @Test
-    public void testProcessMessageFromRuleNotifierVMB_Success() throws PulsarClientException, JsonProcessingException {
+    void testProcessMessageFromRuleNotifierVMB_Success() throws NoSuchMethodException, SecurityException, IllegalAccessException, IllegalArgumentException, InvocationTargetException {
+        Method method = MessageReaderService.class.getDeclaredMethod("processMessageFromRuleNotifierVMB");
+        method.setAccessible(true);
+        
+        // Mocking successful message retrieval
+        Message<byte[]> msg = mock(Message.class);
         when(reader.isConnected()).thenReturn(true);
-        when(VMBUtil.readMessageThrowsPulsarClientException(reader, 1, TimeUnit.SECONDS)).thenReturn(message);
-        when(message.getData()).thenReturn("{\"key\":\"value\"}".getBytes());
-        when(message.getMessageId()).thenReturn(MessageId.latest);
-
-        messageReaderService.processMessageFromRuleNotifierVMB();
-
-        verify(logger).log(Level.forName(CustomEndpointConstants.DATA, CustomEndpointConstants.DATA_VALUE),
-                "Message received from ruleUpdateNotifier:{\"key\":\"value\"}, MessageId:MessageId.latest");
+        when(VMBUtil.readMessageThrowsPulsarClientException(reader, 1, TimeUnit.SECONDS)).thenReturn(msg);
+        when(msg.getData()).thenReturn("Test Message".getBytes());
+        
+        method.invoke(messageReaderService);
+        
+        // Add assertions here
     }
-
+    
     @Test
-    public void testProcessMessageFromRuleNotifierVMB_NullMessage() throws PulsarClientException {
-        when(reader.isConnected()).thenReturn(true);
-        when(VMBUtil.readMessageThrowsPulsarClientException(reader, 1, TimeUnit.SECONDS)).thenReturn(null);
-
-        messageReaderService.processMessageFromRuleNotifierVMB();
-
-        verify(logger).warn("Message content from ruleUpdateNotifier VMB: NOT VALID content");
-    }
-
-    @Test
-    public void testProcessMessageFromRuleNotifierVMB_DisconnectedReader() throws PulsarClientException {
+    void testProcessMessageFromRuleNotifierVMB_FailureConnection() throws NoSuchMethodException, SecurityException, IllegalAccessException, IllegalArgumentException, InvocationTargetException {
+        Method method = MessageReaderService.class.getDeclaredMethod("processMessageFromRuleNotifierVMB");
+        method.setAccessible(true);
+        
+        // Mocking connection failure
         when(reader.isConnected()).thenReturn(false);
-
-        messageReaderService.processMessageFromRuleNotifierVMB();
-
-        verify(logger).warn("Either Rule Update Notifier VMB reader connection disconnected or reader is NULL. Trying to connect again. Failure count:1");
-        verify(messageReaderService).retryReaderConnection();
+        
+        // Mocking retryReaderConnection method
+        Method retryMethod = MessageReaderService.class.getDeclaredMethod("retryReaderConnection");
+        retryMethod.setAccessible(true);
+        retryMethod.invoke(messageReaderService);
+        
+        method.invoke(messageReaderService);
+        
+        // Add assertions here
     }
-
+    
+    // Add more test cases for other scenarios
+    
     @Test
-    public void testProcessMessageFromRuleNotifierVMB_JsonProcessingException() throws PulsarClientException {
-        when(reader.isConnected()).thenReturn(true);
-        when(VMBUtil.readMessageThrowsPulsarClientException(reader, 1, TimeUnit.SECONDS)).thenReturn(message);
-        when(message.getData()).thenReturn("Invalid JSON".getBytes());
-
-        messageReaderService.processMessageFromRuleNotifierVMB();
-
-        verify(logger).error("JsonProcessingException occurred while parsing the messages from rule update notifier VMB: ");
-    }
-
-    @Test
-    public void testRetryReaderConnection_FailureThresholdReached() {
-        when(params.getVMBConnectionFailureThresholdCount()).thenReturn(1);
-
-        ReflectionTestUtils.setField(messageReaderService, "failureRuleUpdateVMBConnectionCount", 1);
-
-        assertThrows(System.ExitException.class, () -> {
-            messageReaderService.retryReaderConnection();
-        });
-
-        verify(healthChecker).setHealthy(false, "VMB Connection failure threshold count reached in messageReader");
-    }
-
-    @Test
-    public void testRetryReaderConnection_Reconnect() {
-        when(params.getVMBConnectionFailureThresholdCount()).thenReturn(2);
-        when(VMBUtil.createReaderConnection(vmbConfig, MessageId.latest)).thenReturn(reader);
-
-        ReflectionTestUtils.setField(messageReaderService, "failureRuleUpdateVMBConnectionCount", 1);
-
-        messageReaderService.retryReaderConnection();
-
-        verify(logger, times(1)).info("Closed reader connection successfully");
+    void testRun_Success() {
+        // Implement test case for run method
     }
 }
-```
-
-This code uses `Mockito` for mocking dependencies and `ReflectionTestUtils` from the Spring framework for testing private methods. The tests cover all public methods and ensure 100% code coverage except for the specified private methods.

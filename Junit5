@@ -1,49 +1,149 @@
-Here is an example of Junit5 test cases code covering all the branches of the `intialializeMessageReaderService()` method for 100% code coverage using Reflection APIs to access private methods:
+Certainly! Below is a sample JUnit 5 test class that covers the `intialializeMessageReaderService` method of your `MessageReaderService` class. This includes the two branches: one where the reader is successfully created and one where it is not, triggering a fatal log and a system exit. We'll use the Mockito framework to mock dependencies and Reflection APIs to access private methods.
 
 ```java
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.Spy;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.powermock.reflect.Whitebox;
-
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import java.lang.reflect.Method;
+
+import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
+
 @ExtendWith(MockitoExtension.class)
-public class MessageReaderServiceTest {
+class MessageReaderServiceTest {
+
+    @InjectMocks
+    private MessageReaderService messageReaderService;
 
     @Mock
     private VMBParams params;
 
-    @Spy
-    private MessageReaderService messageReaderService;
+    @Mock
+    private ApolloServiceHealth healthChecker;
 
-    @Test
-    public void testInitializeMessageReaderServiceNotNullReader() {
-        VMBConfig vmbConfig = new VMBConfig();
-        when(params.getReaderVMBConfig()).thenReturn(vmbConfig);
+    @Mock
+    private RuleLoadingService rulesLoadingService;
 
-        Whitebox.setInternalState(messageReaderService, "params", params);
-        doNothing().when(messageReaderService).retryReaderConnection();
+    @Mock
+    private VMBConfig vmbConfig;
 
-        messageReaderService.intialializeMessageReaderService();
+    @Mock
+    private Reader<byte[]> reader;
 
-        verify(messageReaderService, times(1)).retryReaderConnection();
+    @Mock
+    private Logger logger;
+
+    @BeforeEach
+    void setUp() {
+        // Injecting the mock logger into the service
+        messageReaderService.logger = logger;
     }
 
     @Test
-    public void testInitializeMessageReaderServiceNullReader() {
-        when(params.getReaderVMBConfig()).thenReturn(null);
+    void testInitializeMessageReaderService_ReaderNotNull() throws Exception {
+        // Mocking the dependencies
+        when(params.getReaderVMBConfig()).thenReturn(vmbConfig);
+        when(VMBUtil.createReaderConnection(vmbConfig, MessageId.latest)).thenReturn(reader);
+        when(reader.isConnected()).thenReturn(true);
+        
+        // Call the method using reflection
+        Method method = MessageReaderService.class.getDeclaredMethod("intialializeMessageReaderService");
+        method.setAccessible(true);
+        method.invoke(messageReaderService);
+        
+        // Verification
+        verify(logger).info("---Started initializing MessageReader---");
+        verify(logger, never()).fatal(anyString());
+        verify(healthChecker, never()).setHealthy(eq(false), anyString());
+    }
 
-        Whitebox.setInternalState(messageReaderService, "params", params);
-        doNothing().when(messageReaderService).retryReaderConnection();
+    @Test
+    void testInitializeMessageReaderService_ReaderIsNull() throws Exception {
+        // Mocking the dependencies
+        when(params.getReaderVMBConfig()).thenReturn(vmbConfig);
+        when(VMBUtil.createReaderConnection(vmbConfig, MessageId.latest)).thenReturn(null);
 
-        messageReaderService.intialializeMessageReaderService();
+        // Mocking system exit
+        SystemExitControl.forbidSystemExitCall();
 
-        verify(messageReaderService, never()).retryReaderConnection();
+        // Call the method using reflection
+        Method method = MessageReaderService.class.getDeclaredMethod("intialializeMessageReaderService");
+        method.setAccessible(true);
+
+        try {
+            method.invoke(messageReaderService);
+            fail("Expected SystemExitException");
+        } catch (InvocationTargetException e) {
+            assertTrue(e.getCause() instanceof SystemExitControl.SystemExitException); // Ensure System.exit() was called
+        } finally {
+            SystemExitControl.enableSystemExitCall();
+        }
+
+        // Verification
+        verify(logger).info("---Started initializing MessageReader---");
+        verify(logger).fatal("RuleUpdateNotifier reader is NULL. Exiting the program.");
+        verify(healthChecker).setHealthy(false, "RuleUpdateNotifier is not created");
     }
 }
 ```
 
-In this test class, we are using Mockito for mocking dependencies and PowerMock's `Whitebox` to set the internal state of the `MessageReaderService` class in order to access and test private methods like `retryReaderConnection()`. The `testInitializeMessageReaderServiceNotNullReader()` method tests the case where the `reader` is not null, and the `retryReaderConnection()` method should be called once. The `testInitializeMessageReaderServiceNullReader()` method tests the case where the `reader` is null, and the `retryReaderConnection()` method should not be called.
+In this code:
+
+1. **Mockito** is used to mock dependencies (`VMBParams`, `ApolloServiceHealth`, `RuleLoadingService`, `VMBConfig`, and `Reader<byte[]>`).
+2. **Reflection** is used to access and invoke the private method `intialializeMessageReaderService`.
+3. **SystemExitControl** is a hypothetical utility class used to prevent `System.exit()` calls during the test and to verify that it was called. You may need to implement this utility or use an existing library that provides similar functionality.
+
+Here is a simple implementation of the `SystemExitControl` class for testing purposes:
+
+```java
+public final class SystemExitControl {
+    private static SecurityManager originalSecurityManager;
+
+    public static void forbidSystemExitCall() {
+        originalSecurityManager = System.getSecurityManager();
+        System.setSecurityManager(new NoExitSecurityManager());
+    }
+
+    public static void enableSystemExitCall() {
+        System.setSecurityManager(originalSecurityManager);
+    }
+
+    private static class NoExitSecurityManager extends SecurityManager {
+        @Override
+        public void checkPermission(java.security.Permission perm) {
+            // Allow everything.
+        }
+
+        @Override
+        public void checkPermission(java.security.Permission perm, Object context) {
+            // Allow everything.
+        }
+
+        @Override
+        public void checkExit(int status) {
+            super.checkExit(status);
+            throw new SystemExitException(status);
+        }
+    }
+
+    public static class SystemExitException extends SecurityException {
+        private final int status;
+
+        public SystemExitException(int status) {
+            super("System.exit() called with status: " + status);
+            this.status = status;
+        }
+
+        public int getStatus() {
+            return status;
+        }
+    }
+}
+```
+
+This should provide you with a complete JUnit 5 test class that covers the `intialializeMessageReaderService` method for 100% code coverage.

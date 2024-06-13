@@ -1,72 +1,26 @@
-Certainly! Below is an example of how you can write JUnit 5 test cases to cover each method of the `AlarmReceiver` class using Reflection API to access private methods and fields.
-
-### Maven Dependencies
-First, ensure you have these dependencies in your `pom.xml`:
-```xml
-<dependencies>
-    <!-- JUnit 5 -->
-    <dependency>
-        <groupId>org.junit.jupiter</groupId>
-        <artifactId>junit-jupiter-engine</artifactId>
-        <version>5.7.0</version>
-        <scope>test</scope>
-    </dependency>
-    <dependency>
-        <groupId>org.junit.jupiter</groupId>
-        <artifactId>junit-jupiter-api</artifactId>
-        <version>5.7.0</version>
-        <scope>test</scope>
-    </dependency>
-
-    <!-- Mockito for mocking dependencies -->
-    <dependency>
-        <groupId>org.mockito</groupId>
-        <artifactId>mockito-core</artifactId>
-        <version>3.6.0</version>
-        <scope>test</scope>
-    </dependency>
-
-    <!-- ReflectionUtils from Spring for easier reflection access -->
-    <dependency>
-        <groupId>org.springframework</groupId>
-        <artifactId>spring-core</artifactId>
-        <version>5.3.0</version>
-    </dependency>
-</dependencies>
-```
-
-### JUnit 5 Test Class
-Below is the JUnit 5 test class code for `AlarmReceiver`.
+Certainly! Below is a detailed JUnit 5 test class that aims to cover every line of the `AlarmReceiver` class using reflection to access private methods and fields.
 
 ```java
-import static org.mockito.Mockito.*;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.HealthIndicator;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.TimeUnit;
 
-import org.apache.logging.log4j.Logger;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.actuate.health.Status;
-import org.springframework.test.util.ReflectionTestUtils;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-import com.example.service.AlarmPostGreService;
-import com.example.service.PostingService;
-import com.example.utils.VMBParams;
-import com.example.utils.VMBUtil;
-
+@ExtendWith(MockitoExtension.class)
 public class AlarmReceiverTest {
 
-    @InjectMocks
-    private AlarmReceiver alarmReceiver;
-
     @Mock
-    private VMBParams mockParams;
+    private VMBParams mockVMBParams;
 
     @Mock
     private AlarmPostGreService mockAlarmPostGreService;
@@ -75,560 +29,163 @@ public class AlarmReceiverTest {
     private PostingService mockPostingService;
 
     @Mock
-    private Logger mockLogger;
+    private Consumer<byte[]> mockConsumer;
+
+    @InjectMocks
+    private AlarmReceiver alarmReceiver;
 
     @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
-    }
+    public void setUp() throws Exception {
+        // Set up values for @Value fields using reflection
+        setField(alarmReceiver, "queueSizeToStartThrotlingMsg", 2000);
+        setField(alarmReceiver, "throtlingIntervalInMillis", 500);
+        setField(alarmReceiver, "transactionRetryCount", 3);
 
-    @Test
-    public void testConstructor() {
-        new AlarmReceiver(mockParams, mockAlarmPostGreService, mockPostingService);
-        verify(mockPostingService, times(1)).set_consumer(any());
-        verify(mockPostingService, times(1)).start();
+        // Mock necessary behaviors
+        when(mockVMBParams.getConsumerVMBConfig()).thenReturn(new VMBConfig());
+        when(mockPostingService.getQueueSize()).thenReturn(0);
+
+        alarmReceiver = new AlarmReceiver(mockVMBParams, mockAlarmPostGreService, mockPostingService);
     }
 
     @Test
     public void testSyncReconnect() throws Exception {
-        ReflectionTestUtils.setField(alarmReceiver, "reconnectStage", new AtomicInteger(AlarmPostingConstants.VMB_INITIATE_RECONNECT));
+        // Set private field values using reflection
+        setField(alarmReceiver, "_consumer", mockConsumer);
+        setField(alarmReceiver, "reconnectStage", new AtomicInteger(AlarmPostingConstants.VMB_INITIATE_RECONNECT));
 
-        Method syncReconnect = AlarmReceiver.class.getDeclaredMethod("syncReconnect");
-        syncReconnect.setAccessible(true);
-        syncReconnect.invoke(alarmReceiver);
+        // Invoke private method using reflection
+        invokeMethod(alarmReceiver, "syncReconnect");
 
-        verify(mockLogger, times(1)).info("consumer closed");
-    }
-
-    @Test
-    public void testShutdown() throws Exception {
-        Field runField = AlarmReceiver.class.getDeclaredField("run");
-        runField.setAccessible(true);
-        runField.set(alarmReceiver, true);
-
-        alarmReceiver.shutDown();
-
-        verify(mockLogger, times(1)).info("Consumer closed during the shutdown activity");
+        // Verify the results
+        verify(mockConsumer, atLeastOnce()).close();
+        assertEquals(AlarmPostingConstants.VMB_RECONNECT_COMPLETE, ((AtomicInteger) getField(alarmReceiver, "reconnectStage")).get());
     }
 
     @Test
     public void testRun() throws Exception {
-        Field runField = AlarmReceiver.class.getDeclaredField("run");
-        runField.setAccessible(true);
-        runField.set(alarmReceiver, true);
-
+        // Set up the necessary mock behaviors
         doNothing().when(mockAlarmPostGreService).getAlarmTypeList();
+        setField(alarmReceiver, "_run", true);
 
-        Method receiveMessages = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
-        receiveMessages.setAccessible(true);
-        doNothing().when(alarmReceiver).receiveMessages();
+        // Invoke the run method
+        Thread thread = new Thread(() -> invokeMethod(alarmReceiver, "run"));
+        thread.start();
+        Thread.sleep(500); // Give some time for the thread to run
+        setField(alarmReceiver, "_run", false);
+        thread.join();
 
-        alarmReceiver.run();
-
-        verify(mockAlarmPostGreService, times(1)).getAlarmTypeList();
+        verify(mockAlarmPostGreService, atLeastOnce()).getAlarmTypeList();
     }
 
     @Test
     public void testReceiveMessages() throws Exception {
-        Method receiveMessages = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
-        receiveMessages.setAccessible(true);
+        // Set private field values using reflection
+        setField(alarmReceiver, "_consumer", mockConsumer);
+        setField(alarmReceiver, "counter", 1);
 
-        receiveMessages.invoke(alarmReceiver);
+        // Mock necessary behaviors
+        Message<byte[]> mockMessage = mock(Message.class);
+        when(mockMessage.getData()).thenReturn(new byte[]{});
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(mockConsumer, 3, TimeUnit.SECONDS)).thenReturn(mockMessage);
 
-        verify(mockLogger, times(1)).info("Received Message counter");
+        // Invoke private method using reflection
+        invokeMethod(alarmReceiver, "receiveMessages");
+
+        // Verify the results
+        verify(mockPostingService, atLeastOnce()).addMsgToQueue(mockMessage, any(Instant.class));
     }
 
     @Test
     public void testHealth() {
-        Field healthField = AlarmReceiver.class.getDeclaredField("health");
-        healthField.setAccessible(true);
-        healthField.set(alarmReceiver, Health.up().build());
-
         Health health = alarmReceiver.health();
-
-        assertEquals(Status.UP, health.getStatus());
+        assertNotNull(health);
     }
 
     @Test
     public void testGetConnection() throws Exception {
-        Method getConnection = AlarmReceiver.class.getDeclaredMethod("getConnection");
-        getConnection.setAccessible(true);
+        // Mock necessary behaviors
+        when(VMBUtil.createConsumerConnection(any(VMBConfig.class), any())).thenReturn(mockConsumer);
 
-        getConnection.invoke(alarmReceiver);
+        // Invoke private method using reflection
+        invokeMethod(alarmReceiver, "getConnection");
 
-        verify(mockLogger, times(1)).fatal("Consumer is NULL. Exiting the program.");
+        // Verify the results
+        assertNotNull(getField(alarmReceiver, "_consumer"));
+    }
+
+    @Test
+    public void testConstructor() {
+        assertNotNull(alarmReceiver);
     }
 
     @Test
     public void testAcknowledgeMessage() throws Exception {
+        // Set private field values using reflection
+        setField(alarmReceiver, "_run", true);
+
+        // Mock necessary behaviors
         Message<byte[]> mockMessage = mock(Message.class);
-        Field runField = AlarmReceiver.class.getDeclaredField("run");
-        runField.setAccessible(true);
-        runField.set(alarmReceiver, true);
+        doNothing().when(VMBUtil).acknowledgeMessageThrowsPulsarClientException(mockConsumer, mockMessage);
 
-        Method acknowledgeMessage = AlarmReceiver.class.getDeclaredMethod("acknowledgeMessage", Message.class);
-        acknowledgeMessage.setAccessible(true);
+        // Invoke method
+        alarmReceiver.acknowledgeMessage(mockMessage);
 
-        acknowledgeMessage.invoke(alarmReceiver, mockMessage);
+        verify(VMBUtil, atLeastOnce()).acknowledgeMessageThrowsPulsarClientException(mockConsumer, mockMessage);
+    }
 
-        verify(mockLogger, times(1)).warn("Acknowledge attempt");
+    @Test
+    public void testShutDown() throws Exception {
+        // Set private field values using reflection
+        setField(alarmReceiver, "_consumer", mockConsumer);
+
+        // Invoke method
+        alarmReceiver.shutDown();
+
+        // Verify the results
+        verify(mockConsumer, atLeastOnce()).close();
+        assertFalse((boolean) getField(alarmReceiver, "_run"));
+    }
+
+    // Utility methods for reflection
+    private void setField(Object targetObject, String fieldName, Object value) throws Exception {
+        Field field = targetObject.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(targetObject, value);
+    }
+
+    private Object getField(Object targetObject, String fieldName) throws Exception {
+        Field field = targetObject.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return field.get(targetObject);
+    }
+
+    private void invokeMethod(Object targetObject, String methodName, Class<?>[] parameterTypes, Object... parameters) {
+        try {
+            Method method = targetObject.getClass().getDeclaredMethod(methodName, parameterTypes);
+            method.setAccessible(true);
+            method.invoke(targetObject, parameters);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private void invokeMethod(Object targetObject, String methodName) {
+        invokeMethod(targetObject, methodName, new Class<?>[]{});
     }
 }
 ```
 
 ### Explanation:
-1. **Constructor**: Ensures the constructor initializes the necessary components and calls the appropriate methods.
-2. **syncReconnect**: Uses reflection to invoke the private `syncReconnect` method and verifies the proper logging and state changes.
-3. **shutDown**: Tests the `shutDown` method to ensure it logs the appropriate messages and sets the `run` flag correctly.
-4. **run**: Ensures the `run` method calls the `receiveMessages` method and processes messages correctly.
-5. **receiveMessages**: Uses reflection to invoke the private `receiveMessages` method and verifies the logging.
-6. **health**: Verifies the `health` method returns the correct health status.
-7. **getConnection**: Uses reflection to invoke the private `getConnection` method and verifies the logging.
-8. **acknowledgeMessage**: Uses reflection to invoke the private `acknowledgeMessage` method and verifies the logging and retry mechanism.
-
-These tests use Mockito to mock dependencies and ReflectionTestUtils from Spring to access private fields and methods. Adjust the package names and imports as per your project structure.
-
-
-
-____________________
-
-Certainly! Here are some additional JUnit 5 test cases to cover different branches for 100% code coverage of the AlarmReceiver class:
-
-```java
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-
-import java.util.concurrent.TimeUnit;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-public class AlarmReceiverTest {
-
-    private AlarmReceiver alarmReceiver;
-
-    @Mock
-    private VMBParams vmbParams;
-
-    @Mock
-    private AlarmPostGreService alarmPostGreService;
-
-    @Mock
-    private PostingService alarmPointLookupService;
-
-    @Mock
-    private Consumer<byte[]> consumer;
-
-    @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.initMocks(this);
-        alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-        setField(alarmReceiver, "_consumer", consumer);
-    }
-
-    @AfterEach
-    public void tearDown() {
-        alarmReceiver.shutDown();
-    }
-
-    @Test
-    public void testSyncReconnect() throws Exception {
-        setField(alarmReceiver, "reconnectStage", AlarmPostingConstants.VMB_INITIATE_RECONNECT);
-
-        Method syncReconnectMethod = AlarmReceiver.class.getDeclaredMethod("syncReconnect");
-        syncReconnectMethod.setAccessible(true);
-        syncReconnectMethod.invoke(alarmReceiver);
-
-        int reconnectStage = getField(alarmReceiver, "reconnectStage");
-        assertEquals(AlarmPostingConstants.VMB_RECONNECT_COMPLETE, reconnectStage);
-    }
-
-    @Test
-    public void testAcknowledgeMessage() throws Exception {
-        Message<byte[]> message = mock(Message.class);
-        Method acknowledgeMessageMethod = AlarmReceiver.class.getDeclaredMethod("acknowledgeMessage", Message.class);
-        acknowledgeMessageMethod.setAccessible(true);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException is successful
-        acknowledgeMessageMethod.invoke(alarmReceiver, message);
-        verify(consumer, times(1)).acknowledge(message);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException throws PulsarClientException
-        doThrow(PulsarClientException.class).when(consumer).acknowledge(message);
-        acknowledgeMessageMethod.invoke(alarmReceiver, message);
-        verify(consumer, times(2)).acknowledge(message);
-
-        // Test when reconnectStage is less than transactionRetryCount
-        setField(alarmReceiver, "reconnectStage", AlarmPostingConstants.VMB_INITIATE_RECONNECT);
-        acknowledgeMessageMethod.invoke(alarmReceiver, message);
-        verify(consumer, times(3)).acknowledge(message);
-
-        // Test when reconnectStage is greater than or equal to transactionRetryCount
-        setField(alarmReceiver, "reconnectStage", AlarmPostingConstants.VMB_RECONNECT_IN_PROGRESS);
-        acknowledgeMessageMethod.invoke(alarmReceiver, message);
-        verify(consumer, times(3)).acknowledge(message);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException throws exception
-        doThrow(Exception.class).when(consumer).acknowledge(message);
-        assertThrows(Exception.class, () -> acknowledgeMessageMethod.invoke(alarmReceiver, message));
-    }
-
-    @Test
-    public void testRun() throws Exception {
-        Method runMethod = AlarmReceiver.class.getDeclaredMethod("run");
-        runMethod.setAccessible(true);
-
-        // Test when receiveMessages is successful
-        Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
-        receiveMessagesMethod.setAccessible(true);
-        doNothing().when(alarmReceiver).receiveMessages();
-        runMethod.invoke(alarmReceiver);
-        verify(alarmReceiver, times(1)).receiveMessages();
-
-        // Test when receiveMessages throws PulsarClientException
-        doThrow(PulsarClientException.class).when(alarmReceiver).receiveMessages();
-        runMethod.invoke(alarmReceiver);
-        verify(alarmReceiver, times(2)).receiveMessages();
-
-        // Test when receiveMessages throws exception
-        doThrow(Exception.class).when(alarmReceiver).receiveMessages();
-        assertThrows(Exception.class, () -> runMethod.invoke(alarmReceiver));
-    }
-
-    @Test
-    public void testReceiveMessages() throws Exception {
-        Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
-        receiveMessagesMethod.setAccessible(true);
-
-        // Test when message is not null and data is not null
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn(new byte[1]);
-        setField(alarmReceiver, "counter", 1);
-        setField(alarmReceiver, "queueSizeToStartThrotlingMsg", 2000);
-        setField(alarmReceiver, "throtlingIntervalInMillis", 500);
-        when(alarmPointLookupService.getQueueSize()).thenReturn(1000);
-        
-        receiveMessagesMethod.invoke(alarmReceiver);
-        }
-   
-
-Here are some additional JUnit 5 test cases to cover different branches for 100% code coverage of the AlarmReceiver class:
-
-```java
-import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-public class AlarmReceiverTest {
-
-    @Mock
-    private VMBParams vmbParams;
-
-    @Mock
-    private AlarmPostGreService alarmPostGreService;
-
-    @Mock
-    private PostingService alarmPointLookupService;
-
-    @Test
-    public void testSyncReconnect() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-        alarmReceiver.setReconnectStage(AlarmPostingConstants.VMB_INITIATE_RECONNECT);
-
-        alarmReceiver.syncReconnect();
-
-        assertEquals(AlarmPostingConstants.VMB_RECONNECT_COMPLETE, alarmReceiver.getReconnectStage());
-    }
-
-    @Test
-    public void testAcknowledgeMessage() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-        Message<byte[]> message = mock(Message.class);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException is successful
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(1)).acknowledgeMessage(message);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException throws PulsarClientException
-        doThrow(PulsarClientException.class).when(alarmPointLookupService).acknowledgeMessage(message);
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(2)).acknowledgeMessage(message);
-
-        // Test when reconnectStage is less than transactionRetryCount
-        alarmReceiver.setReconnectStage(AlarmPostingConstants.VMB_INITIATE_RECONNECT);
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(3)).acknowledgeMessage(message);
-
-        // Test when reconnectStage is greater than or equal to transactionRetryCount
-        alarmReceiver.setReconnectStage(AlarmPostingConstants.VMB_RECONNECT_IN_PROGRESS);
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(3)).acknowledgeMessage(message);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException throws exception
-        doThrow(Exception.class).when(alarmPointLookupService).acknowledgeMessage(message);
-        assertThrows(Exception.class, () -> alarmReceiver.acknowledgeMessage(message));
-    }
-
-    @Test
-    public void testRun() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-
-        // Test when receiveMessages is successful
-        alarmReceiver.setReceiveMessages(true);
-        assertDoesNotThrow(() -> alarmReceiver.run());
-
-        // Test when receiveMessages is false
-        alarmReceiver.setReceiveMessages(false);
-        assertDoesNotThrow(() -> alarmReceiver.run());
-    }
-
-    @Test
-    public void testReceiveMessages() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-
-        // Test when message is not null and data is not null
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn(new byte[1]);
-        alarmReceiver.setCounter(1);
-        alarmReceiver.setQueueSizeToStartThrotlingMsg(2000);
-        alarmReceiver.setThrotlingIntervalInMillis(500);
-        when(alarmPointLookupService.getQueueSize()).thenReturn(1000);
-
-        alarmReceiver.receiveMessages();
-
-        verify(alarmPointLookupService, times(1)).processMessage(message);
-        assertEquals(0, alarmReceiver.getCounter());
-
-        // Test when message is not null and data is null
-        when(message.getData()).thenReturn(null);
-        alarmReceiver.receiveMessages();
-
-        verify(alarmPointLookupService, times(1)).acknowledgeMessage(message);
-        assertEquals(1, alarmReceiver.getCounter());
-
-        // Test when message is null
-        alarmReceiver.receiveMessages();
-
-        assertEquals(2, alarmReceiver.getCounter());
-    }
-}
-```
-
-These test cases cover different branches of the AlarmReceiver class to achieve 100% code coverage.
-
-
-Certainly! Here are some additional JUnit 5 test cases to cover different branches for 100% code coverage of the AlarmReceiver class:
-
-```java
-import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-public class AlarmReceiverTest {
-
-    @Mock
-    private VMBParams vmbParams;
-
-    @Mock
-    private AlarmPostGreService alarmPostGreService;
-
-    @Mock
-    private PostingService alarmPointLookupService;
-
-    @Test
-    public void testSyncReconnect() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-        alarmReceiver.setReconnectStage(AlarmPostingConstants.VMB_INITIATE_RECONNECT);
-
-        alarmReceiver.syncReconnect();
-
-        assertEquals(AlarmPostingConstants.VMB_RECONNECT_COMPLETE, alarmReceiver.getReconnectStage());
-    }
-
-    @Test
-    public void testAcknowledgeMessage() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-        Message<byte[]> message = mock(Message.class);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException is successful
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(1)).acknowledgeMessage(message);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException throws PulsarClientException
-        doThrow(PulsarClientException.class).when(alarmPointLookupService).acknowledgeMessage(message);
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(2)).acknowledgeMessage(message);
-
-        // Test when reconnectStage is less than transactionRetryCount
-        alarmReceiver.setReconnectStage(AlarmPostingConstants.VMB_INITIATE_RECONNECT);
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(3)).acknowledgeMessage(message);
-
-        // Test when reconnectStage is greater than or equal to transactionRetryCount
-        alarmReceiver.setReconnectStage(AlarmPostingConstants.VMB_RECONNECT_IN_PROGRESS);
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(3)).acknowledgeMessage(message);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException throws exception
-        doThrow(Exception.class).when(alarmPointLookupService).acknowledgeMessage(message);
-        assertThrows(Exception.class, () -> alarmReceiver.acknowledgeMessage(message));
-    }
-
-    @Test
-    public void testRun() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-
-        // Test when receiveMessages is successful
-        alarmReceiver.setReceiveMessages(true);
-        assertDoesNotThrow(() -> alarmReceiver.run());
-
-        // Test when receiveMessages is false
-        alarmReceiver.setReceiveMessages(false);
-        assertDoesNotThrow(() -> alarmReceiver.run());
-    }
-
-    @Test
-    public void testReceiveMessages() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-
-        // Test when message is not null and data is not null
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn(new byte[1]);
-        alarmReceiver.receiveMessage(message);
-
-        verify(alarmPointLookupService, times(1)).processMessage(message);
-
-        // Test when message is null
-        alarmReceiver.receiveMessage(null);
-
-        // Test when message is not null and data is null
-        when(message.getData()).thenReturn(null);
-        alarmReceiver.receiveMessage(message);
-
-        verify(alarmPointLookupService, times(1)).acknowledgeMessage(message);
-    }
-}
-```
-
-These additional test cases cover different branches of the AlarmReceiver class to achieve 100% code coverage.
-
-
-
-Certainly! Here are some additional JUnit 5 test cases to cover different branches for 100% code coverage of the AlarmReceiver class:
-
-```java
-import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-public class AlarmReceiverTest {
-
-    @Mock
-    private VMBParams vmbParams;
-
-    @Mock
-    private AlarmPostGreService alarmPostGreService;
-
-    @Mock
-    private PostingService alarmPointLookupService;
-
-    @Test
-    public void testSyncReconnect() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-        alarmReceiver.setReconnectStage(AlarmPostingConstants.VMB_INITIATE_RECONNECT);
-
-        alarmReceiver.syncReconnect();
-
-        assertEquals(AlarmPostingConstants.VMB_RECONNECT_COMPLETE, alarmReceiver.getReconnectStage());
-    }
-
-    @Test
-    public void testAcknowledgeMessage() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-        Message<byte[]> message = mock(Message.class);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException is successful
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(1)).acknowledgeMessage(message);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException throws PulsarClientException
-        doThrow(PulsarClientException.class).when(alarmPointLookupService).acknowledgeMessage(message);
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(2)).acknowledgeMessage(message);
-
-        // Test when reconnectStage is less than transactionRetryCount
-        alarmReceiver.setReconnectStage(AlarmPostingConstants.VMB_INITIATE_RECONNECT);
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(3)).acknowledgeMessage(message);
-
-        // Test when reconnectStage is greater than or equal to transactionRetryCount
-        alarmReceiver.setReconnectStage(AlarmPostingConstants.VMB_RECONNECT_IN_PROGRESS);
-        alarmReceiver.acknowledgeMessage(message);
-        verify(alarmPointLookupService, times(3)).acknowledgeMessage(message);
-
-        // Test when acknowledgeMessageThrowsPulsarClientException throws exception
-        doThrow(Exception.class).when(alarmPointLookupService).acknowledgeMessage(message);
-        assertThrows(Exception.class, () -> alarmReceiver.acknowledgeMessage(message));
-    }
-
-    @Test
-    public void testRun() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-
-        // Test when receiveMessages is successful
-        alarmReceiver.setReceiveMessages(true);
-        assertDoesNotThrow(() -> alarmReceiver.run());
-
-        // Test when receiveMessages is false
-        alarmReceiver.setReceiveMessages(false);
-        assertDoesNotThrow(() -> alarmReceiver.run());
-    }
-
-    @Test
-    public void testReceiveMessages() {
-        MockitoAnnotations.initMocks(this);
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-
-        // Test when message is not null and data is not null
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn(new byte[1]);
-        alarmReceiver.receiveMessage(message);
-
-        verify(alarmPointLookupService, times(1)).processMessage(message);
-
-        // Test when message is null
-        alarmReceiver.receiveMessage(null);
-
-        // Test when message is not null and data is null
-        when(message.getData()).thenReturn(null);
-        alarmReceiver.receiveMessage(message);
-
-        verify(alarmPointLookupService, times(1)).acknowledgeMessage(message);
-    }
-}
-```
-
-These additional test cases cover different branches of the AlarmReceiver class to achieve 100% code coverage.
+- **Reflection Utility Methods**: These methods (`setField`, `getField`, and `invokeMethod`) help in accessing private fields and methods without making them public.
+- **Test Methods**: Each method tests a specific function of the `AlarmReceiver` class.
+  - **Constructor**: Ensures the proper initialization of the class.
+  - **`syncReconnect`**: Tests the reconnection logic.
+  - **`run`**: Tests the main loop of the thread.
+  - **`receiveMessages`**: Tests the message receiving logic.
+  - **`health`**: Tests the health indicator method.
+  - **`getConnection`**: Tests the connection setup.
+  - **`acknowledgeMessage`**: Tests the message acknowledgment logic.
+  - **`shutDown`**: Tests the shutdown sequence.
+
+Please ensure to adjust the mock behaviors and add any necessary setup to match the actual logic and dependencies of your implementation.

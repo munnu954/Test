@@ -1,234 +1,82 @@
-Sure, I'll modify the test cases to initialize and set the `VMBConfig` fields within each test case itself to avoid `NullPointerException`. Below is the updated JUnit 5 test case code:
-
-```java
-import static org.mockito.Mockito.*;
-
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.time.Instant;
-import java.util.concurrent.TimeUnit;
-
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.actuate.health.HealthIndicator;
+import java.util.*;
 
-import com.verizon.apollo.vmb.VMBConfig;
-import com.verizon.apollo.vmb.VMBUtil;
-import com.verizon.apollo.vmb.VMBErrorConstants;
-import com.verizon.apollo.vmb.VMBParams;
-import com.verizon.apollo.vmb.AlarmPostGreService;
-import com.verizon.apollo.vmb.PostingService;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.PulsarClientException;
-import org.apache.pulsar.client.api.SubscriptionType;
+public class AlarmPostingUtilsTest {
 
-public class AlarmReceiverTest {
-
-    @Mock
-    private VMBParams mockParams;
-
-    @Mock
-    private AlarmPostGreService mockAlarmPostGreService;
-
-    @Mock
-    private PostingService mockAlarmPointLookupService;
-
-    @Mock
-    private Logger mockLogger;
-
-    @InjectMocks
-    private AlarmReceiver alarmReceiver;
+    private Map<String, Object> srcMap;
 
     @BeforeEach
-    public void setUp() throws Exception {
-        MockitoAnnotations.openMocks(this);
-
-        // Mocking static methods
-        mockStatic(VMBUtil.class);
-
-        // Injecting the logger
-        Field loggerField = AlarmReceiver.class.getDeclaredField("LOGGER");
-        loggerField.setAccessible(true);
-        loggerField.set(alarmReceiver, mockLogger);
-
-        // Initialize the AlarmReceiver instance
-        alarmReceiver = new AlarmReceiver(mockParams, mockAlarmPostGreService, mockAlarmPointLookupService);
+    public void setUp() {
+        srcMap = new HashMap<>();
+        List<String> list = new ArrayList<>();
+        list.add("value1");
+        list.add("value2");
+        srcMap.put("attribute1", list);
+        srcMap.put("attribute2", "value3");
     }
 
     @Test
-    public void testGetConnection_successful() throws Exception {
-        // Initialize vmbConfig and set necessary fields
-        VMBConfig vmbConfig = new VMBConfig();
-        vmbConfig.setTopic("testTopic");
-        vmbConfig.setServiceURL("https://example.com");
-        vmbConfig.setSubscriptionName("exampleSubscription");
-        vmbConfig.setSubscriptionType(SubscriptionType.Shared);
-        vmbConfig.setVmbRetryCount(5);
-        vmbConfig.setVmbRetryTimeIntervalInSeconds(20);
-        vmbConfig.setVmbRetryCycleTimeIntervalInMins(60);
-        vmbConfig.setBatchingMaxPublishDelay(1000);
-        vmbConfig.setSendTimeout(30);
-        vmbConfig.setBlockIfQueueFull(true);
-        vmbConfig.setEnableKeyBaching(false);
-        vmbConfig.setVMBConnectionFailureThresholdCount(3);
-        vmbConfig.setEncryptionStatus(true);
-        vmbConfig.setKeySharedSubscription(false);
-        vmbConfig.setConsumerName("exampleConsumer");
+    public void testParseWithNoMatches() throws JsonMappingException, JsonProcessingException {
+        String value = "No matches";
+        String ruleName = "rule1";
 
-        when(mockParams.getConsumerVMBConfig()).thenReturn(vmbConfig);
+        String result = AlarmPostingUtils.parse(value, srcMap, ruleName);
 
-        // Mock the static method to return a consumer
-        Consumer<byte[]> mockConsumer = mock(Consumer.class);
-        when(VMBUtil.createConsumerConnection(any(VMBConfig.class), isNull())).thenReturn(mockConsumer);
-
-        // Use reflection to call the private method
-        Method getConnectionMethod = AlarmReceiver.class.getDeclaredMethod("getConnection");
-        getConnectionMethod.setAccessible(true);
-        getConnectionMethod.invoke(alarmReceiver);
-
-        // Verify the consumer is set and no fatal log occurred
-        verify(mockLogger, never()).fatal(anyString());
+        assertEquals("No matches", result);
     }
 
     @Test
-    public void testGetConnection_nullConsumer() throws Exception {
-        // Initialize vmbConfig and set necessary fields
-        VMBConfig vmbConfig = new VMBConfig();
-        vmbConfig.setTopic("testTopic");
-        vmbConfig.setServiceURL("https://example.com");
-        vmbConfig.setSubscriptionName("exampleSubscription");
-        vmbConfig.setSubscriptionType(SubscriptionType.Shared);
-        vmbConfig.setVmbRetryCount(5);
-        vmbConfig.setVmbRetryTimeIntervalInSeconds(20);
-        vmbConfig.setVmbRetryCycleTimeIntervalInMins(60);
-        vmbConfig.setBatchingMaxPublishDelay(1000);
-        vmbConfig.setSendTimeout(30);
-        vmbConfig.setBlockIfQueueFull(true);
-        vmbConfig.setEnableKeyBaching(false);
-        vmbConfig.setVMBConnectionFailureThresholdCount(3);
-        vmbConfig.setEncryptionStatus(true);
-        vmbConfig.setKeySharedSubscription(false);
-        vmbConfig.setConsumerName("exampleConsumer");
+    public void testParseWithSingleAttributeExp() throws JsonMappingException, JsonProcessingException {
+        String value = "%attribute2%";
+        String ruleName = "rule2";
 
-        when(mockParams.getConsumerVMBConfig()).thenReturn(vmbConfig);
+        String result = AlarmPostingUtils.parse(value, srcMap, ruleName);
 
-        // Mock the static method to return null
-        when(VMBUtil.createConsumerConnection(any(VMBConfig.class), isNull())).thenReturn(null);
-
-        // Use reflection to call the private method
-        Method getConnectionMethod = AlarmReceiver.class.getDeclaredMethod("getConnection");
-        getConnectionMethod.setAccessible(true);
-        getConnectionMethod.invoke(alarmReceiver);
-
-        // Verify the fatal log occurred
-        verify(mockLogger).fatal("Consumer is NULL. Exiting the program.");
+        assertEquals("value3", result);
     }
 
     @Test
-    public void testGetConnection_exception() throws Exception {
-        // Initialize vmbConfig and set necessary fields
-        VMBConfig vmbConfig = new VMBConfig();
-        vmbConfig.setTopic("testTopic");
-        vmbConfig.setServiceURL("https://example.com");
-        vmbConfig.setSubscriptionName("exampleSubscription");
-        vmbConfig.setSubscriptionType(SubscriptionType.Shared);
-        vmbConfig.setVmbRetryCount(5);
-        vmbConfig.setVmbRetryTimeIntervalInSeconds(20);
-        vmbConfig.setVmbRetryCycleTimeIntervalInMins(60);
-        vmbConfig.setBatchingMaxPublishDelay(1000);
-        vmbConfig.setSendTimeout(30);
-        vmbConfig.setBlockIfQueueFull(true);
-        vmbConfig.setEnableKeyBaching(false);
-        vmbConfig.setVMBConnectionFailureThresholdCount(3);
-        vmbConfig.setEncryptionStatus(true);
-        vmbConfig.setKeySharedSubscription(false);
-        vmbConfig.setConsumerName("exampleConsumer");
+    public void testParseWithNestedJsonField() throws JsonMappingException, JsonProcessingException {
+        String value = "%attribute1:0%";
+        String ruleName = "rule3";
 
-        when(mockParams.getConsumerVMBConfig()).thenReturn(vmbConfig);
+        String result = AlarmPostingUtils.parse(value, srcMap, ruleName);
 
-        // Mock the static method to throw an exception
-        when(VMBUtil.createConsumerConnection(any(VMBConfig.class), isNull())).thenThrow(new RuntimeException("Test Exception"));
-
-        // Use reflection to call the private method
-        Method getConnectionMethod = AlarmReceiver.class.getDeclaredMethod("getConnection");
-        getConnectionMethod.setAccessible(true);
-        getConnectionMethod.invoke(alarmReceiver);
-
-        // Verify the fatal log occurred
-        verify(mockLogger).fatal(eq(VMBErrorConstants.VMB1013), any(RuntimeException.class));
-    }
-
-    // Additional tests for 100% coverage of other methods
-
-    @Test
-    public void testRun() throws Exception {
-        doNothing().when(mockAlarmPostGreService).getAlarmTypeList();
-        doThrow(new PulsarClientException("Test Exception")).when(alarmReceiver).receiveMessages();
-
-        // Run the thread
-        Thread thread = new Thread(alarmReceiver);
-        thread.start();
-        thread.join();
-
-        // Verify the receiveMessages method was called
-        verify(alarmReceiver).receiveMessages();
+        assertEquals("value1", result);
     }
 
     @Test
-    public void testAcknowledgeMessage() throws PulsarClientException {
-        // Mock the message
-        Message<byte[]> mockMessage = mock(Message.class);
+    public void testParseWithArrayIndexOutOfBound() throws JsonMappingException, JsonProcessingException {
+        String value = "%attribute1:3%";
+        String ruleName = "rule4";
 
-        // Call the method
-        alarmReceiver.acknowledgeMessage(mockMessage);
+        String result = AlarmPostingUtils.parse(value, srcMap, ruleName);
 
-        // Verify the acknowledge method was called
-        verifyStatic(VMBUtil.class);
-        VMBUtil.acknowledgeMessageThrowsPulsarClientException(any(Consumer.class), eq(mockMessage));
+        assertEquals("", result);
     }
 
     @Test
-    public void testSyncReconnect() throws Exception {
-        // Use reflection to call the private method
-        Method syncReconnectMethod = AlarmReceiver.class.getDeclaredMethod("syncReconnect");
-        syncReconnectMethod.setAccessible(true);
-        syncReconnectMethod.invoke(alarmReceiver);
+    public void testParseWithNestedJsonFieldAndArrayIndex() throws JsonMappingException, JsonProcessingException {
+        String value = "%attribute1:1%";
+        String ruleName = "rule5";
 
-        // Verify the reconnect logic
-        verifyStatic(VMBUtil.class);
-        VMBUtil.closeConsumer(any(Consumer.class));
+        String result = AlarmPostingUtils.parse(value, srcMap, ruleName);
+
+        assertEquals("value2", result);
     }
 
     @Test
-    public void testShutDown() throws PulsarClientException {
-        // Call the method
-        alarmReceiver.shutDown();
+    public void testParseWithArrayIndexOutOfBoundInJsonField() throws JsonMappingException, JsonProcessingException {
+        String value = "%attribute1:1.xyz%";
+        String ruleName = "rule6";
 
-        // Verify the consumer close method was called
-        verify(mockConsumer).close();
-    }
+        String result = AlarmPostingUtils.parse(value, srcMap, ruleName);
 
-    @Test
-    public void testHealth() {
-        // Call the method
-        Health health = alarmReceiver.health();
-
-        // Verify the health status
-        assertEquals(Health.up().build(), health);
+        assertEquals("", result);
     }
 }
-```
-
-In this updated version:
-1. Each test case initializes and sets the `VMBConfig` fields to avoid `NullPointerException`.
-2. The rest of the structure remains the same, ensuring that the private `getConnection` method is tested using reflection.
-3. The `testGetConnection_successful`, `testGetConnection_nullConsumer`, and `testGetConnection_exception` methods are updated to initialize `VMBConfig` within the test methods.
-4. Other test cases are included to ensure 100% code coverage for the `AlarmReceiver` class.

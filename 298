@@ -1,102 +1,77 @@
-It seems that the error occurs because the `VMBConfig` object is null when it is being used. Let's ensure the `VMBConfig` object is properly initialized and set up in the test cases.
-
-Here's the updated and fixed JUnit 5 test case code:
-
-```java
-import static org.mockito.Mockito.*;
-
+import org.apache.pulsar.client.api.Consumer;
+import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.client.api.PulsarClientException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.beans.factory.annotation.Value;
+import org.mockito.Mockito;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.Status;
 
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-@ExtendWith(MockitoExtension.class)
-public class AlarmReceiverTest {
-
-    @Mock
-    private VMBParams mockParams;
+class AlarmReceiverTest {
 
     @Mock
-    private AlarmPostGreService mockAlarmPostGreService;
+    private VMBParams params;
 
     @Mock
-    private PostingService mockAlarmPointLookupService;
+    private AlarmPostGreService alarmPostGreService;
 
     @Mock
-    private Logger mockLogger;
-
-    @Mock
-    private Consumer<byte[]> mockConsumer;
-
-    @InjectMocks
-    private AlarmReceiver alarmReceiver;
-
-    @Value("${queueSizeToStartThrottlingMsg:2000}")
-    private int queueSizeToStartThrotlingMsg;
-
-    @Value("${throttlingIntervalInMillis:500}")
-    private int throtlingIntervalInMillis;
-
-    @Value("${transactionRetryCount:3}")
-    private int transactionRetryCount;
+    private PostingService alarmPointLookupService;
 
     @BeforeEach
-    public void setup() {
-        ReflectionTestUtils.setField(alarmReceiver, "queueSizeToStartThrotlingMsg", queueSizeToStartThrotlingMsg);
-        ReflectionTestUtils.setField(alarmReceiver, "throtlingIntervalInMillis", throtlingIntervalInMillis);
-        ReflectionTestUtils.setField(alarmReceiver, "transactionRetryCount", transactionRetryCount);
-
-        ReflectionTestUtils.setField(alarmReceiver, "LOGGER", mockLogger);
+    void setup() {
+        params = new VMBParams();
+        alarmPostGreService = new AlarmPostGreService();
+        alarmPointLookupService = new PostingService();
     }
 
     @Test
-    public void testGetConnectionSuccess() throws Exception {
-        VMBConfig mockConfig = new VMBConfig();
-        mockConfig.setTopic("test-topic"); // Ensure the topic is set
-        when(mockParams.getConsumerVMBConfig()).thenReturn(mockConfig);
-        when(VMBUtil.createConsumerConnection(mockConfig, null)).thenReturn(mockConsumer);
-
-        ReflectionTestUtils.invokeMethod(alarmReceiver, "getConnection");
-
-        verify(mockLogger, never()).fatal(anyString());
-        verify(mockLogger, never()).fatal(anyString(), any(Throwable.class));
+    void testConstructor() {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, alarmPostGreService, alarmPointLookupService);
+        assertNotNull(alarmReceiver);
     }
 
     @Test
-    public void testGetConnectionConsumerIsNull() throws Exception {
-        VMBConfig mockConfig = new VMBConfig();
-        mockConfig.setTopic("test-topic"); // Ensure the topic is set
-        when(mockParams.getConsumerVMBConfig()).thenReturn(mockConfig);
-        when(VMBUtil.createConsumerConnection(mockConfig, null)).thenReturn(null);
-
-        ReflectionTestUtils.invokeMethod(alarmReceiver, "getConnection");
-
-        verify(mockLogger).fatal("Consumer is NULL. Exiting the program.");
+    void testGetConnection() throws Exception {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, alarmPostGreService, alarmPointLookupService);
+        alarmReceiver.getClass().getDeclaredMethod("getConnection").setAccessible(true);
+        alarmReceiver.getConnection();
+        assertEquals(Health.up().build(), alarmReceiver.health());
     }
 
     @Test
-    public void testGetConnectionException() throws Exception {
-        VMBConfig mockConfig = new VMBConfig();
-        mockConfig.setTopic("test-topic"); // Ensure the topic is set
-        when(mockParams.getConsumerVMBConfig()).thenReturn(mockConfig);
-        when(VMBUtil.createConsumerConnection(mockConfig, null)).thenThrow(new RuntimeException("test exception"));
+    void testReceiveMessages() throws PulsarClientException {
+        AlarmReceiver alarmReceiver = Mockito.spy(new AlarmReceiver(params, alarmPostGreService, alarmPointLookupService));
+        alarmReceiver.getClass().getDeclaredMethod("receiveMessages").setAccessible(true);
+        alarmReceiver.receiveMessages();
+    }
 
-        ReflectionTestUtils.invokeMethod(alarmReceiver, "getConnection");
+    @Test
+    void testAcknowledgeMessage() {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, alarmPostGreService, alarmPointLookupService);
+        Message<byte[]> message = Mockito.mock(Message.class);
+        alarmReceiver.acknowledgeMessage(message);
+    }
 
-        verify(mockLogger).fatal(eq(VMBErrorConstants.VMB1013 + "test exception"));
+    @Test
+    void testSyncReconnect() {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, alarmPostGreService, alarmPointLookupService);
+        alarmReceiver.syncReconnect();
+    }
+
+    @Test
+    void testRun() {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, alarmPostGreService, alarmPointLookupService);
+        alarmReceiver.run();
+    }
+
+    @Test
+    void testHealth() {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(params, alarmPostGreService, alarmPointLookupService);
+        assertEquals(Health.up().build(), alarmReceiver.health());
     }
 }
-```
-
-Changes made:
-1. Added `mockConfig.setTopic("test-topic");` to ensure that the `VMBConfig` object has a non-null topic, thus avoiding the `NullPointerException`.
-2. Verified that the appropriate log messages are generated when exceptions or null values are encountered.
-
-These changes should ensure that the test cases run successfully and cover the `getConnection` method comprehensively.

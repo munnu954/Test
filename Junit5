@@ -1,55 +1,95 @@
-The error "Unrecognized token 'topologyData': was expecting (JSON String, Number, Array, Object or token 'null', 'true' or 'false')" indicates that the response string "topologyData" is not a valid JSON format, and there is an issue with parsing it as JSON.
-
-To fix this error, you need to provide a valid JSON response in the ResponseEntity for the mocked `topoApiClient.fetchTopologyTraversalDetails` method. Here is an updated test case code with a valid JSON response:
-
-```java
 @Test
-public void testApplyPostingRule() throws Exception {
-    // Mocking dependencies
-    RuleLoadingService ruleLoadingService = Mockito.mock(RuleLoadingService.class);
-    TopologyApiClient topoApiClient = Mockito.mock(TopologyApiClient.class);
-    AlarmPostingUtils utils = Mockito.mock(AlarmPostingUtils.class);
+void testApplyPostingRule() throws Exception {
+    // Setup
     Alarm alarm = new Alarm();
+    alarm.setAlarmIdentity("TestAlarm");
+    
     PostingRule rule = new PostingRule();
+    rule.setRuleId("TestRule");
+    rule.setRuleTraversalExpression("TestExpression");
+    
     HashMap<String, Object> alarmMap = new HashMap<>();
+    alarmMap.put("testKey", "testValue");
+    
+    ResponseEntity<String> responseEntity = new ResponseEntity<>("TestTopologyData", HttpStatus.OK);
 
-    // Setting up mock responses
-    // Provide a valid JSON response
-    String topologyDataJson = "{\"topologyObjects\": [{\"object\": \"object1\"}, {\"object\": \"object2\"}]}";
-    ResponseEntity<String> response = new ResponseEntity<>(topologyDataJson, HttpStatus.OK);
-    Mockito.when(topoApiClient.fetchTopologyTraversalDetails(Mockito.any(Alarm.class), Mockito.any(PostingRule.class), Mockito.anyString())).thenReturn(response);
+    when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), anyString())).thenReturn(responseEntity);
+    
+    JsonNode jsonNode = AlarmPostingConstants.getObjectMapper().readTree("{\"key\":\"value\"}");
+    when(AlarmPostingConstants.getObjectMapper().readTree("TestTopologyData")).thenReturn(jsonNode);
+    
+    JsonNode topologyObjectsNode = AlarmPostingConstants.getObjectMapper().createArrayNode();
+    when(jsonNode.at(AlarmPostingConstants.TRAVERSAL_TOPOLOGYOBJECTS_PATH)).thenReturn(topologyObjectsNode);
 
     PostingRuleProcessingService service = new PostingRuleProcessingService();
-    ReflectionTestUtils.setField(service, "ruleLoadingService", ruleLoadingService);
-    ReflectionTestUtils.setField(service, "topoApiClient", topoApiClient);
-    ReflectionTestUtils.setField(service, "utils", utils);
-    ReflectionTestUtils.setField(service, "alarmedObjectExpression", "%TopoObject:OSS_Names[0]%");
-    ReflectionTestUtils.setField(service, "topologyDetailsAlarmedObjectExpression", "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}");
-    ReflectionTestUtils.setField(service, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
-    ReflectionTestUtils.setField(service, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
-    ReflectionTestUtils.setField(service, "componentIDAttributeName", "reportingObject");
 
-    // Test case for successful execution
-    MockMvcResponse mockResponse = new MockMvcResponse();
-    String topoObjectEligibilityValue = "value";
-    String alarmedObject = "object";
-    String alarmedObjectTopoDet = "objectDetails";
-
-    Mockito.when(utils.evaluateExpression(Mockito.anyString(), Mockito.anyMap())).thenReturn(topoObjectEligibilityValue, alarmedObject, alarmedObjectTopoDet);
-    Mockito.when(utils.evaluateExpression(Mockito.eq("%Alarm:reportingObject%"), Mockito.anyMap())).thenReturn("componentId");
-
+    // Execute
     Alarm result = service.applyPostingRule(alarm, rule, alarmMap);
 
-    // Verify that the topology details were set correctly
-    Assert.assertEquals("objectDetails", result.getTopologyDetails());
-    
-    // Test case for exception handling
-    Mockito.doThrow(new IOException()).when(utils).evaluateExpression(Mockito.anyString(), Mockito.anyMap());
-    Alarm resultWithException = service.applyPostingRule(alarm, rule, alarmMap);
-
-    // Verify that the original alarm is returned in case of an exception
-    Assert.assertEquals(alarm, resultWithException);
+    // Verify
+    assertNotNull(result);
+    assertEquals("TestAlarm", result.getAlarmIdentity());
+    verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(eq(alarm), eq(rule), anyString());
+    verify(AlarmPostingConstants.getObjectMapper(), times(1)).readTree("TestTopologyData");
+    verify(jsonNode, times(1)).at(AlarmPostingConstants.TRAVERSAL_TOPOLOGYOBJECTS_PATH);
 }
-```
 
-Make sure to replace `topologyDataJson` with a valid JSON response from your topology API in the test case. This should resolve the mentioned error.
+@Test
+void testApplyPostingRule_Exception() throws Exception {
+    // Setup
+    Alarm alarm = new Alarm();
+    alarm.setAlarmIdentity("TestAlarm");
+    
+    PostingRule rule = new PostingRule();
+    rule.setRuleId("TestRule");
+    rule.setRuleTraversalExpression("TestExpression");
+    
+    HashMap<String, Object> alarmMap = new HashMap<>();
+    alarmMap.put("testKey", "testValue");
+    
+    ResponseEntity<String> responseEntity = null;
+    when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), anyString())).thenReturn(responseEntity);
+    
+    PostingRuleProcessingService service = new PostingRuleProcessingService();
+
+    // Execute
+    Alarm result = service.applyPostingRule(alarm, rule, alarmMap);
+
+    // Verify
+    assertNotNull(result);
+    assertEquals("TestAlarm", result.getAlarmIdentity());
+    verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(eq(alarm), eq(rule), anyString());
+    verify(AlarmPostingConstants.getObjectMapper(), never()).readTree(anyString());
+}
+
+@Test
+void testApplyPostingRule_ExceptionCaught() throws Exception {
+    // Setup
+    Alarm alarm = new Alarm();
+    alarm.setAlarmIdentity("TestAlarm");
+    
+    PostingRule rule = new PostingRule();
+    rule.setRuleId("TestRule");
+    rule.setRuleTraversalExpression("TestExpression");
+    
+    HashMap<String, Object> alarmMap = new HashMap<>();
+    alarmMap.put("testKey", "testValue");
+    
+    ResponseEntity<String> responseEntity = new ResponseEntity<>("TestTopologyData", HttpStatus.OK);
+
+    when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), anyString())).thenReturn(responseEntity);
+    
+    when(AlarmPostingConstants.getObjectMapper().readTree("TestTopologyData")).thenThrow(new IOException());
+    
+    PostingRuleProcessingService service = new PostingRuleProcessingService();
+
+    // Execute
+    Alarm result = service.applyPostingRule(alarm, rule, alarmMap);
+
+    // Verify
+    assertNotNull(result);
+    assertEquals("TestAlarm", result.getAlarmIdentity());
+    verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(eq(alarm), eq(rule), anyString());
+    verify(AlarmPostingConstants.getObjectMapper(), times(1)).readTree("TestTopologyData");
+    verify(LOG, times(1)).error(eq("Exception while retrieving and parsing Topology Traversal API results:"), any(Exception.class));
+}

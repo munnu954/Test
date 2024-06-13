@@ -1,22 +1,13 @@
-To test private methods using Reflection API in Java, we can use the `java.lang.reflect` package. Here's how we can modify the `AlarmReceiverTest` class to test private methods without making `getConnection` and `receiveMessages` public in the `AlarmReceiver` class:
+To avoid the NullPointerException in the JUnit 5 test cases, you need to properly initialize the VMBConfig object before invoking any methods on it. You can create a mock VMBConfig object using a mocking framework like Mockito. Here is an example of how you can modify your JUnit 5 test cases to use Mockito to create a mock VMBConfig object:
 
 ```java
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-
-import java.lang.reflect.Method;
-import java.util.concurrent.TimeUnit;
-
 import static org.mockito.Mockito.*;
 
+@ExtendWith(MockitoExtension.class)
 public class AlarmReceiverTest {
 
     @Mock
-    private VMBParams vmbParams;
+    private VMBConfig vmbConfig;
 
     @Mock
     private AlarmPostGreService alarmPostGreService;
@@ -24,43 +15,47 @@ public class AlarmReceiverTest {
     @Mock
     private PostingService alarmPointLookupService;
 
-    @BeforeEach
-    public void setup() {
-        MockitoAnnotations.openMocks(this);
+    @InjectMocks
+    private AlarmReceiver alarmReceiver;
+
+    @Test
+    public void testReceiveMessages() throws PulsarClientException {
+        // Setup mock behavior for VMBUtil.receiveMessageThrowsPulsarClientException
+        Message<byte[]> msg = mock(Message.class);
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(any(), anyInt(), any())).thenReturn(msg);
+
+        // Call the method under test
+        alarmReceiver.receiveMessages();
+
+        // Verify the behavior
+        verify(alarmPointLookupService).addMsgToQueue(msg, any(Instant.class));
     }
 
     @Test
-    public void testGetConnectionSuccess() throws Exception {
-        VMBConfig vmbConfig = new VMBConfig();
-        // Set up your vmbConfig
-        
-        when(vmbParams.getConsumerVMBConfig()).thenReturn(vmbConfig);
+    public void testAcknowledgeMessage() {
+        // Setup mock behavior for _consumer and VMBUtil.acknowledgeMessageThrowsPulsarClientException
+        Message<byte[]> msg = mock(Message.class);
+        when(_consumer.isConnected()).thenReturn(true);
 
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
+        // Call the method under test
+        alarmReceiver.acknowledgeMessage(msg);
 
-        Method privateMethod = AlarmReceiver.class.getDeclaredMethod("getConnection");
-        privateMethod.setAccessible(true);
-        privateMethod.invoke(alarmReceiver);
-
-        // Verify/assert any relevant behavior if necessary
+        // Verify the behavior
+        verify(VMBUtil).acknowledgeMessageThrowsPulsarClientException(any(), eq(msg));
     }
 
     @Test
-    public void testReceiveMessages() throws Exception {
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-        // Set up any necessary mocks
-        
-        Method privateMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
-        privateMethod.setAccessible(true);
-        privateMethod.invoke(alarmReceiver);
+    public void testSyncReconnect() {
+        // Call the method under test
+        alarmReceiver.syncReconnect();
 
-        // Verify/assert any relevant behavior if necessary
+        // Verify the behavior
+        verify(VMBUtil).closeConsumer(any());
+        verify(alarmReceiver).getConnection();
     }
 
-    // Add other test methods for remaining private methods as needed
+    // Add more test cases for other methods as needed
 }
 ```
 
-In the above code, we use Reflection to access and invoke private methods `getConnection` and `receiveMessages` in the `AlarmReceiver` class for testing purposes without modifying the access modifiers of those methods.
-
-Remember to handle exceptions such as `NoSuchMethodException`, `IllegalAccessException`, and `InvocationTargetException` that may be thrown when using Reflection API.
+In this test case, we are using Mockito to mock the VMBConfig object and inject it into the AlarmReceiver class. This way, you can control the behavior of the VMBConfig object in your test cases and avoid the NullPointerException. Make sure to add more test cases to cover other methods in the AlarmReceiver class as needed.

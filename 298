@@ -1,97 +1,99 @@
-Sure! Here is an example of how you can use Java Reflection API to access private methods of the AlarmReceiver class in the AlarmReceiverTest class:
+Here is a JUnit 5 test case that covers the `getConnection` method of the `AlarmReceiver` class using Reflection API:
 
 ```java
+import static org.mockito.Mockito.*;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.beans.factory.annotation.Value;
+
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@ExtendWith(MockitoExtension.class)
 public class AlarmReceiverTest {
 
     @Mock
-    private VMBParams vmbParams;
+    private VMBParams mockParams;
 
     @Mock
-    private AlarmPostGreService alarmPostGreService;
+    private AlarmPostGreService mockAlarmPostGreService;
 
     @Mock
-    private PostingService alarmPointLookupService;
+    private PostingService mockAlarmPointLookupService;
+
+    @Mock
+    private Logger mockLogger;
+
+    @Mock
+    private Consumer<byte[]> mockConsumer;
+
+    @InjectMocks
+    private AlarmReceiver alarmReceiver;
+
+    @Value("${queueSizeToStartThrottlingMsg:2000}")
+    private int queueSizeToStartThrotlingMsg;
+
+    @Value("${throttlingIntervalInMillis:500}")
+    private int throtlingIntervalInMillis;
+
+    @Value("${transactionRetryCount:3}")
+    private int transactionRetryCount;
 
     @BeforeEach
-    void setUp() {
-        MockitoAnnotations.initMocks(this);
+    public void setup() {
+        ReflectionTestUtils.setField(alarmReceiver, "queueSizeToStartThrotlingMsg", queueSizeToStartThrotlingMsg);
+        ReflectionTestUtils.setField(alarmReceiver, "throtlingIntervalInMillis", throtlingIntervalInMillis);
+        ReflectionTestUtils.setField(alarmReceiver, "transactionRetryCount", transactionRetryCount);
+
+        ReflectionTestUtils.setField(alarmReceiver, "LOGGER", mockLogger);
     }
 
     @Test
-    void testGetConnection() {
-        AlarmReceiver alarmReceiver = createMockedAlarmReceiverInstance();
+    public void testGetConnectionSuccess() throws Exception {
+        VMBConfig mockConfig = new VMBConfig();
+        when(mockParams.getConsumerVMBConfig()).thenReturn(mockConfig);
+        when(VMBUtil.createConsumerConnection(mockConfig, null)).thenReturn(mockConsumer);
 
-        // Test the getConnection method using Reflection
-        assertDoesNotThrow(() -> {
-            Method getConnectionMethod = AlarmReceiver.class.getDeclaredMethod("getConnection");
-            getConnectionMethod.setAccessible(true);
-            getConnectionMethod.invoke(alarmReceiver);
-        });
+        ReflectionTestUtils.invokeMethod(alarmReceiver, "getConnection");
+
+        verify(mockLogger, never()).fatal(anyString());
+        verify(mockLogger, never()).fatal(anyString(), any(Throwable.class));
     }
 
     @Test
-    void testReceiveMessages() {
-        AlarmReceiver alarmReceiver = createMockedAlarmReceiverInstance();
+    public void testGetConnectionConsumerIsNull() throws Exception {
+        VMBConfig mockConfig = new VMBConfig();
+        when(mockParams.getConsumerVMBConfig()).thenReturn(mockConfig);
+        when(VMBUtil.createConsumerConnection(mockConfig, null)).thenReturn(null);
 
-        // Test the receiveMessages method using Reflection
-        assertDoesNotThrow(() -> {
-            Method receiveMessagesMethod = AlarmReceiver.class.getDeclaredMethod("receiveMessages");
-            receiveMessagesMethod.setAccessible(true);
-            receiveMessagesMethod.invoke(alarmReceiver);
-        });
+        ReflectionTestUtils.invokeMethod(alarmReceiver, "getConnection");
+
+        verify(mockLogger).fatal("Consumer is NULL. Exiting the program.");
     }
 
     @Test
-    void testAcknowledgment() {
-        AlarmReceiver alarmReceiver = createMockedAlarmReceiverInstance();
+    public void testGetConnectionException() throws Exception {
+        VMBConfig mockConfig = new VMBConfig();
+        when(mockParams.getConsumerVMBConfig()).thenReturn(mockConfig);
+        when(VMBUtil.createConsumerConnection(mockConfig, null)).thenThrow(new RuntimeException("test exception"));
 
-        // Test the acknowledgeMessage method using Reflection
-        assertDoesNotThrow(() -> {
-            Method acknowledgeMessageMethod = AlarmReceiver.class.getDeclaredMethod("acknowledgeMessage", Message.class);
-            acknowledgeMessageMethod.setAccessible(true);
-            Message<byte[]> mockedMessage = Mockito.mock(Message.class);
-            acknowledgeMessageMethod.invoke(alarmReceiver, mockedMessage);
-        });
-    }
+        ReflectionTestUtils.invokeMethod(alarmReceiver, "getConnection");
 
-    @Test
-    void testSyncReconnect() {
-        AlarmReceiver alarmReceiver = createMockedAlarmReceiverInstance();
-
-        // Test the syncReconnect method using Reflection
-        assertDoesNotThrow(() -> {
-            Method syncReconnectMethod = AlarmReceiver.class.getDeclaredMethod("syncReconnect");
-            syncReconnectMethod.setAccessible(true);
-            syncReconnectMethod.invoke(alarmReceiver);
-        });
-    }
-
-    @Test
-    void testRun() {
-        AlarmReceiver alarmReceiver = createMockedAlarmReceiverInstance();
-
-        // Test the run method using Reflection
-        assertDoesNotThrow(() -> {
-            Method runMethod = AlarmReceiver.class.getDeclaredMethod("run");
-            runMethod.setAccessible(true);
-            runMethod.invoke(alarmReceiver);
-        });
-    }
-
-    private AlarmReceiver createMockedAlarmReceiverInstance() {
-        return new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
+        verify(mockLogger).fatal(eq(VMBErrorConstants.VMB1013 + "test exception"));
     }
 }
 ```
 
-In the above code, we are using `java.lang.reflect.Method` class to access and invoke the private methods of the `AlarmReceiver` class in the `AlarmReceiverTest` class. By setting the `accessible` property of the method to `true`, we can bypass the access modifiers and invoke the private methods using Reflection.
+This test class uses Mockito to mock dependencies and ReflectionTestUtils to invoke the private `getConnection` method. It contains three test methods:
+
+1. **testGetConnectionSuccess**: Verifies that the `getConnection` method works correctly when the consumer is successfully created.
+2. **testGetConnectionConsumerIsNull**: Verifies that an appropriate log message is generated when the consumer is null.
+3. **testGetConnectionException**: Verifies that an appropriate log message is generated when an exception is thrown during consumer creation.
+
+These tests ensure that each line of the `getConnection` method, including the try-catch block and if statements, are covered.

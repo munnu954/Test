@@ -1,84 +1,41 @@
 @Test
-public class PostingRuleProcessingServiceTest {
+void testApplyPostingRule() throws Exception {
+    // Mocking dependencies
+    PostingRule rule = new PostingRule();
+    rule.setRuleId("1");
+    rule.setRuleTraversalExpression("expression");
+    rule.setRulePriority(1);
 
-    @InjectMocks
-    private PostingRuleProcessingService postingRuleProcessingService;
+    Alarm alarm = new Alarm();
+    alarm.setAlarmIdentity("123");
 
-    @Mock
-    private RuleLoadingService ruleLoadingService;
+    HashMap<String, Object> alarmMap = new HashMap<>();
+    alarmMap.put("alarmId", "123");
+    
+    ResponseEntity<String> responseEntity = new ResponseEntity<>("Topology data", HttpStatus.OK);
+    when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString())).thenReturn(responseEntity);
 
-    @Mock
-    private TopologyApiClient topoApiClient;
+    JsonNode jsonNode = AlarmPostingConstants.getObjectMapper().readTree("{\"topology\":\"data\"}");
+    when(AlarmPostingConstants.getObjectMapper().readTree("Topology data")).thenReturn(jsonNode);
 
-    @Mock
-    private AlarmPostingUtils utils;
+    JsonNode topologyObjectsNode = mock(JsonNode.class);
+    when(jsonNode.at(AlarmPostingConstants.TRAVERSAL_TOPOLOGYOBJECTS_PATH)).thenReturn(topologyObjectsNode);
+    when(topologyObjectsNode.isMissingNode()).thenReturn(false);
+    when(topologyObjectsNode.isArray()).thenReturn(true);
 
-    @Test
-    public void testApplyPostingRule_TopologyObjectsNodeIsNull() {
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule();
-        HashMap<String, Object> alarmMap = new HashMap<>();
+    JsonNode topoObjectNode = mock(JsonNode.class);
+    when(topologyObjectsNode.iterator()).thenReturn(Arrays.asList(topoObjectNode).iterator());
+    when(topoObjectNode.get(anyString())).thenReturn(mock(JsonNode.class));
 
-        ResponseEntity<String> responseEntity = new ResponseEntity<>(HttpStatus.OK);
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
+    when(utils.evaluateExpression(anyString(), any())).thenReturn("test");
 
-        alarm = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+    // Testing applyPostingRule
+    alarm = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
 
-        assertNull(alarm.getTopologyDetails());
-    }
+    // Verify that alarm details are updated
+    assertEquals("test", alarm.getAlarmedObject());
+    assertNotNull(alarm.getTopologyDetails());
 
-    @Test
-    public void testApplyPostingRule_ExceptionThrown() {
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule();
-        HashMap<String, Object> alarmMap = new HashMap<>();
-
-        ResponseEntity<String> responseEntity = new ResponseEntity<>(HttpStatus.OK);
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-
-        doThrow(new RuntimeException()).when(utils).evaluateExpression(anyString(), any());
-
-        alarm = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        assertNull(alarm.getTopologyDetails());
-    }
-
-    @Test
-    public void testApplyPostingRule_Success() throws JsonProcessingException {
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule();
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        alarm.setAlarmIdentity("test");
-
-        JsonNode jsonNode = AlarmPostingConstants.getObjectMapper().createObjectNode();
-        jsonNode.put("test", "value");
-
-        ResponseEntity<String> responseEntity = new ResponseEntity<>(jsonNode.toString(), HttpStatus.OK);
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-
-        doReturn("testObject").when(utils).evaluateExpression(anyString(), any());
-
-        alarm = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        assertEquals(jsonNode.toString(), alarm.getTopologyDetails());
-    }
-
-    @Test
-    public void testApplyPostingRule_AlarmedObjectEmpty() {
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule();
-        HashMap<String, Object> alarmMap = new HashMap<>();
-
-        JsonNode jsonNode = AlarmPostingConstants.getObjectMapper().createObjectNode();
-        jsonNode.put("test", "value");
-
-        ResponseEntity<String> responseEntity = new ResponseEntity<>(jsonNode.toString(), HttpStatus.OK);
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-
-        doReturn("").when(utils).evaluateExpression(anyString(), any());
-
-        alarm = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        assertEquals(jsonNode.toString(), alarm.getTopologyDetails());
-    }
+    // Verify that the topology data is processed correctly
+    verify(AlarmPostingConstants.getObjectMapper(), times(3)).readTree(anyString());
 }

@@ -1,64 +1,45 @@
-To write JUnit 5 test cases specifically targeting the lines you mentioned in the `parse` method, we need to create scenarios that will execute those lines of code. Below are the test cases that cover the specified lines:
+@Test
+public void testApplyPostingRule() throws Exception {
+    // Mocking dependencies
+    RuleLoadingService ruleLoadingService = Mockito.mock(RuleLoadingService.class);
+    TopologyApiClient topoApiClient = Mockito.mock(TopologyApiClient.class);
+    AlarmPostingUtils utils = Mockito.mock(AlarmPostingUtils.class);
+    Alarm alarm = new Alarm();
+    PostingRule rule = new PostingRule();
+    HashMap<String, Object> alarmMap = new HashMap<>();
 
-```java
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
+    // Setting up mock responses
+    ResponseEntity<String> response = new ResponseEntity<>("topologyData", HttpStatus.OK);
+    Mockito.when(topoApiClient.fetchTopologyTraversalDetails(Mockito.any(Alarm.class), Mockito.any(PostingRule.class), Mockito.anyString())).thenReturn(response);
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+    PostingRuleProcessingService service = new PostingRuleProcessingService();
+    ReflectionTestUtils.setField(service, "ruleLoadingService", ruleLoadingService);
+    ReflectionTestUtils.setField(service, "topoApiClient", topoApiClient);
+    ReflectionTestUtils.setField(service, "utils", utils);
+    ReflectionTestUtils.setField(service, "alarmedObjectExpression", "%TopoObject:OSS_Names[0]%");
+    ReflectionTestUtils.setField(service, "topologyDetailsAlarmedObjectExpression", "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}");
+    ReflectionTestUtils.setField(service, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
+    ReflectionTestUtils.setField(service, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
+    ReflectionTestUtils.setField(service, "componentIDAttributeName", "reportingObject");
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+    // Test case for successful execution
+    MockMvcResponse mockResponse = new MockMvcResponse();
+    String topoObjectEligibilityValue = "value";
+    String alarmedObject = "object";
+    String alarmedObjectTopoDet = "objectDetails";
 
-public class AlarmPostingUtilsTest {
+    Mockito.when(utils.evaluateExpression(Mockito.anyString(), Mockito.anyMap())).thenReturn(topoObjectEligibilityValue, alarmedObject, alarmedObjectTopoDet);
+    Mockito.when(utils.evaluateExpression(Mockito.eq("%Alarm:reportingObject%"), Mockito.anyMap())).thenReturn("componentId");
 
-    @BeforeAll
-    public static void setup() {
-        // Mocking the ObjectMapper to avoid actual JSON processing
-        RulesConstants.objectMapper = Mockito.mock(com.fasterxml.jackson.databind.ObjectMapper.class);
-    }
+    Alarm result = service.applyPostingRule(alarm, rule, alarmMap);
 
-    @Test
-    public void testParseWithValidArrayIndex() throws JsonProcessingException {
-        String value = "Hello %names[1]%";
-        Map<String, Object> srcMap = new HashMap<>();
-        srcMap.put("names", List.of("Jane", "John"));
+    // Verify that the topology details were set correctly
+    Assert.assertEquals("objectDetails", result.getTopologyDetails());
+    
+    // Test case for exception handling
+    Mockito.doThrow(new IOException()).when(utils).evaluateExpression(Mockito.anyString(), Mockito.anyMap());
+    Alarm resultWithException = service.applyPostingRule(alarm, rule, alarmMap);
 
-        String result = AlarmPostingUtils.parse(value, srcMap, "rule1");
-        assertEquals("Hello John", result);
-    }
-
-    @Test
-    public void testParseWithArrayIndexOutOfBounds() throws JsonProcessingException {
-        String value = "Hello %names[10]%";
-        Map<String, Object> srcMap = new HashMap<>();
-        srcMap.put("names", List.of("Jane", "John"));
-
-        String result = AlarmPostingUtils.parse(value, srcMap, "rule1");
-        assertEquals("Hello ", result);
-    }
-
-    @Test
-    public void testParseWithInvalidArrayIndex() throws JsonProcessingException {
-        String value = "Hello %names[-1]%";
-        Map<String, Object> srcMap = new HashMap<>();
-        srcMap.put("names", List.of("Jane", "John"));
-
-        String result = AlarmPostingUtils.parse(value, srcMap, "rule1");
-        assertEquals("Hello ", result);
-    }
+    // Verify that the original alarm is returned in case of an exception
+    Assert.assertEquals(alarm, resultWithException);
 }
-```
-
-### Explanation
-
-1. **testParseWithValidArrayIndex**: This test case creates a scenario where a valid array index is used within the placeholder. The `value` string contains `%names[1]%`, which should be replaced with "John" from the `srcMap`. This will cover the lines where `arrayIndexInt` is a valid index.
-
-2. **testParseWithArrayIndexOutOfBounds**: This test case creates a scenario where the array index is out of bounds. The `value` string contains `%names[10]%`, but the `srcMap` only has two elements in the `names` list. This will cover the lines where the index is invalid and out of the list's bounds, resulting in the replacement with an empty string.
-
-3. **testParseWithInvalidArrayIndex**: This test case creates a scenario where the array index is negative. The `value` string contains `%names[-1]%`, which is an invalid index. This will also cover the lines where the index is invalid and negative, resulting in the replacement with an empty string.
-
-These test cases ensure that the specified lines in the `parse` method are executed and validated for both valid and invalid scenarios.

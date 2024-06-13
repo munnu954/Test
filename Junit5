@@ -1,69 +1,62 @@
-Here is an example of JUnit 5 test cases for the `getConnection` method in the `AlarmReceiver` class:
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 
-```java
-import org.junit.jupiter.api.BeforeEach;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.pulsar.client.api.Consumer;
+import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.client.api.PulsarClientException;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-
-import static org.mockito.Mockito.*;
 
 public class AlarmReceiverTest {
 
-    @Mock
-    private VMBParams vmbParams;
-
-    @Mock
-    private AlarmPostGreService alarmPostGreService;
-
-    @Mock
-    private PostingService alarmPointLookupService;
-
-    private AlarmReceiver alarmReceiver;
-
-    @BeforeEach
-    public void setup() {
-        MockitoAnnotations.initMocks(this);
-        alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
-    }
-
     @Test
-    public void testGetConnection_ConsumerNotNull() {
+    public void testGetConnection() throws Exception {
+        // Mocking dependencies
+        VMBParams vmbParams = mock(VMBParams.class);
+        AlarmPostGreService alarmPostGreService = mock(AlarmPostGreService.class);
+        PostingService postingService = mock(PostingService.class);
+
+        // Initialize vmbConfig and set necessary fields
         VMBConfig vmbConfig = new VMBConfig();
         vmbConfig.setTopic("testTopic");
-        // Set other properties of vmbConfig
+        vmbConfig.setServiceURL("https://example.com");
+        vmbConfig.setSubscriptionName("exampleSubscription");
+        vmbConfig.setSubscriptionType(SubscriptionType.Shared);
+        vmbConfig.setVmbRetryCount(5);
+        vmbConfig.setVmbRetryTimeIntervalInSeconds(20);
+        vmbConfig.setVmbRetryCycleTimeIntervalInMins(60);
+        vmbConfig.setBatchingMaxPublishDelay(1000);
+        vmbConfig.setSendTimeout(30);
+        vmbConfig.setBlockIfQueueFull(true);
+        vmbConfig.setEnableKeyBaching(false);
+        vmbConfig.setVMBConnectionFailureThresholdCount(3);
+        vmbConfig.setEncryptionStatus(true);
+        vmbConfig.setKeySharedSubscription(false);
+        vmbConfig.setConsumerName("exampleConsumer");
 
-        when(vmbParams.getConsumerVMBConfig()).thenReturn(vmbConfig);
-        when(VMBUtil.createConsumerConnection(eq(vmbConfig), isNull())).thenReturn(mock(Consumer.class));
+        // Mock the VMBUtil.createConsumerConnection() method
+        Consumer<byte[]> consumer = mock(Consumer.class);
+        doReturn(consumer).when(VMBUtil.class, "createConsumerConnection", any(), any());
 
+        // Create the AlarmReceiver instance
+        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, postingService);
+
+        // Set the vmbConfig using Reflection Api
+        Field vmbConfigField = AlarmReceiver.class.getDeclaredField("params");
+        vmbConfigField.setAccessible(true);
+        vmbConfigField.set(alarmReceiver, vmbConfig);
+
+        // Call the getConnection() method
         alarmReceiver.getConnection();
 
-        verify(vmbParams).getConsumerVMBConfig();
-        verify(VMBUtil).createConsumerConnection(eq(vmbConfig), isNull());
-        // Add other verification statements
+        // Verify the VMBUtil.createConsumerConnection() method is called with correct parameters
+        verifyStatic(VMBUtil.class);
+        VMBUtil.createConsumerConnection(vmbConfig, null);
+
+        // Verify the Health status is up
+        assertEquals(alarmReceiver.health(), Health.up());
     }
-
-    @Test
-    public void testGetConnection_ConsumerNull() {
-        VMBConfig vmbConfig = new VMBConfig();
-        vmbConfig.setTopic("testTopic");
-        // Set other properties of vmbConfig
-
-        when(vmbParams.getConsumerVMBConfig()).thenReturn(vmbConfig);
-        when(VMBUtil.createConsumerConnection(eq(vmbConfig), isNull())).thenReturn(null);
-
-        alarmReceiver.getConnection();
-
-        verify(vmbParams).getConsumerVMBConfig();
-        verify(VMBUtil).createConsumerConnection(eq(vmbConfig), isNull());
-        verify(alarmReceiver, never()).shutdown();
-
-        // Add other verification statements
-    }
-
-    // Add more test cases for other scenarios
-
 }
-```
-
-In this example, we are using Mockito to mock the dependencies (`VMBParams`, `AlarmPostGreService`, `PostingService`) and the utility class `VMBUtil`. We initialize the `AlarmReceiver` object in the `setup` method using the mocks, and then we write individual test cases for different scenarios of the `getConnection` method. Within each test case, we mock the necessary method calls and verify the expected behavior using the `verify` statements.

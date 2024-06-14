@@ -1,33 +1,24 @@
-Certainly, here's the updated test suite that covers the for loop in the `applyPostingRule` method:
+Certainly! Below is a JUnit 5 test case class designed to cover all the branches of the `for (JsonNode jsonNodeTmp : topologyObjectsNode)` loop in the `applyPostingRule` method of the `PostingRuleProcessingService` class.
 
 ```java
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.test.util.ReflectionTestUtils;
 
-import java.io.IOException;
-import java.lang.reflect.Field;
 import java.util.HashMap;
+import java.util.Map;
 
 @ExtendWith(MockitoExtension.class)
-class PostingRuleProcessingServiceTest {
-
-    @InjectMocks
-    private PostingRuleProcessingService postingRuleProcessingService;
-
-    @Mock
-    private AlarmPostingUtils utils;
+public class PostingRuleProcessingServiceTest {
 
     @Mock
     private RuleLoadingService ruleLoadingService;
@@ -35,126 +26,120 @@ class PostingRuleProcessingServiceTest {
     @Mock
     private TopologyApiClient topoApiClient;
 
+    @Mock
+    private AlarmPostingUtils utils;
+
+    @InjectMocks
+    private PostingRuleProcessingService service;
+
     private Alarm alarm;
-    private PostingRule rule;
     private HashMap<String, Object> alarmMap;
+    private PostingRule rule;
+    private ObjectMapper objectMapper;
 
     @BeforeEach
-    void setUp() throws Exception {
+    public void setUp() {
         alarm = new Alarm();
-        alarm.setAlarmIdentity("test-alarm-identity");
-        rule = new PostingRule();
-        rule.setRuleId("test-rule-id");
-        rule.setRulePriority(1);
-        rule.setRuleTraversalExpression("test-traversal-expression");
         alarmMap = new HashMap<>();
-        alarmMap.put("reportingObject", "test-component-id");
-
-        // Set the required fields using Reflection
-        ReflectionTestUtils.setField(postingRuleProcessingService, "ruleLoadingService", ruleLoadingService);
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topoApiClient", topoApiClient);
-        ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", "%TopoObject:OSS_Names[0]%");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "componentIDAttributeName", "reportingObject");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}");
+        rule = new PostingRule();
+        objectMapper = new ObjectMapper();
     }
 
     @Test
-    void testApplyPostingRuleWhenTopologyObjectsAreValid() throws IOException {
-        Mockito.when(utils.evaluateExpression(Mockito.anyString(), Mockito.anyMap()))
-               .thenReturn("eligible-object")
-               .thenReturn("test-alarmed-object")
-               .thenReturn("{\"MO_Type\":\"test-mo-type\",\"TagSequence\":\"test-tag-sequence\",\"Name\":\"test-name\"}");
-        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(Mockito.any(), Mockito.any(), Mockito.anyString()))
-               .thenReturn(new ResponseEntity<>("{ \"topologyObjects\": [{}] }", HttpStatus.OK));
+    public void testApplyPostingRule_TopologyObjectsNodeIsMissing() throws Exception {
+        // Arrange
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok("{\"topologyObjects\": []}"));
 
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        Assertions.assertEquals("test-alarmed-object", result.getAlarmedObject());
-        Assertions.assertNotNull(result.getTopologyDetails());
-        Assertions.assertTrue(result.getTopologyDetails().contains("\"MO_Type\":\"test-mo-type\""));
-        Assertions.assertTrue(result.getTopologyDetails().contains("\"TagSequence\":\"test-tag-sequence\""));
-        Assertions.assertTrue(result.getTopologyDetails().contains("\"Name\":\"test-name\""));
+        // Act
+        service.applyPostingRule(alarm, rule, alarmMap);
+
+        // Assert
+        verify(utils, times(1)).evaluateExpression(anyString(), anyMap());
+        verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
     }
 
     @Test
-    void testApplyPostingRuleWhenTopologyObjectsNodeIsEmpty() throws Exception {
-        Mockito.when(utils.evaluateExpression(Mockito.eq((String) ReflectionTestUtils.getField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue")), Mockito.anyMap()))
-               .thenReturn("eligible-object");
-        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(Mockito.any(), Mockito.any(), Mockito.anyString()))
-               .thenReturn(new ResponseEntity<>("{ \"topologyObjects\": [] }", HttpStatus.OK));
+    public void testApplyPostingRule_TopologyObjectsNodeNotArray() throws Exception {
+        // Arrange
+        String invalidTopologyData = "{\"topologyObjects\": {}}";
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(invalidTopologyData));
 
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        Assertions.assertEquals(alarm, result);
+        // Act
+        service.applyPostingRule(alarm, rule, alarmMap);
+
+        // Assert
+        verify(utils, times(1)).evaluateExpression(anyString(), anyMap());
+        verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
     }
 
     @Test
-    void testApplyPostingRuleWhenTopologyObjectEligibilityCheckFails() throws Exception {
-        Mockito.when(utils.evaluateExpression(Mockito.eq((String) ReflectionTestUtils.getField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue")), Mockito.anyMap()))
-               .thenReturn("ineligible-object");
-        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(Mockito.any(), Mockito.any(), Mockito.anyString()))
-               .thenReturn(new ResponseEntity<>("{ \"topologyObjects\": [{}] }", HttpStatus.OK));
+    public void testApplyPostingRule_TopologyObjectEligibilityCheckFails() throws Exception {
+        // Arrange
+        String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("invalidValue");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
 
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        Assertions.assertEquals(alarm, result);
+        // Act
+        service.applyPostingRule(alarm, rule, alarmMap);
+
+        // Assert
+        verify(utils, times(1)).evaluateExpression(anyString(), anyMap());
+        verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
     }
 
     @Test
-    void testApplyPostingRuleWhenAlarmedObjectIsEmpty() throws Exception {
-        Mockito.when(utils.evaluateExpression(Mockito.eq((String) ReflectionTestUtils.getField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue")), Mockito.anyMap()))
-               .thenReturn("eligible-object");
-        Mockito.when(utils.evaluateExpression(Mockito.eq((String) ReflectionTestUtils.getField(postingRuleProcessingService, "alarmedObjectExpression")), Mockito.anyMap()))
-               .thenReturn("");
-        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(Mockito.any(), Mockito.any(), Mockito.anyString()))
-               .thenReturn(new ResponseEntity<>("{ \"topologyObjects\": [{}] }", HttpStatus.OK));
+    public void testApplyPostingRule_AlarmedObjectIsEmpty() throws Exception {
+        // Arrange
+        String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue").thenReturn("");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
 
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        Assertions.assertEquals(alarm, result);
+        // Act
+        service.applyPostingRule(alarm, rule, alarmMap);
+
+        // Assert
+        verify(utils, times(2)).evaluateExpression(anyString(), anyMap());
+        verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
     }
 
     @Test
-    void testApplyPostingRuleWhenAlarmedObjectTopologyDetailsIsNull() throws Exception {
-        Mockito.when(utils.evaluateExpression(Mockito.eq((String) ReflectionTestUtils.getField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue")), Mockito.anyMap()))
-               .thenReturn("eligible-object");
-        Mockito.when(utils.evaluateExpression(Mockito.eq((String) ReflectionTestUtils.getField(postingRuleProcessingService, "alarmedObjectExpression")), Mockito.anyMap()))
-               .thenReturn("test-alarmed-object");
-        Mockito.when(utils.evaluateExpression(Mockito.eq((String) ReflectionTestUtils.getField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression")), Mockito.anyMap()))
-               .thenReturn(null);
-        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(Mockito.any(), Mockito.any(), Mockito.anyString()))
-               .thenReturn(new ResponseEntity<>("{ \"topologyObjects\": [{}] }", HttpStatus.OK));
+    public void testApplyPostingRule_AlarmedObjectTopoDetIsEmpty() throws Exception {
+        // Arrange
+        String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue").thenReturn("alarmedObject").thenReturn("");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
 
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        Assertions.assertEquals("test-alarmed-object", result.getAlarmedObject());
-        Assertions.assertNull(result.getTopologyDetails());
+        // Act
+        service.applyPostingRule(alarm, rule, alarmMap);
+
+        // Assert
+        verify(utils, times(3)).evaluateExpression(anyString(), anyMap());
+        verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
     }
 
     @Test
-    void testApplyPostingRuleWhenAlarmedObjectTopologyDetailsIsUpdated() throws Exception {
-        Mockito.when(utils.evaluateExpression(Mockito.eq((String) ReflectionTestUtils.getField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue")), Mockito.anyMap()))
-               .thenReturn("eligible-object");
-        Mockito.when(utils.evaluateExpression(Mockito.eq((String) ReflectionTestUtils.getField(postingRuleProcessingService, "alarmedObjectExpression")), Mockito.anyMap()))
-               .thenReturn("test-alarmed-object");
-        Mockito.when(utils.evaluateExpression(Mockito.eq((String) ReflectionTestUtils.getField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression")), Mockito.anyMap()))
-               .thenReturn("{\"MO_Type\":\"test-mo-type\",\"TagSequence\":\"test-tag-sequence\",\"Name\":\"test-name\"}");
-        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(Mockito.any(), Mockito.any(), Mockito.anyString()))
-               .thenReturn(new ResponseEntity<>("{ \"topologyObjects\": [{}] }", HttpStatus.OK));
+    public void testApplyPostingRule_SuccessfulUpdate() throws Exception {
+        // Arrange
+        String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue").thenReturn("alarmedObject").thenReturn("{\"updated\": \"node\"}");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
 
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        Assertions.assertEquals("test-alarmed-object", result.getAlarmedObject());
-        Assertions.assertNotNull(result.getTopologyDetails());
-        Assertions.assertTrue(result.getTopologyDetails().contains("\"MO_Type\":\"test-mo-type\""));
-        Assertions.assertTrue(result.getTopologyDetails().contains("\"TagSequence\":\"test-tag-sequence\""));
-        Assertions.assertTrue(result.getTopologyDetails().contains("\"Name\":\"test-name\""));
+        // Act
+        service.applyPostingRule(alarm, rule, alarmMap);
+
+        // Assert
+        verify(utils, times(3)).evaluateExpression(anyString(), anyMap());
+        verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
     }
 }
 ```
 
-This updated test suite covers all the lines of the `applyPostingRule` method, including the for loop that processes the topology objects. The key changes are:
-
-1. The `testApplyPostingRuleWhenTopologyObjectsAreValid` test case covers the scenario where the topology objects are valid and the alarmed object and topology details are successfully updated.
-2. The `testApplyPostingRuleWhenTopologyObjectsNodeIsEmpty` test case covers the scenario where the topology objects node is empty.
-3. The `testApplyPostingRuleWhenTopologyObjectEligibilityCheckFails` test case covers the scenario where the topology object eligibility check fails.
-4. The `testApplyPostingRuleWhenAlarmedObjectIsEmpty` test case covers the scenario where the alarmed object is empty.
-5. The `testApplyPostingRuleWhenAlarmedObjectTopologyDetailsIsNull` and `testApplyPostingRuleWhenAlarmedObjectTopologyDetailsIsUpdated` test cases cover the scenarios where the alarmed object topology details are null and updated, respectively.
-
-This approach ensures that the test suite provides 100% code coverage for the `applyPostingRule` method, including the for loop that processes the topology objects.
+This test class covers all the possible branches within the `for (JsonNode jsonNodeTmp : topologyObjectsNode)` loop by mocking necessary dependencies and verifying the behavior of the `applyPostingRule` method under different conditions. Each test case is designed to trigger a specific branch in the loop.

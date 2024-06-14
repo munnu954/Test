@@ -1,63 +1,142 @@
-To handle the `NullPointerException` for the `rule` object being null in the test case, you can add a check to ensure that the `rule` object is not null before proceeding with the test. Here is the updated test code with the null check for the `rule` object:
-
 ```java
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
-import java.lang.reflect.Field;
 import java.util.HashMap;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
+@ExtendWith(MockitoExtension.class)
 class PostingRuleProcessingServiceTest {
 
+    @InjectMocks
+    private PostingRuleProcessingService postingRuleProcessingService;
+
+    @Mock
+    private RuleLoadingService ruleLoadingService;
+
+    @Mock
+    private TopologyApiClient topoApiClient;
+
+    @Mock
+    private AlarmPostingUtils utils;
+
     @Test
-    void testApplyPostingRule() throws Exception {
-        // Creating an instance of PostingRuleProcessingService
-        PostingRuleProcessingService service = new PostingRuleProcessingService();
-
-        // Accessing private fields 'ruleLoadingService' and 'topoApiClient' using Reflection
-        Field ruleLoadingServiceField = PostingRuleProcessingService.class.getDeclaredField("ruleLoadingService");
-        ruleLoadingServiceField.setAccessible(true);
-        RuleLoadingService ruleLoadingService = new RuleLoadingService(); // Mock or create instance as needed
-        ruleLoadingServiceField.set(service, ruleLoadingService);
-
-        Field topoApiClientField = PostingRuleProcessingService.class.getDeclaredField("topoApiClient");
-        topoApiClientField.setAccessible(true);
-        TopologyApiClient topoApiClient = new TopologyApiClient(); // Mock or create instance as needed
-        topoApiClientField.set(service, topoApiClient);
-
-        // Mocking other dependencies
-        AlarmPostingUtils utils = mock(AlarmPostingUtils.class);
-        service.utils = utils;
-
-        // Mocking required data
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule();
+    void applyPostingRules_shouldReturnAlarm_whenPostingRuleMatchFound() {
+        // given
+        Alarm alarm = mock(Alarm.class);
+        when(alarm.getAlarmIdentity()).thenReturn("alarm-id");
         HashMap<String, Object> alarmMap = new HashMap<>();
+        when(RulesConstants.getObjectMapper().convertValue(alarm, HashMap.class)).thenReturn(alarmMap);
+        PostingRule postingRuleMatch = mock(PostingRule.class);
+        when(postingRuleMatch.getRuleId()).thenReturn("rule-id");
+        when(postingRuleMatch.matchFilter(anyMap())).thenReturn(true);
+        when(ruleLoadingService.getRuleMap()).thenReturn(Map.of("rule-id", postingRuleMatch));
 
-        // Adding a null check for the rule object
-        if (rule == null) {
-            throw new RuntimeException("Rule object is null");
-        }
+        // when
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
 
-        // Mocking behavior for topoApiClient method call
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), any(String.class)))
-                .thenReturn(ResponseEntity.ok("{\"data\": \"sample data\"}"));
+        // then
+        assertEquals(alarm, result);
+    }
 
-        when(utils.evaluateExpression(any(String.class), any(Map.class))).thenReturn("sample value");
+    @Test
+    void applyPostingRules_shouldReturnAlarm_whenNoPostingRuleMatchFound() {
+        // given
+        Alarm alarm = mock(Alarm.class);
+        when(alarm.getAlarmIdentity()).thenReturn("alarm-id");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        when(RulesConstants.getObjectMapper().convertValue(alarm, HashMap.class)).thenReturn(alarmMap);
+        when(ruleLoadingService.getRuleMap()).thenReturn(Map.of());
 
-        alarm.setAlarmIdentity("1");
-        alarm.setComponentId("component1");
+        // when
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
 
-        // Executing the method
-        service.applyPostingRule(alarm, rule, alarmMap);
+        // then
+        assertEquals(alarm, result);
+    }
 
-        // Verifying the interactions with the mocked dependencies
-        verify(utils, times(2)).evaluateExpression(any(String.class), any(Map.class));
-        verify(topoApiClient).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), any(String.class));
+    @Test
+    void getComponentIdForTopoTraversal_shouldReturnComponentId() {
+        // given
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        PostingRule rule = mock(PostingRule.class);
+        when(rule.getRuleTraversalExpression()).thenReturn("expression");
+        String componentIDAttributeName = "component-id";
+        String componentID = "component-id-value";
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(componentID);
+
+        // when
+        String result = postingRuleProcessingService.getComponentIdForTopoTraversal(alarmMap, rule);
+
+        // then
+        assertEquals(componentID, result);
+    }
+
+    @Test
+    void applyPostingRule_shouldReturnAlarm_whenAlarmedObjectResolved() {
+        // given
+        Alarm alarm = mock(Alarm.class);
+        when(alarm.getAlarmIdentity()).thenReturn("alarm-id");
+        PostingRule rule = mock(PostingRule.class);
+        when(rule.getRuleId()).thenReturn("rule-id");
+        String componentIDAttributeName = "component-id";
+        when(postingRuleProcessingService.getComponentIdForTopoTraversal(anyMap(), any())).thenReturn("component-id-value");
+
+        String topologyData = "{\"topologyObjects\": []}";
+        ResponseEntity<String> response = mock(ResponseEntity.class);
+        when(response.getBody()).thenReturn(topologyData);
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString())).thenReturn(response);
+
+        HashMap<String, Object> topoObjectMap = new HashMap<>();
+        String alarmedObjectExpression = "%TopoObject:OSS_Names[0]%";
+        String alarmedObject = "alarmed-object";
+        when(utils.evaluateExpression(alarmedObjectExpression, topoObjectMap)).thenReturn(alarmedObject);
+
+        // when
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, new HashMap<>());
+
+        // then
+        assertEquals(alarm, result);
+        assertEquals(alarmedObject, result.getAlarmedObject());
+        assertNotNull(result.getTopologyDetails());
+    }
+
+    @Test
+    void isLateAlarmEligibleForRuleProcessing_shouldReturnTrue_whenAttributeNameContainsDot() {
+        // given
+        Alarm alarm = mock(Alarm.class);
+        SqlRowSet rs = mock(SqlRowSet.class);
+        String componentIDAttributeName = "component-id.sub-component-id";
+
+        // when
+        boolean result = postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(alarm, rs);
+
+        // then
+        assertTrue(result);
+    }
+
+    @Test
+    void isLateAlarmEligibleForRuleProcessing_shouldReturnFalse_whenAttributeNameDoesNotContainDot() {
+        // given
+        Alarm alarm = mock(Alarm.class);
+        SqlRowSet rs = mock(SqlRowSet.class);
+        String componentIDAttributeName = "component-id";
+        when(rs.getString(anyString())).thenReturn("value");
+
+        // when
+        boolean result = postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(alarm, rs);
+
+        // then
+        assertFalse(result);
     }
 }
 ```
-
-By adding the null check for the `rule` object before proceeding with the test, you can avoid the `NullPointerException`. Make sure to adjust the code based on your actual implementation and requirements.

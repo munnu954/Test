@@ -1,88 +1,96 @@
-@Test
-void testApplyPostingRule() throws Exception {
-    // Setup
-    Alarm alarm = new Alarm();
-    PostingRule rule = new PostingRule();
-    HashMap<String, Object> alarmMap = new HashMap<>();
-    rule.setRuleId("1");
-    rule.setRuleTraversalExpression("expression");
-    alarm.setAlarmIdentity("123");
-    
-    ResponseEntity<String> responseEntity = new ResponseEntity<>("{\"topologyObjects\":[{\"name\":\"object1\"},{\"name\":\"object2\"}]}",
-            HttpStatus.OK);
-    
-    when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
-            .thenReturn(responseEntity);
-    
-    when(utils.evaluateExpression(anyString(), anyMap()))
-            .thenReturn("value1");
-    
-    when(AlarmPostingConstants.getObjectMapper().readTree(anyString()))
-            .thenReturn(new ObjectMapper().readTree("{\"objects\":[{\"object\":\"object1\"},{\"object\":\"object2\"}]}"));
-    
-    // Execute
-    Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-    
-    // Verify
-    assertNotNull(result);
-    assertEquals("object1", result.getAlarmedObject());
-    assertEquals("{\"objects\":[{\"object\":\"object1\"},{\"object\":\"object2\"}]}", result.getTopologyDetails());
-    
-    verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
-    verify(utils, times(2)).evaluateExpression(anyString(), anyMap());
-    verify(AlarmPostingConstants.getObjectMapper(), times(1)).readTree(anyString());
-}
+Certainly! Here is the JUnit 5 test case code for the `isLateAlarmEligibleForRuleProcessing` method of the `PostingRuleProcessingService` class:
 
-@Test
-void testApplyPostingRule_NoTopologyObjects() throws Exception {
-    // Setup
-    Alarm alarm = new Alarm();
-    PostingRule rule = new PostingRule();
-    HashMap<String, Object> alarmMap = new HashMap<>();
-    rule.setRuleId("1");
-    rule.setRuleTraversalExpression("expression");
-    alarm.setAlarmIdentity("123");
-    
-    ResponseEntity<String> responseEntity = new ResponseEntity<>("{\"topologyObjects\":[]}", HttpStatus.OK);
-    
-    when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
-            .thenReturn(responseEntity);
-    
-    // Execute
-    Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-    
-    // Verify
-    assertNotNull(result);
-    assertNull(result.getAlarmedObject());
-    assertNull(result.getTopologyDetails());
-    
-    verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
-    verify(utils, never()).evaluateExpression(anyString(), anyMap());
-    verify(AlarmPostingConstants.getObjectMapper(), never()).readTree(anyString());
-}
+```java
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
-@Test
-void testApplyPostingRule_Exception() throws Exception {
-    // Setup
-    Alarm alarm = new Alarm();
-    PostingRule rule = new PostingRule();
-    HashMap<String, Object> alarmMap = new HashMap<>();
-    rule.setRuleId("1");
-    rule.setRuleTraversalExpression("expression");
-    alarm.setAlarmIdentity("123");
-    
-    when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
-            .thenThrow(new RestClientException("Error"));
-    
-    // Execute
-    Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-    
-    // Verify
-    assertNotNull(result);
-    assertNull(result.getAlarmedObject());
-    assertNull(result.getTopologyDetails());
-    
-    verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
-    verify(utils, never()).evaluateExpression(anyString(), anyMap());
-    verify(AlarmPostingConstants.getObjectMapper(), never()).readTree(anyString());
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.jdbc.support.rowset.SqlRowSet;
+
+public class PostingRuleProcessingServiceTest {
+
+    @InjectMocks
+    private PostingRuleProcessingService postingRuleProcessingService;
+
+    @Mock
+    private Alarm alarm;
+
+    @Mock
+    private SqlRowSet rs;
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    public void testIsLateAlarmEligibleForRuleProcessing_ComponentIDAttributeNameIsNull() {
+        postingRuleProcessingService.componentIDAttributeName = null;
+
+        boolean result = postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(alarm, rs);
+
+        assertTrue(result); // If componentIDAttributeName is null, it should return true
+    }
+
+    @Test
+    public void testIsLateAlarmEligibleForRuleProcessing_ComponentIDAttributeNameDoesNotContainDot() {
+        postingRuleProcessingService.componentIDAttributeName = "reportingObject";
+
+        boolean result = postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(alarm, rs);
+
+        assertTrue(result); // If componentIDAttributeName does not contain '.', it should return true
+    }
+
+    @Test
+    public void testIsLateAlarmEligibleForRuleProcessing_AttributeNameIsEmpty() {
+        postingRuleProcessingService.componentIDAttributeName = ".";
+
+        boolean result = postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(alarm, rs);
+
+        assertTrue(result); // If attributeName is empty, it should return true
+    }
+
+    @Test
+    public void testIsLateAlarmEligibleForRuleProcessing_AttributeNameIsNotEmpty_DbValueIsNull() {
+        postingRuleProcessingService.componentIDAttributeName = "reportingObject.subAttribute";
+
+        when(rs.getString("reportingobject")).thenReturn(null); // Simulating dbValue as null
+
+        boolean result = postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(alarm, rs);
+
+        assertTrue(result); // If dbValue is null, it should return true
+    }
+
+    @Test
+    public void testIsLateAlarmEligibleForRuleProcessing_AttributeNameIsNotEmpty_DbValueIsNotNull() {
+        postingRuleProcessingService.componentIDAttributeName = "reportingObject.subAttribute";
+
+        when(rs.getString("reportingobject")).thenReturn("someValue"); // Simulating dbValue as not null
+
+        boolean result = postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(alarm, rs);
+
+        assertFalse(result); // If dbValue is not null, it should return false
+    }
 }
+```
+
+### Explanation:
+1. **Test Setup**: 
+   - We use the `@InjectMocks` annotation to create an instance of `PostingRuleProcessingService` and inject the mocks.
+   - `@Mock` annotations are used for `Alarm` and `SqlRowSet` to mock dependencies.
+   - `MockitoAnnotations.openMocks(this)` initializes the mocks before each test case.
+
+2. **Test Cases**:
+   - **testIsLateAlarmEligibleForRuleProcessing_ComponentIDAttributeNameIsNull**: Tests the scenario where `componentIDAttributeName` is `null`.
+   - **testIsLateAlarmEligibleForRuleProcessing_ComponentIDAttributeNameDoesNotContainDot**: Tests the scenario where `componentIDAttributeName` does not contain a dot.
+   - **testIsLateAlarmEligibleForRuleProcessing_AttributeNameIsEmpty**: Tests the scenario where `componentIDAttributeName` contains only a dot.
+   - **testIsLateAlarmEligibleForRuleProcessing_AttributeNameIsNotEmpty_DbValueIsNull**: Tests the scenario where `componentIDAttributeName` contains a dot, and the database value (`dbValue`) is `null`.
+   - **testIsLateAlarmEligibleForRuleProcessing_AttributeNameIsNotEmpty_DbValueIsNotNull**: Tests the scenario where `componentIDAttributeName` contains a dot, and the database value (`dbValue`) is not `null`.
+
+These test cases ensure that all branches of the `isLateAlarmEligibleForRuleProcessing` method are covered, achieving 100% code coverage.

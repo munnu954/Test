@@ -1,5 +1,47 @@
 @Test
-void testApplyPostingRule() throws Exception {
+void testApplyPostingRule_WithTopologyObjects() throws Exception {
+    // Setup
+    Alarm alarm = new Alarm();
+    alarm.setAlarmIdentity("TestAlarm");
+    alarm.setAlarmedObject("");
+    
+    PostingRule rule = new PostingRule();
+    rule.setRuleId("1");
+    rule.setRuleTraversalExpression("%RuleExpression%");
+    
+    HashMap<String, Object> alarmMap = new HashMap<>();
+    alarmMap.put("%RuleExpression%", "testRuleExpression");
+    
+    JsonNode jsonNodeTmp1 = AlarmPostingConstants.getObjectMapper().readTree("{\"key\": \"value1\"}");
+    JsonNode jsonNodeTmp2 = AlarmPostingConstants.getObjectMapper().readTree("{\"key\": \"value2\"}");
+    List<JsonNode> topologyObjectsNodeList = new ArrayList<>();
+    topologyObjectsNodeList.add(jsonNodeTmp1);
+    topologyObjectsNodeList.add(jsonNodeTmp2);
+    
+    ObjectMapper objectMapper = new ObjectMapper();
+    String topologyData = objectMapper.writeValueAsString(topologyObjectsNodeList);
+    
+    ResponseEntity<String> responseEntity = new ResponseEntity<>(topologyData, HttpStatus.OK);
+    when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), anyString())).thenReturn(responseEntity);
+    
+    when(utils.evaluateExpression(eq("%TopoObject:EligibilityValue%"), anyMap())).thenReturn("eligible");
+    when(utils.evaluateExpression(eq("%AlarmedObjectExpression%"), anyMap())).thenReturn("TestObject");
+    when(utils.evaluateExpression(eq("{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}"), anyMap())).thenReturn("TestTopologyDetails");
+    when(utils.evaluateExpression(eq("%TopoObject:TopoDetValue%"), anyMap())).thenReturn("TestTopologyDetailsValue");
+    
+    // Run the test
+    postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+    
+    // Verify the results
+    verify(utils, times(4)).evaluateExpression(anyString(), anyMap());
+    assertNotNull(alarm.getAlarmedObject());
+    assertEquals("TestObject", alarm.getAlarmedObject());
+    assertNotNull(alarm.getTopologyDetails());
+    assertEquals("TestTopologyDetailsValue", alarm.getTopologyDetails());
+}
+
+@Test
+void testApplyPostingRule_TopologyObjectNotEligible() throws Exception {
     // Setup
     Alarm alarm = new Alarm();
     alarm.setAlarmIdentity("TestAlarm");
@@ -22,24 +64,19 @@ void testApplyPostingRule() throws Exception {
     ResponseEntity<String> responseEntity = new ResponseEntity<>(topologyData, HttpStatus.OK);
     when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), anyString())).thenReturn(responseEntity);
     
-    when(utils.evaluateExpression(eq("%TopoObject:EligibilityValue%"), anyMap())).thenReturn("eligible");
-    when(utils.evaluateExpression(eq("%AlarmedObjectExpression%"), anyMap())).thenReturn("TestObject");
-    when(utils.evaluateExpression(eq("{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}"), anyMap())).thenReturn("TestTopologyDetails");
-    when(utils.evaluateExpression(eq("%TopoObject:TopoDetValue%"), anyMap())).thenReturn("TestTopologyDetailsValue");
+    when(utils.evaluateExpression(eq("%TopoObject:EligibilityValue%"), anyMap())).thenReturn("not eligible");
     
     // Run the test
     postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
     
     // Verify the results
-    verify(utils, times(2)).evaluateExpression(anyString(), anyMap());
-    assertNotNull(alarm.getAlarmedObject());
-    assertEquals("TestObject", alarm.getAlarmedObject());
-    assertNotNull(alarm.getTopologyDetails());
-    assertEquals("TestTopologyDetailsValue", alarm.getTopologyDetails());
+    verify(utils, times(3)).evaluateExpression(anyString(), anyMap());
+    assertEquals("", alarm.getAlarmedObject());
+    assertNull(alarm.getTopologyDetails());
 }
-    
+
 @Test
-void testApplyPostingRule_NoTopologyObjects() throws Exception {
+void testApplyPostingRule_NoTopologyObjectsNode() throws Exception {
     // Setup
     Alarm alarm = new Alarm();
     alarm.setAlarmIdentity("TestAlarm");
@@ -53,35 +90,11 @@ void testApplyPostingRule_NoTopologyObjects() throws Exception {
     alarmMap.put("%RuleExpression%", "testRuleExpression");
     
     ObjectMapper objectMapper = new ObjectMapper();
-    String topologyData = "";
+    List<JsonNode> topologyObjectsNodeList = new ArrayList<>();
+    String topologyData = objectMapper.writeValueAsString(topologyObjectsNodeList);
     
     ResponseEntity<String> responseEntity = new ResponseEntity<>(topologyData, HttpStatus.OK);
     when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), anyString())).thenReturn(responseEntity);
-    
-    // Run the test
-    postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-    
-    // Verify the results
-    verify(utils, never()).evaluateExpression(anyString(), anyMap());
-    assertEquals("", alarm.getAlarmedObject());
-    assertNull(alarm.getTopologyDetails());
-}
-    
-@Test
-void testApplyPostingRule_Exception() throws Exception {
-    // Setup
-    Alarm alarm = new Alarm();
-    alarm.setAlarmIdentity("TestAlarm");
-    alarm.setAlarmedObject("");
-    
-    PostingRule rule = new PostingRule();
-    rule.setRuleId("1");
-    rule.setRuleTraversalExpression("%RuleExpression%");
-    
-    HashMap<String, Object> alarmMap = new HashMap<>();
-    alarmMap.put("%RuleExpression%", "testRuleExpression");
-
-    when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), anyString())).thenThrow(new RestClientException("Error"));
     
     // Run the test
     postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);

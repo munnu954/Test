@@ -1,6 +1,49 @@
-Certainly! Below is an enhanced JUnit 5 test case class that aims to cover all the branches within the specified `for` loop of the `applyPostingRule` method in the `PostingRuleProcessingService` class.
+To ensure that the `for` loop in the `applyPostingRule` method is covered, we need to construct test cases that simulate the different branches and conditions within the loop. Let's assume your `applyPostingRule` method looks something like this:
 
-To ensure full coverage, the test cases will address different scenarios such as the eligibility check failing, the `alarmedObject` being empty, and successful updates of the `alarmedObject` and `topologyDetails`.
+```java
+public void applyPostingRule(Alarm alarm, PostingRule rule, Map<String, Object> alarmMap) {
+    // Sample loop with placeholders for actual implementation
+    for (JsonNode jsonNodeTmp : topologyObjectsNode) {
+        Map<String, Object> topoObjectMap = AlarmPostingConstants.getObjectMapper().convertValue(jsonNodeTmp, HashMap.class);
+        String topoObjectEligibilityValue = utils.evaluateExpression(topologyObjectEligibilityCheckValue, topoObjectMap);
+
+        if (!(topoObjectEligibilityValue.matches(topologyObjectEligibilityCheckExpression)))
+            continue;
+
+        String alarmedObject = utils.evaluateExpression(alarmedObjectExpression, topoObjectMap);
+
+        LOG.debug("AlarmedObject resolved : AlarmedObject<" + alarmedObject + "> AlarmIdentity:<" + alarm.getAlarmIdentity());
+
+        if (alarmedObject != null && !(alarmedObject.trim().isEmpty())) {
+
+            String alarmedObjectTopoDet = utils.evaluateExpression(topologyDetailsAlarmedObjectExpression, topoObjectMap);
+
+            if (alarmedObjectTopoDet != null && !(alarmedObjectTopoDet.trim().isEmpty())) {
+                alarm.setAlarmedObject(alarmedObject);
+                JsonNode jsonnode = null;
+                if (alarm.getTopologyDetails() != null)
+                    jsonnode = AlarmPostingConstants.getObjectMapper().readTree(alarm.getTopologyDetails());
+                else
+                    jsonnode = AlarmPostingConstants.getObjectMapper().createObjectNode();
+
+                JsonNode updateNode = AlarmPostingConstants.getObjectMapper().readTree(alarmedObjectTopoDet);
+                ObjectNode objNode = (ObjectNode) jsonnode;
+                objNode.replace(AlarmPostingConstants.TOPOLOGY_ENRICHMENT_TARGET_ATTRIBUTE, updateNode);
+
+                jsonnode = (JsonNode) objNode;
+                String topologyDetails = jsonnode.toString();
+                LOG.debug("Alarm topologyDetails resolved using posting rules: <" + topologyDetails + ">AlarmIdentity:<" + alarm.getAlarmIdentity());
+
+                if (topologyDetails != null && !(topologyDetails.isEmpty()))
+                    alarm.setTopologyDetails(topologyDetails);
+                break;
+            }
+        }
+    }
+}
+```
+
+Below are additional test cases aimed at covering the various branches within the `for` loop of the `applyPostingRule` method:
 
 ```java
 import static org.mockito.ArgumentMatchers.any;
@@ -38,7 +81,7 @@ public class PostingRuleProcessingServiceTest {
     private PostingRuleProcessingService service;
 
     private Alarm alarm;
-    private HashMap<String, Object> alarmMap;
+    private Map<String, Object> alarmMap;
     private PostingRule rule;
     private ObjectMapper objectMapper;
 
@@ -50,10 +93,17 @@ public class PostingRuleProcessingServiceTest {
         objectMapper = new ObjectMapper();
     }
 
+    private void setupTopologyClient(String topologyData) throws Exception {
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
+    }
+
     @Test
-    public void testApplyPostingRule_TopologyObjectEligibilityCheckFails() throws Exception {
+    public void testApplyPostingRule_EligibilityCheckFails() throws Exception {
         // Arrange
         String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
+        setupTopologyClient(topologyData);
+
         when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("invalidValue");
         when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
                 .thenReturn(ResponseEntity.ok(topologyData));
@@ -67,10 +117,12 @@ public class PostingRuleProcessingServiceTest {
     }
 
     @Test
-    public void testApplyPostingRule_AlarmedObjectIsEmpty() throws Exception {
+    public void testApplyPostingRule_AlarmedObjectIsNullOrEmpty() throws Exception {
         // Arrange
         String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue").thenReturn("");
+        setupTopologyClient(topologyData);
+
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue").thenReturn(null);
         when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
                 .thenReturn(ResponseEntity.ok(topologyData));
 
@@ -83,10 +135,12 @@ public class PostingRuleProcessingServiceTest {
     }
 
     @Test
-    public void testApplyPostingRule_AlarmedObjectTopoDetIsEmpty() throws Exception {
+    public void testApplyPostingRule_AlarmedObjectTopoDetIsNullOrEmpty() throws Exception {
         // Arrange
         String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue").thenReturn("alarmedObject").thenReturn("");
+        setupTopologyClient(topologyData);
+
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue").thenReturn("alarmedObject").thenReturn(null);
         when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
                 .thenReturn(ResponseEntity.ok(topologyData));
 
@@ -99,9 +153,11 @@ public class PostingRuleProcessingServiceTest {
     }
 
     @Test
-    public void testApplyPostingRule_SuccessfulUpdate() throws Exception {
+    public void testApplyPostingRule_JsonNodeUpdate() throws Exception {
         // Arrange
         String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
+        setupTopologyClient(topologyData);
+
         when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue").thenReturn("alarmedObject").thenReturn("{\"updated\": \"node\"}");
         when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
                 .thenReturn(ResponseEntity.ok(topologyData));
@@ -115,55 +171,30 @@ public class PostingRuleProcessingServiceTest {
     }
 
     @Test
-    public void testApplyPostingRule_FullCoverage() throws Exception {
+    public void testApplyPostingRule_Success() throws Exception {
         // Arrange
         String topologyData = "{\"topologyObjects\": [{\"key\": \"value1\"}, {\"key\": \"value2\"}]}";
+        setupTopologyClient(topologyData);
 
-        ArrayNode topologyObjectsNode = objectMapper.createArrayNode();
-        ObjectNode node1 = objectMapper.createObjectNode();
-        node1.put("key", "value1");
-        ObjectNode node2 = objectMapper.createObjectNode();
-        node2.put("key", "value2");
-        topologyObjectsNode.add(node1);
-        topologyObjectsNode.add(node2);
-
-        JsonNode jsonNode = objectMapper.createObjectNode().set("topologyObjects", topologyObjectsNode);
-
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue").thenReturn("alarmedObject").thenReturn("{\"updated\": \"node\"}");
         when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
-                .thenReturn(ResponseEntity.ok(jsonNode.toString()));
-
-        when(utils.evaluateExpression(eq("%TopoObject:OSS_Names[0]%"), anyMap()))
-                .thenReturn("validValue");
-
-        when(utils.evaluateExpression(eq("%TopoObject:MO_Type%"), anyMap()))
-                .thenReturn("MO_Type_Value");
-
-        when(utils.evaluateExpression(eq("%TopoObject:INMS_Attributes.TagSequence%"), anyMap()))
-                .thenReturn("TagSequence_Value");
-
-        when(utils.evaluateExpression(eq("%TopoObject:Name%"), anyMap()))
-                .thenReturn("Name_Value");
-
-        when(utils.evaluateExpression(eq("%Alarm:reportingObject%"), anyMap()))
-                .thenReturn("componentId");
-
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validValue");
+                .thenReturn(ResponseEntity.ok(topologyData));
 
         // Act
         service.applyPostingRule(alarm, rule, alarmMap);
 
         // Assert
-        verify(utils, times(5)).evaluateExpression(anyString(), anyMap());
+        verify(utils, times(3)).evaluateExpression(anyString(), anyMap());
         verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
     }
 }
 ```
 
 ### Explanation:
-1. **testApplyPostingRule_TopologyObjectEligibilityCheckFails**: Tests the scenario where the eligibility check fails.
-2. **testApplyPostingRule_AlarmedObjectIsEmpty**: Tests the scenario where the `alarmedObject` is empty.
-3. **testApplyPostingRule_AlarmedObjectTopoDetIsEmpty**: Tests the scenario where the `alarmedObjectTopoDet` is empty.
-4. **testApplyPostingRule_SuccessfulUpdate**: Tests the scenario where the update is successful.
-5. **testApplyPostingRule_FullCoverage**: This test case is designed to ensure full coverage of the `for` loop by creating a JSON array with multiple nodes and verifying the behavior of the method through various branches.
+1. **testApplyPostingRule_EligibilityCheckFails**: Tests when the eligibility check fails, ensuring the loop continues.
+2. **testApplyPostingRule_AlarmedObjectIsNullOrEmpty**: Tests when the `alarmedObject` is null or empty.
+3. **testApplyPostingRule_AlarmedObjectTopoDetIsNullOrEmpty**: Tests when the `alarmedObjectTopoDet` is null or empty.
+4. **testApplyPostingRule_JsonNodeUpdate**: Tests when the `alarmedObject` and `topologyDetails` are updated.
+5. **testApplyPostingRule_Success**: Ensures the loop processes nodes and updates the `alarmedObject` and `topologyDetails` successfully.
 
-The `testApplyPostingRule_FullCoverage` test case ensures that multiple nodes in the `topologyObjectsNode` array are processed, and all branches within the loop are covered.
+These test cases should cover the different branches within your `for` loop. Ensure that your actual `applyPostingRule` method and the related dependencies (`utils`, `topoApiClient`, etc.) are correctly implemented and integrated in your test setup.

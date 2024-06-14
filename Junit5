@@ -1,31 +1,140 @@
-@Test
-public void testApplyPostingRule() throws Exception {
-    // Setup
-    Alarm alarm = new Alarm();
-    PostingRule rule = new PostingRule();
-    HashMap<String, Object> alarmMap = new HashMap<>();
-    
-    ResponseEntity<String> responseEntity = new ResponseEntity<>("topologyData", HttpStatus.OK);
-    String componentIdReq = "componentIdReq";
-    String alarmedObject = "alarmedObject";
-    String alarmedObjectTopoDet = "alarmedObjectTopoDet";
-    String topologyDetails = "topologyDetails";
+Certainly! Below is a JUnit 5 test case for the `applyPostingRule` method in the `PostingRuleProcessingService` class, covering all the branches within the `for (JsonNode jsonNodeTmp : topologyObjectsNode)` loop.
 
-    JsonNode jsonNode = new ObjectMapper().readTree("{ \"key\": \"value\" }");
-    JsonNode topologyObjectsNode = new ObjectMapper().readTree("[ { \"key\": \"value\" } ]");
+```java
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-    Mockito.when(topoApiClient.fetchTopologyTraversalDetails(alarm, rule, componentIdReq)).thenReturn(responseEntity);
-    Mockito.when(alarmedObjectExpression.trim()).thenReturn(alarmedObject);
-    Mockito.when(topologyDetailsAlarmedObjectExpression.trim()).thenReturn(alarmedObjectTopoDet);
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.ResponseEntity;
 
-    Mockito.when(jsonNode.iterator()).thenReturn(topologyObjectsNode.elements());
-    Mockito.when(topoApiClient.fetchTopologyTraversalDetails(alarm, rule, componentIdReq)).thenReturn(responseEntity);
-    Mockito.when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("value");
+import java.util.HashMap;
+import java.util.Map;
 
-    // Execute
-    Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+@ExtendWith(MockitoExtension.class)
+public class PostingRuleProcessingServiceTest {
 
-    // Verify
-    assertEquals(alarmedObject, result.getAlarmedObject());
-    assertEquals(topologyDetails, result.getTopologyDetails());
+    @Mock
+    private RuleLoadingService ruleLoadingService;
+
+    @Mock
+    private TopologyApiClient topoApiClient;
+
+    @Mock
+    private AlarmPostingUtils utils;
+
+    @InjectMocks
+    private PostingRuleProcessingService service;
+
+    private Alarm alarm;
+    private PostingRule rule;
+    private HashMap<String, Object> alarmMap;
+    private ObjectMapper objectMapper;
+
+    @BeforeEach
+    public void setup() {
+        alarm = new Alarm();
+        alarm.setAlarmIdentity("testAlarm");
+        rule = new PostingRule();
+        rule.setRuleId(1);
+        rule.setRulePriority(1);
+        alarmMap = new HashMap<>();
+        objectMapper = new ObjectMapper();
+
+        service = new PostingRuleProcessingService();
+        service.ruleLoadingService = ruleLoadingService;
+        service.topoApiClient = topoApiClient;
+        service.utils = utils;
+        service.alarmedObjectExpression = "%TopoObject:OSS_Names[0]%";
+        service.topologyDetailsAlarmedObjectExpression = "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}";
+        service.topologyObjectEligibilityCheckValue = "%TopoObject:OSS_Names[0]%";
+        service.topologyObjectEligibilityCheckExpression = "^(?!\\s*$).+";
+        service.componentIDAttributeName = "reportingObject";
+    }
+
+    @Test
+    public void testApplyPostingRule_NoTopologyData() throws Exception {
+        // Mocking
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("componentId");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString())).thenReturn(ResponseEntity.ok("{}"));
+
+        // Test
+        Alarm result = service.applyPostingRule(alarm, rule, alarmMap);
+
+        // Verify
+        assertEquals(alarm, result);
+        verify(utils, times(1)).evaluateExpression(anyString(), anyMap());
+        verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(), any(), anyString());
+    }
+
+    @Test
+    public void testApplyPostingRule_TopologyObjectEligibilityCheckFailed() throws Exception {
+        // Mocking
+        String responseJson = "{\"topologyObjects\": [{\"OSS_Names\": [\"name1\"]}]}";
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("componentId", "name1");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString())).thenReturn(ResponseEntity.ok(responseJson));
+
+        // Test
+        Alarm result = service.applyPostingRule(alarm, rule, alarmMap);
+
+        // Verify
+        assertEquals(alarm, result);
+        verify(utils, times(2)).evaluateExpression(anyString(), anyMap());
+        verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(), any(), anyString());
+    }
+
+    @Test
+    public void testApplyPostingRule_AlarmedObjectResolved() throws Exception {
+        // Mocking
+        String responseJson = "{\"topologyObjects\": " +
+                "[{\"OSS_Names\": [\"name1\"], \"MO_Type\": \"Type1\", \"INMS_Attributes\": {\"TagSequence\": \"123\"}, \"Name\": \"ObjectName1\"}]}";
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("componentId", "name1", "alarmedObject");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString())).thenReturn(ResponseEntity.ok(responseJson));
+
+        // Test
+        Alarm result = service.applyPostingRule(alarm, rule, alarmMap);
+
+        // Verify
+        assertNotNull(result);
+        assertEquals("alarmedObject", result.getAlarmedObject());
+        verify(utils, times(3)).evaluateExpression(anyString(), anyMap());
+        verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(), any(), anyString());
+    }
+
+    @Test
+    public void testApplyPostingRule_TopologyDetailsResolved() throws Exception {
+        // Mocking
+        String responseJson = "{\"topologyObjects\": " +
+                "[{\"OSS_Names\": [\"name1\"], \"MO_Type\": \"Type1\", \"INMS_Attributes\": {\"TagSequence\": \"123\"}, \"Name\": \"ObjectName1\"}]}";
+        String topologyDetails = "{\"MO_Type\":\"Type1\",\"TagSequence\":\"123\",\"Name\":\"ObjectName1\"}";
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("componentId", "name1", "alarmedObject", topologyDetails);
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString())).thenReturn(ResponseEntity.ok(responseJson));
+
+        // Test
+        Alarm result = service.applyPostingRule(alarm, rule, alarmMap);
+
+        // Verify
+        assertNotNull(result);
+        assertEquals("alarmedObject", result.getAlarmedObject());
+        assertEquals(topologyDetails, result.getTopologyDetails());
+        verify(utils, times(4)).evaluateExpression(anyString(), anyMap());
+        verify(topoApiClient, times(1)).fetchTopologyTraversalDetails(any(), any(), anyString());
+    }
 }
+```
+
+### Explanation:
+1. **testApplyPostingRule_NoTopologyData**: Tests the branch where no topology data is found.
+2. **testApplyPostingRule_TopologyObjectEligibilityCheckFailed**: Tests the branch where the topology object eligibility check fails.
+3. **testApplyPostingRule_AlarmedObjectResolved**: Tests the branch where an alarmed object is resolved.
+4. **testApplyPostingRule_TopologyDetailsResolved**: Tests the branch where topology details are resolved.
+
+These test cases should cover all branches of the `for (JsonNode jsonNodeTmp : topologyObjectsNode)` loop within the `applyPostingRule` method. Be sure to adjust the `when` conditions and return values according to the actual implementation and dependencies.

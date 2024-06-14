@@ -1,31 +1,153 @@
-Based on the error message you received, it seems like you are using argument matchers incorrectly in your test case. Argument matchers should only be used in stubbing (`when`) and verification (`verify`) contexts.
+Certainly! To achieve 100% code coverage for the `for (JsonNode jsonNodeTmp : topologyObjectsNode)` loop in the `applyPostingRule` method of the `PostingRuleProcessingService` class, we need to write JUnit 5 test cases that cover all possible branches:
 
-Here is a reframed and updated JUnit 5 test case code for `PostRuleProcessingService` class without any argument matchers:
+- No topology data found
+- Topology data is missing or not an array
+- Topology object eligibility check fails
+- Alarmed object is null or empty
+- Alarmed object topology details are null or empty
+- Everything goes well and alarm topology details are set
+
+Here's a JUnit 5 test class that covers all these scenarios:
 
 ```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.ResponseEntity;
 
-public class TestPostingRuleProcessingService {
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+public class PostingRuleProcessingServiceTest {
+
+    @Mock
+    private RuleLoadingService ruleLoadingService;
+
+    @Mock
+    private TopologyApiClient topoApiClient;
+
+    @Mock
+    private AlarmPostingUtils utils;
+
+    @InjectMocks
+    private PostingRuleProcessingService postingRuleProcessingService;
+
+    private Alarm alarm;
+    private PostingRule rule;
+    private HashMap<String, Object> alarmMap;
+
+    @BeforeEach
+    public void setUp() {
+        alarm = new Alarm();
+        alarm.setAlarmIdentity("testAlarm");
+
+        rule = new PostingRule();
+        rule.setRuleId("testRule");
+
+        alarmMap = new HashMap<>();
+    }
 
     @Test
-    public void testApplyPostingRule() {
-        // Create a mock of the PostRuleProcessingService
-        PostRuleProcessingService postRuleProcessingService = mock(PostRuleProcessingService.class);
-        
-        // Define the input parameters 
-        PostingRule postingRule = new PostingRule();
-        List<Transaction> transactions = new ArrayList<>();
-        
-        // Call the method under test
-        postRuleProcessingService.applyPostingRule(postingRule, transactions);
-        
-        // Verify that the method was called with the correct parameters
-        verify(postRuleProcessingService).applyPostingRule(postingRule, transactions);
+    public void testNoTopologyDataFound() throws Exception {
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(null);
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals(alarm, result);
+    }
+
+    @Test
+    public void testTopologyDataMissingOrNotArray() throws Exception {
+        ResponseEntity<String> responseEntity = mock(ResponseEntity.class);
+        when(responseEntity.getBody()).thenReturn("{\"invalidField\": []}");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(responseEntity);
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals(alarm, result);
+    }
+
+    @Test
+    public void testTopologyObjectEligibilityCheckFails() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        ArrayNode arrayNode = mapper.createArrayNode();
+        ObjectNode objectNode = mapper.createObjectNode();
+        arrayNode.add(objectNode);
+
+        ResponseEntity<String> responseEntity = mock(ResponseEntity.class);
+        when(responseEntity.getBody()).thenReturn(mapper.writeValueAsString(Map.of("topologyObjects", arrayNode)));
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(responseEntity);
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(""); // Fails eligibility check
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals(alarm, result);
+    }
+
+    @Test
+    public void testAlarmedObjectNullOrEmpty() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        ArrayNode arrayNode = mapper.createArrayNode();
+        ObjectNode objectNode = mapper.createObjectNode();
+        arrayNode.add(objectNode);
+
+        ResponseEntity<String> responseEntity = mock(ResponseEntity.class);
+        when(responseEntity.getBody()).thenReturn(mapper.writeValueAsString(Map.of("topologyObjects", arrayNode)));
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(responseEntity);
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validEligibility", ""); // Alarmed object is empty
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals(alarm, result);
+    }
+
+    @Test
+    public void testAlarmedObjectTopoDetailsNullOrEmpty() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        ArrayNode arrayNode = mapper.createArrayNode();
+        ObjectNode objectNode = mapper.createObjectNode();
+        arrayNode.add(objectNode);
+
+        ResponseEntity<String> responseEntity = mock(ResponseEntity.class);
+        when(responseEntity.getBody()).thenReturn(mapper.writeValueAsString(Map.of("topologyObjects", arrayNode)));
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(responseEntity);
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validEligibility", "alarmedObject", ""); // Topo details are empty
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals(alarm, result);
+    }
+
+    @Test
+    public void testAllGoesWell() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        ArrayNode arrayNode = mapper.createArrayNode();
+        ObjectNode objectNode = mapper.createObjectNode();
+        arrayNode.add(objectNode);
+
+        ResponseEntity<String> responseEntity = mock(ResponseEntity.class);
+        when(responseEntity.getBody()).thenReturn(mapper.writeValueAsString(Map.of("topologyObjects", arrayNode)));
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(responseEntity);
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("validEligibility", "alarmedObject", "{\"detail\":\"someDetail\"}");
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals("alarmedObject", result.getAlarmedObject());
+        assertEquals("{\"detail\":\"someDetail\"}", result.getTopologyDetails());
     }
 }
 ```
-Make sure to replace `PostRuleProcessingService` with the actual class name that contains the `applyPostingRule` method. Also, ensure that the method `applyPostingRule` in `PostRuleProcessingService` class is not a final, private, or equals/hashCode method as those cannot be stubbed or verified using Mockito.
 
-By using the `verify` method in the test case, you can check that the `applyPostingRule` method was called with the expected parameters during the test execution.
+This should cover all the branches within the loop in the `applyPostingRule` method. Each test checks a different scenario, ensuring the method behaves as expected under various conditions.

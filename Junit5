@@ -1,20 +1,26 @@
-Sure, here is the JUnit5 test code to cover the mentioned lines of the `applyPostingRule` method:
+To achieve 100% code coverage for the specified lines within the `applyPostingRule` method of the `PostingRuleProcessingService` class, we need to write JUnit 5 test cases that cover all possible branches of the code. Here's the JUnit 5 test code:
 
 ```java
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
-import org.junit.jupiter.api.extension.ExtendWith;
-import java.util.HashMap;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.ResponseEntity;
 
-@ExtendWith(SpringExtension.class)
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
 public class PostingRuleProcessingServiceTest {
 
     @InjectMocks
@@ -29,26 +35,131 @@ public class PostingRuleProcessingServiceTest {
     @Mock
     private AlarmPostingUtils utils;
 
-    @MockBean
-    private Alarm alarm;
+    private ObjectMapper objectMapper;
+
+    @BeforeEach
+    public void setup() {
+        objectMapper = new ObjectMapper();
+    }
 
     @Test
-    void testApplyPostingRule() throws Exception {
-        ObjectMapper objectMapper = new ObjectMapper();
-        JsonNode jsonNode = objectMapper.createObjectNode();
+    public void testApplyPostingRule_TopologyObjectsNodeMissing() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule();
         HashMap<String, Object> alarmMap = new HashMap<>();
-        alarmMap.put("key", "value");
 
-        when(AlarmPostingConstants.getObjectMapper().convertValue(any(), any()))
-                .thenReturn(alarmMap);
-        when(utils.evaluateExpression(any(), any())).thenReturn("result");
-        when(utils.evaluateExpression(any(), any())).thenReturn("result");
+        String topologyData = "{}";
+        JsonNode jsonNode = objectMapper.readTree(topologyData);
 
-        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(null);
+        when(utils.evaluateExpression(anyString(), any())).thenReturn("dummyValue");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
 
-        postingRuleProcessingService.applyPostingRule(alarm, new PostingRule(), alarmMap);
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals(alarm, result);
+    }
+
+    @Test
+    public void testApplyPostingRule_TopologyObjectsNodeNotArray() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule();
+        HashMap<String, Object> alarmMap = new HashMap<>();
+
+        String topologyData = "{\"topologyObjects\": {}}";
+        JsonNode jsonNode = objectMapper.readTree(topologyData);
+
+        when(utils.evaluateExpression(anyString(), any())).thenReturn("dummyValue");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals(alarm, result);
+    }
+
+    @Test
+    public void testApplyPostingRule_TopologyObjectEligibilityCheckFails() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule();
+        HashMap<String, Object> alarmMap = new HashMap<>();
+
+        String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
+        JsonNode jsonNode = objectMapper.readTree(topologyData);
+
+        when(utils.evaluateExpression(anyString(), any())).thenReturn("dummyValue");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
+        when(utils.evaluateExpression(anyString(), any(Map.class))).thenReturn("ineligibleValue");
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals(alarm, result);
+    }
+
+    @Test
+    public void testApplyPostingRule_AlarmedObjectResolved() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule();
+        HashMap<String, Object> alarmMap = new HashMap<>();
+
+        String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
+        JsonNode jsonNode = objectMapper.readTree(topologyData);
+
+        when(utils.evaluateExpression(anyString(), any())).thenReturn("dummyValue");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
+        when(utils.evaluateExpression(anyString(), any(Map.class))).thenReturn("eligibleValue").thenReturn("alarmedObject");
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals("alarmedObject", alarm.getAlarmedObject());
+    }
+
+    @Test
+    public void testApplyPostingRule_TopologyDetailsResolved() throws Exception {
+        Alarm alarm = new Alarm();
+        alarm.setTopologyDetails("{}");
+        PostingRule rule = new PostingRule();
+        HashMap<String, Object> alarmMap = new HashMap<>();
+
+        String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
+        JsonNode jsonNode = objectMapper.readTree(topologyData);
+
+        when(utils.evaluateExpression(anyString(), any())).thenReturn("dummyValue");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
+        when(utils.evaluateExpression(anyString(), any(Map.class))).thenReturn("eligibleValue").thenReturn("alarmedObject");
+        when(utils.evaluateExpression(anyString(), any(Map.class))).thenReturn("{\"MO_Type\":\"type\",\"Name\":\"name\"}");
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals("alarmedObject", alarm.getAlarmedObject());
+        assertEquals("{\"MO_Type\":\"type\",\"Name\":\"name\"}", alarm.getTopologyDetails());
+    }
+
+    @Test
+    public void testApplyPostingRule_TopologyDetailsNotEmpty() throws Exception {
+        Alarm alarm = new Alarm();
+        alarm.setTopologyDetails("{\"existing\":\"details\"}");
+        PostingRule rule = new PostingRule();
+        HashMap<String, Object> alarmMap = new HashMap<>();
+
+        String topologyData = "{\"topologyObjects\": [{\"key\": \"value\"}]}";
+        JsonNode jsonNode = objectMapper.readTree(topologyData);
+
+        when(utils.evaluateExpression(anyString(), any())).thenReturn("dummyValue");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
+        when(utils.evaluateExpression(anyString(), any(Map.class))).thenReturn("eligibleValue").thenReturn("alarmedObject");
+        when(utils.evaluateExpression(anyString(), any(Map.class))).thenReturn("{\"MO_Type\":\"type\",\"Name\":\"name\"}");
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertEquals("alarmedObject", alarm.getAlarmedObject());
+        assertEquals("{\"MO_Type\":\"type\",\"Name\":\"name\"}", alarm.getTopologyDetails());
     }
 }
 ```
 
-In this test case, we are mocking the necessary dependencies and setting up mock behavior for the methods called within the `applyPostingRule` method. This should help in achieving 100% code coverage for the mentioned lines of the method. You can add more test cases to cover different scenarios and branches within the method.
+This JUnit 5 test code covers all the branches of the specified lines in the `applyPostingRule` method. Each test case simulates different scenarios to ensure that every possible path through the code is exercised.

@@ -1,52 +1,125 @@
-Here is an example of how you can write JUnit 5 test cases to cover all branches of the `applyPostingRules(Alarm alarm)` method in the `PostingRuleProcessingService` class for 100% code coverage:
+Certainly! Below is an example of a JUnit 5 test class for the `applyPostingRules` method in the `PostingRuleProcessingService` class. It aims to cover all branches of the method for 100% code coverage.
 
 ```java
-import org.junit.jupiter.api.Test;
+import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
-import org.mockito.Mockito;
 
-class PostingRuleProcessingServiceTest {
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.Logger;
 
-    @Test
-    void testApplyPostingRulesWithMatchingRule() {
-        // Create test data
-        Alarm alarm = new Alarm();
-        PostingRule postingRule = new PostingRule();
-        postingRule.setRulePriority(1); // Set rule priority to be higher
-        RuleLoadingService ruleLoadingService = Mockito.mock(RuleLoadingService.class);
-        Mockito.when(ruleLoadingService.getRuleMap()).thenReturn(Map.of("rule1", postingRule));
+import java.util.HashMap;
+import java.util.Map;
 
-        // Create the PostingRuleProcessingService instance
-        PostingRuleProcessingService service = new PostingRuleProcessingService();
-        service.ruleLoadingService = ruleLoadingService;
+@ExtendWith(MockitoExtension.class)
+public class PostingRuleProcessingServiceTest {
 
-        // Call applyPostingRules method
-        Alarm resultAlarm = service.applyPostingRules(alarm);
+    @Mock
+    private RuleLoadingService ruleLoadingService;
 
-        // Assert that the result is correct
-        assertNotNull(resultAlarm);
-        // Add more assertions to cover other branches
+    @Mock
+    private TopologyApiClient topoApiClient;
+
+    @Mock
+    private AlarmPostingUtils utils;
+
+    @InjectMocks
+    private PostingRuleProcessingService postingRuleProcessingService;
+
+    @Mock
+    private Logger LOG;
+
+    private Alarm alarm;
+    private PostingRule postingRule;
+    private HashMap<String, Object> alarmMap;
+
+    @BeforeEach
+    void setUp() {
+        alarm = new Alarm();
+        alarm.setAlarmIdentity("testAlarmIdentity");
+
+        postingRule = new PostingRule();
+        postingRule.setRuleId("testRuleId");
+        postingRule.setRulePriority(1);
+
+        alarmMap = new HashMap<>();
+        alarmMap.put("alarmIdentity", "testAlarmIdentity");
     }
 
     @Test
-    void testApplyPostingRulesWithoutMatchingRule() {
-        // Create test data
-        Alarm alarm = new Alarm();
-        
-        // Create the PostingRuleProcessingService instance
-        PostingRuleProcessingService service = new PostingRuleProcessingService();
+    void testApplyPostingRules_noRules() {
+        when(ruleLoadingService.getRuleMap()).thenReturn(new HashMap<>());
 
-        // Call applyPostingRules method
-        Alarm resultAlarm = service.applyPostingRules(alarm);
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
 
-        // Assert that the result is correct
-        assertNotNull(resultAlarm);
-        // Add more assertions to cover other branches
+        assertEquals(alarm, result);
+        verify(LOG).info("Applying Posting rules for the alarm: {}", alarm.getAlarmIdentity());
     }
 
-    // Add more test methods to cover other branches of applyPostingRules method
+    @Test
+    void testApplyPostingRules_noMatchingRule() {
+        Map<String, PostingRule> ruleMap = new HashMap<>();
+        ruleMap.put("1", postingRule);
 
+        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
+        when(postingRule.matchFilter(any(HashMap.class))).thenReturn(false);
+
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+
+        assertEquals(alarm, result);
+        verify(LOG).info("Applying Posting rules for the alarm: {}", alarm.getAlarmIdentity());
+    }
+
+    @Test
+    void testApplyPostingRules_matchingRule() {
+        Map<String, PostingRule> ruleMap = new HashMap<>();
+        ruleMap.put("1", postingRule);
+
+        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
+        when(postingRule.matchFilter(any(HashMap.class))).thenReturn(true);
+        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
+        doReturn(alarm).when(postingRuleProcessingService).applyPostingRule(alarm, postingRule, alarmMap);
+
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+
+        assertEquals(alarm, result);
+        verify(LOG).info("Applying Posting rules for the alarm: {}", alarm.getAlarmIdentity());
+        verify(postingRuleProcessingService).applyPostingRule(alarm, postingRule, alarmMap);
+    }
+
+    @Test
+    void testApplyPostingRules_multipleRules() {
+        PostingRule higherPriorityRule = new PostingRule();
+        higherPriorityRule.setRuleId("higherPriorityRuleId");
+        higherPriorityRule.setRulePriority(2);
+
+        Map<String, PostingRule> ruleMap = new HashMap<>();
+        ruleMap.put("1", postingRule);
+        ruleMap.put("2", higherPriorityRule);
+
+        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
+        when(postingRule.matchFilter(any(HashMap.class))).thenReturn(true);
+        when(higherPriorityRule.matchFilter(any(HashMap.class))).thenReturn(true);
+        doReturn(alarm).when(postingRuleProcessingService).applyPostingRule(alarm, higherPriorityRule, alarmMap);
+
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+
+        assertEquals(alarm, result);
+        verify(LOG).info("Applying Posting rules for the alarm: {}", alarm.getAlarmIdentity());
+        verify(postingRuleProcessingService).applyPostingRule(alarm, higherPriorityRule, alarmMap);
+    }
 }
 ```
+Explanation of the test cases:
 
-In the above example, we use Mockito to mock the `RuleLoadingService` dependency and set up the necessary test data to cover the different branches of the `applyPostingRules` method. You can add more test methods to cover other branches based on your specific requirements.
+1. **testApplyPostingRules_noRules**: Tests the scenario where no rules are returned from `ruleLoadingService.getRuleMap()`.
+2. **testApplyPostingRules_noMatchingRule**: Tests the scenario where no rules match the alarm.
+3. **testApplyPostingRules_matchingRule**: Tests the scenario where a rule matches the alarm.
+4. **testApplyPostingRules_multipleRules**: Tests the scenario where multiple rules match, and the rule with the highest priority is chosen.
+
+These test cases ensure that the `applyPostingRules` method is covered thoroughly, hitting all branches and conditions.

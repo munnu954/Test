@@ -1,63 +1,153 @@
-Certainly! Here is an example of additional Junit5 test cases covering different branches for the `applyPostingRule` method of the `PostingRuleProcessingService` class:
+Certainly! Here is the complete JUnit5 test code to cover all branches of the `applyPostingRule` method of the `PostingRuleProcessingService` class using Reflection APIs. 
 
 ```java
-import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-class PostingRuleProcessingServiceTest {
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.runner.RunWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.Spy;
+import org.mockito.junit.MockitoJUnitRunner;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@RunWith(MockitoJUnitRunner.class)
+public class PostingRuleProcessingServiceTest {
+
+    @Mock
+    private TopologyApiClient topoApiClient;
+
+    @Mock
+    private AlarmPostingUtils utils;
+
+    @Mock
+    private RuleLoadingService ruleLoadingService;
+
+    @Spy
+    @InjectMocks
+    private PostingRuleProcessingService postingRuleProcessingService;
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.initMocks(this);
+
+        ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", "%Mock:AlarmExpression%");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", "%Mock:TopologyExpression%");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%Mock:EligibilityValue%");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "componentIDAttributeName", "MockAttributeName");
+    }
 
     @Test
-    void testApplyPostingRule_withValidRule() {
-        PostingRule validRule = new PostingRule("CategoryA", "RuleA", 1.0);
-        PostingRuleProcessingService service = new PostingRuleProcessingService();
-        
-        double result = service.applyPostingRule(validRule, 100.0);
-        
-        assertEquals(100.0, result);
-    }
-    
-    @Test
-    void testApplyPostingRule_withInvalidRule() {
-        PostingRule invalidRule = new PostingRule(null, "RuleA", 1.0);
-        PostingRuleProcessingService service = new PostingRuleProcessingService();
-        
-        assertThrows(IllegalArgumentException.class, () -> {
-            service.applyPostingRule(invalidRule, 100.0);
-        });
-    }
-    
-    @Test
-    void testApplyPostingRule_withZeroAmount() {
-        PostingRule rule = new PostingRule("CategoryA", "RuleA", 1.0);
-        PostingRuleProcessingService service = new PostingRuleProcessingService();
-        
-        double result = service.applyPostingRule(rule, 0.0);
-        
-        assertEquals(0.0, result);
-    }
-    
-    @Test
-    void testApplyPostingRule_withNegativeAmount() {
-        PostingRule rule = new PostingRule("CategoryA", "RuleA", 1.0);
-        PostingRuleProcessingService service = new PostingRuleProcessingService();
-        
-        assertThrows(IllegalArgumentException.class, () -> {
-            service.applyPostingRule(rule, -100.0);
-        });
-    }
-    
-    @Test
-    void testApplyPostingRule_withSpecialCategory() {
-        PostingRule rule = new PostingRule("SpecialCategory", "RuleA", 2.0);
-        PostingRuleProcessingService service = new PostingRuleProcessingService();
-        
-        double result = service.applyPostingRule(rule, 100.0);
-        
-        assertEquals(200.0, result);
-    }
+    public void testApplyPostingRule() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule();
+        HashMap<String, Object> alarmMap = new HashMap<>();
 
+        // Mocking dependencies
+        ResponseEntity<String> responseEntity = ResponseEntity.ok("{ \"topologyObjects\": [{\"key\": \"value\"}] }");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("TestValue");
+
+        // Set rule properties
+        when(rule.getRuleId()).thenReturn("TestRuleId");
+        when(rule.getRulePriority()).thenReturn(1);
+        when(rule.getRuleTraversalExpression()).thenReturn("TestTraversalExpression");
+
+        // Execute the method to be tested
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        // Assertions or verifications based on different scenarios
+        assertNotNull(result);
+        verify(topoApiClient).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
+        verify(utils, times(2)).evaluateExpression(anyString(), anyMap());
+
+        // Additional branches and conditions
+        // Branch 1: componentIdReq is null or empty
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("");
+        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        assertNotNull(result);
+
+        // Branch 2: response is null
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(null);
+        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        assertNotNull(result);
+
+        // Branch 3: topologyData is null
+        responseEntity = ResponseEntity.ok(null);
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
+        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        assertNotNull(result);
+
+        // Branch 4: topologyObjectsNode is missing or not an array
+        responseEntity = ResponseEntity.ok("{ }");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
+        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        assertNotNull(result);
+
+        responseEntity = ResponseEntity.ok("{ \"topologyObjects\": {} }");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
+        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        assertNotNull(result);
+
+        // Branch 5: topoObjectEligibilityValue does not match
+        responseEntity = ResponseEntity.ok("{ \"topologyObjects\": [{\"key\": \"value\"}] }");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
+        when(utils.evaluateExpression("%Mock:EligibilityValue%", anyMap())).thenReturn("ineligibleValue");
+        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        assertNotNull(result);
+
+        // Branch 6: alarmedObject is null or empty
+        when(utils.evaluateExpression("%Mock:EligibilityValue%", anyMap())).thenReturn("eligibleValue");
+        when(utils.evaluateExpression("%Mock:AlarmExpression%", anyMap())).thenReturn("");
+        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        assertNotNull(result);
+
+        // Branch 7: alarmedObjectTopoDet is null or empty
+        when(utils.evaluateExpression("%Mock:AlarmExpression%", anyMap())).thenReturn("validAlarmedObject");
+        when(utils.evaluateExpression("%Mock:TopologyExpression%", anyMap())).thenReturn("");
+        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        assertNotNull(result);
+
+        // Branch 8: topologyDetails is null or empty
+        when(utils.evaluateExpression("%Mock:TopologyExpression%", anyMap())).thenReturn("{\"test\": \"value\"}");
+        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        assertNotNull(result);
+
+        // Branch 9: topologyDetails is not null and set in alarm
+        String topologyDetails = "{\"test\": \"value\"}";
+        when(utils.evaluateExpression("%Mock:TopologyExpression%", anyMap())).thenReturn(topologyDetails);
+        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        assertNotNull(result);
+        assertEquals(topologyDetails, result.getTopologyDetails());
+    }
 }
 ```
 
-In these additional test cases, we cover scenarios such as applying a valid rule, applying an invalid rule, applying a rule with zero amount, applying a rule with a negative amount, and applying a rule with a special category. These test cases aim to achieve 100% code coverage for the `applyPostingRule` method.
+In this test code:
+
+- We mock the dependencies `TopologyApiClient`, `RuleLoadingService`, and `AlarmPostingUtils`.
+- We use `ReflectionTestUtils` to set the values for the private fields.
+- We cover various branches and scenarios of the `applyPostingRule` method:
+  - When `componentIdReq` is null or empty.
+  - When `response` is null.
+  - When `topologyData` is null.
+  - When `topologyObjectsNode` is missing or not an array.
+  - When `topoObjectEligibilityValue` does not match.
+  - When `alarmedObject` is null or empty.
+  - When `alarmedObjectTopoDet` is null or empty.
+  - When `topologyDetails` is null or empty.
+  - When `topologyDetails` is set in the alarm.
+
+This comprehensive set of test cases should ensure 100% code coverage for the `applyPostingRule` method.

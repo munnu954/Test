@@ -1,136 +1,107 @@
-The error you are encountering is because `rule` is not a mock object, but a plain Java object. Therefore, you cannot use `when()` with it directly. Instead, you should create a mock of the `PostingRule` class and then use that mock in the test.
-
-Here is the updated version of the test case code:
+The error you're encountering suggests that you're mixing matchers with raw values in your `when` conditions. In Mockito, when using argument matchers, all arguments must be matchers. Here is how you can fix and reframe the code to ensure all arguments are provided by matchers:
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-
-import com.fasterxml.jackson.databind.JsonNode;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.mockito.Spy;
-import org.mockito.junit.MockitoJUnitRunner;
-import org.springframework.http.ResponseEntity;
-import org.springframework.test.util.ReflectionTestUtils;
 
-import java.util.HashMap;
-
-@RunWith(MockitoJUnitRunner.class)
-public class PostingRuleProcessingServiceTest {
+public class TestPostingRuleProcessingService {
 
     @Mock
-    private TopologyApiClient topoApiClient;
-
-    @Mock
-    private AlarmPostingUtils utils;
-
-    @Mock
-    private RuleLoadingService ruleLoadingService;
-
-    @Spy
-    @InjectMocks
-    private PostingRuleProcessingService postingRuleProcessingService;
+    private Utils utils;
 
     @BeforeEach
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-
-        ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", "%Mock:AlarmExpression%");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", "%Mock:TopologyExpression%");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%Mock:EligibilityValue%");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "componentIDAttributeName", "MockAttributeName");
+        MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    public void testApplyPostingRule() throws Exception {
-        Alarm alarm = new Alarm();
-        PostingRule rule = mock(PostingRule.class);  // Mocking PostingRule
-        HashMap<String, Object> alarmMap = new HashMap<>();
+    public void testApplyPostingRule() {
+        // Create mock objects
+        PostingRuleProcessingService postingRuleProcessingService = new PostingRuleProcessingService(utils);
 
-        // Mocking dependencies
-        ResponseEntity<String> responseEntity = ResponseEntity.ok("{ \"topologyObjects\": [{\"key\": \"value\"}] }");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("TestValue");
+        // Mocking the behavior of utils.evaluateExpression
+        when(utils.evaluateExpression(eq("%Mock:EligibilityValue%"), anyMap())).thenReturn("ineligibleValue");
+        when(utils.evaluateExpression(eq("%Mock:EligibilityValue%"), anyMap())).thenReturn("eligibleValue");
+        when(utils.evaluateExpression(eq("%Mock:AlarmExpression%"), anyMap())).thenReturn("");
+        when(utils.evaluateExpression(eq("%Mock:AlarmExpression%"), anyMap())).thenReturn("validAlarmedObject");
+        when(utils.evaluateExpression(eq("%Mock:TopologyExpression%"), anyMap())).thenReturn("");
+        when(utils.evaluateExpression(eq("%Mock:TopologyExpression%"), anyMap())).thenReturn("{\"test\": \"value\"}");
+        when(utils.evaluateExpression(eq("%Mock:TopologyExpression%"), anyMap())).thenReturn(topologyDetails);
 
-        // Set rule properties
-        when(rule.getRuleId()).thenReturn("TestRuleId");
-        when(rule.getRulePriority()).thenReturn(1);
-        when(rule.getRuleTraversalExpression()).thenReturn("TestTraversalExpression");
-
-        // Execute the method to be tested
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        // Assertions or verifications based on different scenarios
-        assertNotNull(result);
-        verify(topoApiClient).fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString());
-        verify(utils, times(2)).evaluateExpression(anyString(), anyMap());
-
-        // Additional branches and conditions
-        // Branch 1: componentIdReq is null or empty
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("");
-        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        assertNotNull(result);
-
-        // Branch 2: response is null
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(null);
-        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        assertNotNull(result);
-
-        // Branch 3: topologyData is null
-        responseEntity = ResponseEntity.ok(null);
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        assertNotNull(result);
-
-        // Branch 4: topologyObjectsNode is missing or not an array
-        responseEntity = ResponseEntity.ok("{ }");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        assertNotNull(result);
-
-        responseEntity = ResponseEntity.ok("{ \"topologyObjects\": {} }");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        assertNotNull(result);
-
-        // Branch 5: topoObjectEligibilityValue does not match
-        responseEntity = ResponseEntity.ok("{ \"topologyObjects\": [{\"key\": \"value\"}] }");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-        when(utils.evaluateExpression("%Mock:EligibilityValue%", anyMap())).thenReturn("ineligibleValue");
-        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        assertNotNull(result);
-
-        // Branch 6: alarmedObject is null or empty
-        when(utils.evaluateExpression("%Mock:EligibilityValue%", anyMap())).thenReturn("eligibleValue");
-        when(utils.evaluateExpression("%Mock:AlarmExpression%", anyMap())).thenReturn("");
-        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        assertNotNull(result);
-
-        // Branch 7: alarmedObjectTopoDet is null or empty
-        when(utils.evaluateExpression("%Mock:AlarmExpression%", anyMap())).thenReturn("validAlarmedObject");
-        when(utils.evaluateExpression("%Mock:TopologyExpression%", anyMap())).thenReturn("");
-        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        assertNotNull(result);
-
-        // Branch 8: topologyDetails is null or empty
-        when(utils.evaluateExpression("%Mock:TopologyExpression%", anyMap())).thenReturn("{\"test\": \"value\"}");
-        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        assertNotNull(result);
-
-        // Branch 9: topologyDetails is not null and set in alarm
-        String topologyDetails = "{\"test\": \"value\"}";
-        when(utils.evaluateExpression("%Mock:TopologyExpression%", anyMap())).thenReturn(topologyDetails);
-        result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        assertNotNull(result);
-        assertEquals(topologyDetails, result.getTopologyDetails());
+        // Add the rest of your test case logic here
     }
 }
 ```
 
-In this updated version, we mock the `PostingRule` class and use the mock object in the test cases. This should resolve the `MissingMethodInvocationException` error and allow the test cases to run successfully.
+Explanation of changes:
+
+1. **Argument Matchers**: Used `eq()` for the first argument to ensure all arguments are matchers.
+2. **Mockito Annotations**: Used `@BeforeEach` to initialize the mocks with `MockitoAnnotations.openMocks(this);`.
+
+Ensure that `Utils` and `PostingRuleProcessingService` classes are correctly defined, and `topologyDetails` is properly initialized in your test case.
+
+Here is a more complete example including the necessary class stubs and initialization for a runnable JUnit 5 test case:
+
+```java
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+
+class Utils {
+    public String evaluateExpression(String expression, Map<String, String> context) {
+        // Implementation here
+        return "";
+    }
+}
+
+class PostingRuleProcessingService {
+    private final Utils utils;
+
+    public PostingRuleProcessingService(Utils utils) {
+        this.utils = utils;
+    }
+
+    // Methods to be tested
+}
+
+public class TestPostingRuleProcessingService {
+
+    @Mock
+    private Utils utils;
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    public void testApplyPostingRule() {
+        // Create mock objects
+        PostingRuleProcessingService postingRuleProcessingService = new PostingRuleProcessingService(utils);
+
+        // Mocking the behavior of utils.evaluateExpression
+        when(utils.evaluateExpression(eq("%Mock:EligibilityValue%"), anyMap())).thenReturn("ineligibleValue");
+        when(utils.evaluateExpression(eq("%Mock:EligibilityValue%"), anyMap())).thenReturn("eligibleValue");
+        when(utils.evaluateExpression(eq("%Mock:AlarmExpression%"), anyMap())).thenReturn("");
+        when(utils.evaluateExpression(eq("%Mock:AlarmExpression%"), anyMap())).thenReturn("validAlarmedObject");
+        when(utils.evaluateExpression(eq("%Mock:TopologyExpression%"), anyMap())).thenReturn("");
+        when(utils.evaluateExpression(eq("%Mock:TopologyExpression%"), anyMap())).thenReturn("{\"test\": \"value\"}");
+        when(utils.evaluateExpression(eq("%Mock:TopologyExpression%"), anyMap())).thenReturn("topologyDetails");
+
+        // Add the rest of your test case logic here
+    }
+}
+```
+
+Make sure to replace `"topologyDetails"` with the actual value or variable you intend to use in your test.

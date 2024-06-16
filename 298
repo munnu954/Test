@@ -1,80 +1,154 @@
+ChatbotAI here. I'll provide you with the Junit5 test cases to cover the `run()` and `receiveMessages()` methods of the `AlarmReceiver` class.
+
+```java
+import org.apache.pulsar.client.api.Consumer;
+import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.client.api.PulsarClientException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.time.Instant;
 import java.util.concurrent.TimeUnit;
-import static org.junit.jupiter.api.Assertions.*;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
+@ExtendWith(MockitoExtension.class)
+@SpringBootTest
+@ContextConfiguration
 public class AlarmReceiverTest {
 
     @Mock
-    PostingService postingService;
+    private Consumer<byte[]> _consumer;
 
     @Mock
-    AlarmPostGreService alarmPostGreService;
+    private AlarmPostGreService alarmPostGreService;
 
     @Mock
-    VMBParams vmbParams;
+    private PostingService alarmPointLookupService;
+
+    @InjectMocks
+    private AlarmReceiver alarmReceiver;
 
     @BeforeEach
-    void setup() {
-        postingService = Mockito.mock(PostingService.class);
-        alarmPostGreService = Mockito.mock(AlarmPostGreService.class);
-        vmbParams = Mockito.mock(VMBParams.class);
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        ReflectionTestUtils.setField(alarmReceiver, "_consumer", _consumer);
+        ReflectionTestUtils.setField(alarmReceiver, "alarmPostGreService", alarmPostGreService);
+        ReflectionTestUtils.setField(alarmReceiver, "alarmPointLookupService", alarmPointLookupService);
+        ReflectionTestUtils.setField(alarmReceiver, "queueSizeToStartThrotlingMsg", 2000);
+        ReflectionTestUtils.setField(alarmReceiver, "throtlingIntervalInMillis", 500);
+        ReflectionTestUtils.setField(alarmReceiver, "transactionRetryCount", 3);
     }
 
     @Test
-    void testReceiveMessages() throws Exception {
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, postingService);
+    void testReceiveMessages_Success() throws PulsarClientException {
+        Message<byte[]> message = mock(Message.class);
+        when(_consumer.getStats().getTotalMsgsReceived()).thenReturn(10L);
+        when(_consumer.getStats().getTotalAcksSent()).thenReturn(10L);
+        when(_consumer.getStats().getTotalAcksFailed()).thenReturn(0L);
+        when(_consumer.getStats().getTotalReceivedFailed()).thenReturn(0L);
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(_consumer, 3, TimeUnit.SECONDS)).thenReturn(message);
+        when(alarmPointLookupService.getQueueSize()).thenReturn(1000);
 
-        alarmReceiver._consumer = Mockito.mock(Consumer.class);
+        alarmReceiver.receiveMessages();
 
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(alarmReceiver._consumer, 3, TimeUnit.SECONDS)).thenReturn(Mockito.mock(Message.class));
-
-        assertDoesNotThrow(() -> alarmReceiver.receiveMessages());
+        verify(alarmPointLookupService, times(1)).addMsgToQueue(message, Instant.now());
     }
 
     @Test
-    void testAcknowledgeMessage() throws Exception {
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, postingService);
+    void testReceiveMessages_QueueSizeExceeded() throws PulsarClientException, InterruptedException {
+        Message<byte[]> message = mock(Message.class);
+        when(_consumer.getStats().getTotalMsgsReceived()).thenReturn(10L);
+        when(_consumer.getStats().getTotalAcksSent()).thenReturn(10L);
+        when(_consumer.getStats().getTotalAcksFailed()).thenReturn(0L);
+        when(_consumer.getStats().getTotalReceivedFailed()).thenReturn(0L);
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(_consumer, 3, TimeUnit.SECONDS)).thenReturn(message);
+        when(alarmPointLookupService.getQueueSize()).thenReturn(3000);
 
-        alarmReceiver._consumer = Mockito.mock(Consumer.class);
-        Message<byte[]> msg = Mockito.mock(Message.class);
+        alarmReceiver.receiveMessages();
 
-        doThrow(new PulsarClientException("Test Exception")).doNothing().when(VMBUtil.class);
-        VMBUtil.acknowledgeMessageThrowsPulsarClientException(alarmReceiver._consumer, msg);
-
-        assertDoesNotThrow(() -> alarmReceiver.acknowledgeMessage(msg));
+        verify(alarmPointLookupService, times(1)).getQueueSize();
+        verify(Thread.class, times(1)).sleep(500);
     }
 
     @Test
-    void testSyncReconnect() throws Exception {
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, postingService);
+    void testReceiveMessages_PulsarClientException() throws PulsarClientException {
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(_consumer, 3, TimeUnit.SECONDS)).thenThrow(new PulsarClientException("Test Exception"));
+        when(alarmReceiver._consumer).thenReturn(_consumer);
 
-        alarmReceiver._consumer = Mockito.mock(Consumer.class);
-        AtomicInteger reconnectStage = new AtomicInteger(0);
-        FieldUtils.writeField(alarmReceiver, "reconnectStage", reconnectStage, true);
+        alarmReceiver.receiveMessages();
 
-        when(alarmReceiver._consumer.isConnected()).thenReturn(false);
-        when(VMBUtil.createConsumerConnection(any(), any())).thenReturn(alarmReceiver._consumer);
-
-        assertDoesNotThrow(() -> alarmReceiver.syncReconnect());
+        verify(alarmReceiver, times(1)).syncReconnect();
     }
 
     @Test
-    void testRun() {
-        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, postingService);
+    void testRun_Success() throws Exception {
+        ReflectionTestUtils.setField(alarmReceiver, "_run", true);
+        when(_consumer.isConnected()).thenReturn(true);
+        when(alarmPostGreService.getAlarmTypeList()).thenReturn(null);
+        doNothing().when(alarmReceiver).receiveMessages();
 
-        alarmReceiver._consumer = Mockito.mock(Consumer.class);
-        FieldUtils.writeField(alarmReceiver, "_run", false, true);
+        alarmReceiver.run();
 
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(
-            alarmReceiver._consumer,
-            3,
-            TimeUnit.SECONDS
-        )).thenReturn(Mockito.mock(Message.class));
+        verify(alarmPostGreService, times(1)).getAlarmTypeList();
+        verify(alarmReceiver, times(1)).receiveMessages();
+    }
 
-        assertDoesNotThrow(() -> alarmReceiver.run());
+    @Test
+    void testRun_PulsarClientException() throws Exception {
+        ReflectionTestUtils.setField(alarmReceiver, "_run", true);
+        when(_consumer.isConnected()).thenReturn(true);
+        when(alarmPostGreService.getAlarmTypeList()).thenReturn(null);
+        doThrow(new PulsarClientException("Test Exception")).when(alarmReceiver).receiveMessages();
+
+        alarmReceiver.run();
+
+        verify(alarmReceiver, times(1)).syncReconnect();
+    }
+
+    @Test
+    void testRun_Exception() throws Exception {
+        ReflectionTestUtils.setField(alarmReceiver, "_run", true);
+        when(_consumer.isConnected()).thenReturn(true);
+        when(alarmPostGreService.getAlarmTypeList()).thenReturn(null);
+        doThrow(new RuntimeException("Test Exception")).when(alarmReceiver).receiveMessages();
+
+        alarmReceiver.run();
+
+        verify(alarmReceiver, times(1)).health();
+    }
+
+    @Test
+    void testRun_ShutdownFlow() throws PulsarClientException {
+        ReflectionTestUtils.setField(alarmReceiver, "_run", false);
+        doNothing().when(_consumer).close();
+
+        alarmReceiver.run();
+
+        verify(_consumer, times(1)).close();
     }
 }
+```
+
+In the above test cases, we have covered the following scenarios:
+
+1. `testReceiveMessages_Success()`: Verifies the successful execution of the `receiveMessages()` method.
+2. `testReceiveMessages_QueueSizeExceeded()`: Verifies the behavior when the queue size exceeds the threshold.
+3. `testReceiveMessages_PulsarClientException()`: Verifies the handling of `PulsarClientException` in the `receiveMessages()` method.
+4. `testRun_Success()`: Verifies the successful execution of the `run()` method.
+5. `testRun_PulsarClientException()`: Verifies the handling of `PulsarClientException` in the `run()` method.
+6. `testRun_Exception()`: Verifies the handling of general exceptions in the `run()` method.
+7. `testRun_ShutdownFlow()`: Verifies the shutdown flow of the `run()` method.
+
+These test cases aim to achieve 100% code coverage for the `run()` and `receiveMessages()` methods of the `AlarmReceiver` class.

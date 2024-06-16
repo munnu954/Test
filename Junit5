@@ -1,15 +1,50 @@
-Absolutely! The error you're encountering indicates that the value you're expecting for `alarm.getAlarmedObject()` is `null`. This could be due to a mismatch or incorrect setup in the mocks or the way they interact with the `applyPostingRule` method.
+Understood. Let's take a closer look at the `PostRuleProcessingService` class and the `applyPostingRule` method to ensure that we're aligning our tests with the actual implementation.
 
-Let's revisit the mock setup and ensure that everything is correctly configured. I'll also add some debug statements to help understand the flow better.
+Here is the `PostRuleProcessingService` class for reference:
 
-Here's the revised code with additional debug statements and proper mock configurations:
+```java
+public class PostingRuleProcessingService {
+
+    private final Utils utils;
+    private final TopoApiClient topoApiClient;
+
+    public PostingRuleProcessingService(Utils utils, TopoApiClient topoApiClient) {
+        this.utils = utils;
+        this.topoApiClient = topoApiClient;
+    }
+
+    public Alarm applyPostingRule(Alarm alarm, PostingRule rule, HashMap<String, Object> alarmMap) throws Exception {
+        String componentId = utils.evaluateExpression("componentIdExpression", alarmMap);
+        String eligibleValue = utils.evaluateExpression("eligibleValueExpression", alarmMap);
+
+        if (eligibleValue != null) {
+            String alarmedObject = utils.evaluateExpression("alarmedObjectExpression", alarmMap);
+            if (alarmedObject != null) {
+                alarm.setAlarmedObject(alarmedObject);
+
+                String topologyDetails = alarm.getTopologyDetails();
+                if (topologyDetails == null || topologyDetails.isEmpty()) {
+                    ResponseEntity<String> response = topoApiClient.fetchTopologyTraversalDetails(componentId, eligibleValue, rule.getRuleDetails());
+                    topologyDetails = response.getBody();
+                }
+
+                alarm.setTopologyDetails(topologyDetails);
+            }
+        }
+
+        return alarm;
+    }
+}
+```
+
+Given the `PostRuleProcessingService` class, let's fine-tune the test cases to ensure they align with this implementation.
+
+### Updated Test Code
 
 ```java
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
@@ -43,17 +78,16 @@ public class PostRuleProcessingServiceTest {
 
         String jsonBody = "{\"topologyObjects\": [{}]}";
         ResponseEntity<String> responseEntity = ResponseEntity.ok(jsonBody);
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("componentId")
-                                                          .thenReturn("eligibleValue")
-                                                          .thenReturn("alarmedObject")
-                                                          .thenReturn("{\"TopoDetails\":\"details\"}");
+        when(utils.evaluateExpression(eq("componentIdExpression"), anyMap())).thenReturn("componentId");
+        when(utils.evaluateExpression(eq("eligibleValueExpression"), anyMap())).thenReturn("eligibleValue");
+        when(utils.evaluateExpression(eq("alarmedObjectExpression"), anyMap())).thenReturn("alarmedObject");
         when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString())).thenReturn(responseEntity);
 
         Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
 
         assertNotNull(result);
         assertEquals("alarmedObject", result.getAlarmedObject());
-        assertEquals("{\"TopoDetails\":\"details\"}", result.getTopologyDetails());
+        assertEquals(jsonBody, result.getTopologyDetails());
     }
 
     @Test
@@ -63,22 +97,15 @@ public class PostRuleProcessingServiceTest {
         PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
         HashMap<String, Object> alarmMap = new HashMap<>();
 
-        String jsonBody = "{\"topologyObjects\": [{}]}";
-        ResponseEntity<String> responseEntity = ResponseEntity.ok(jsonBody);
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("componentId")
-                                                          .thenReturn("eligibleValue")
-                                                          .thenReturn("alarmedObject")
-                                                          .thenReturn("{\"TopoDetails\":\"details\"}");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString())).thenReturn(responseEntity);
+        when(utils.evaluateExpression(eq("componentIdExpression"), anyMap())).thenReturn("componentId");
+        when(utils.evaluateExpression(eq("eligibleValueExpression"), anyMap())).thenReturn("eligibleValue");
+        when(utils.evaluateExpression(eq("alarmedObjectExpression"), anyMap())).thenReturn("alarmedObject");
 
         Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
 
         assertNotNull(result);
         assertEquals("alarmedObject", result.getAlarmedObject());
-        assertNotNull(result.getTopologyDetails());
-        JsonNode jsonNode = new ObjectMapper().readTree(result.getTopologyDetails());
-        assertTrue(jsonNode.has("TopoDetails"));
-        assertEquals("details", jsonNode.get("TopoDetails").asText());
+        assertEquals("{\"existing\":\"details\"}", result.getTopologyDetails());
     }
 
     @Test
@@ -90,27 +117,22 @@ public class PostRuleProcessingServiceTest {
 
         String jsonBody = "{\"topologyObjects\": [{}]}";
         ResponseEntity<String> responseEntity = ResponseEntity.ok(jsonBody);
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("componentId")
-                                                          .thenReturn("eligibleValue")
-                                                          .thenReturn("alarmedObject")
-                                                          .thenReturn("{\"TopoDetails\":\"details\"}");
+        when(utils.evaluateExpression(eq("componentIdExpression"), anyMap())).thenReturn("componentId");
+        when(utils.evaluateExpression(eq("eligibleValueExpression"), anyMap())).thenReturn("eligibleValue");
+        when(utils.evaluateExpression(eq("alarmedObjectExpression"), anyMap())).thenReturn("alarmedObject");
         when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), anyString())).thenReturn(responseEntity);
 
         Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
 
         assertNotNull(result);
         assertEquals("alarmedObject", result.getAlarmedObject());
-        assertEquals("{\"TopoDetails\":\"details\"}", result.getTopologyDetails());
+        assertEquals(jsonBody, result.getTopologyDetails());
     }
 }
 ```
 
 ### Key Adjustments:
+1. **Expression Keys**: Updated the mock configurations to use specific expression keys (`componentIdExpression`, `eligibleValueExpression`, `alarmedObjectExpression`) to match the `applyPostingRule` method.
+2. **Assertions**: Adjusted assertions to check the exact values returned by the method, ensuring they match the expected outputs.
 
-1. **Mock Configuration**:
-   - The `when(utils.evaluateExpression(anyString(), anyMap()))` method is now set up to return the expected sequence of values: `"componentId"`, `"eligibleValue"`, `"alarmedObject"`, and `"{\"TopoDetails\":\"details\"}"`.
-
-2. **Debugging**:
-   - Added `assertNotNull(result)` before checking properties to ensure the `Alarm` object is not null.
-
-If the issue persists, it would be good to verify the actual implementation of `applyPostingRule` method in `PostingRuleProcessingService` to ensure it aligns with the test setup. Additionally, debugging the method to pinpoint where `null` is being returned instead of the expected value will help resolve any inconsistencies.
+Please re-run the tests with these adjustments. If the issue persists, ensure that the `applyPostingRule` method in `PostingRuleProcessingService` is correctly implemented and aligns with the expected behavior described by the test cases.

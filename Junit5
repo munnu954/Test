@@ -1,22 +1,5 @@
-Certainly! Below is an example of JUnit5 test cases designed to achieve 100% code coverage for the `applyPostingRules` method in the `PostingRuleProcessingService` class. The tests cover the different branches of the if blocks, making use of reflection to access private fields without making them public.
-
-```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import java.util.HashMap;
-import java.util.Map;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
-
-@ExtendWith(MockitoExtension.class)
-public class PostingRuleProcessingServiceTest {
+@RunWith(MockitoJUnitRunner.class)
+class PostingRuleProcessingServiceTest {
 
     @InjectMocks
     private PostingRuleProcessingService service;
@@ -30,136 +13,68 @@ public class PostingRuleProcessingServiceTest {
     @Mock
     private AlarmPostingUtils utils;
 
+    @Mock
     private Alarm alarm;
-    private PostingRule rule;
-    private Map<String, PostingRule> ruleMap = new HashMap<>();
 
-    @BeforeEach
-    void setUp() {
-        alarm = mock(Alarm.class);
-        rule = mock(PostingRule.class);
-        ruleMap.put("rule1", rule);
-    }
+    @Test
+    void testApplyPostingRulesMatchResultTrueNoExistingPostingRuleMatch() {
+        // Arrange
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        PostingRule postingRule1 = new PostingRule(1L, "Rule1", 1, 1, "Criteria1");
+        PostingRule postingRule2 = new PostingRule(2L, "Rule2", 2, 1, "Criteria2");
 
-    private void setPrivateFields() {
-        ReflectionTestUtils.setField(service, "ruleLoadingService", ruleLoadingService);
-        ReflectionTestUtils.setField(service, "topoApiClient", topoApiClient);
-        ReflectionTestUtils.setField(service, "utils", utils);
-        ReflectionTestUtils.setField(service, "alarmedObjectExpression", "%TopoObject:OSS_Names[0]%");
-        ReflectionTestUtils.setField(service, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
-        ReflectionTestUtils.setField(service, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
-        ReflectionTestUtils.setField(service, "componentIDAttributeName", "reportingObject");
-        ReflectionTestUtils.setField(service, "topologyDetailsAlarmedObjectExpression", "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}");
+        when(ruleLoadingService.getRuleMap()).thenReturn(Map.of(
+            1L, postingRule1,
+            2L, postingRule2
+        ));
+        when(postingRule1.matchFilter(alarmMap)).thenReturn(true);
+        when(postingRule2.matchFilter(alarmMap)).thenReturn(true);
+
+        // Act
+        service.applyPostingRules(new Alarm());
+
+        // Assert
+        verify(service, times(1)).applyPostingRule(any(), eq(postingRule1), any());
+        verify(service, never()).applyPostingRule(any(), eq(postingRule2), any());
     }
 
     @Test
-    void testApplyPostingRules_NoMatchingRule() {
+    void testApplyPostingRulesMatchResultFalse() {
         // Arrange
-        setPrivateFields();
-        when(ruleLoadingService.getRuleMap()).thenReturn(new HashMap<>());
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        PostingRule postingRule = new PostingRule(1L, "Rule1", 1, 1, "Criteria1");
+
+        when(ruleLoadingService.getRuleMap()).thenReturn(Map.of(1L, postingRule));
+        when(postingRule.matchFilter(alarmMap)).thenReturn(false);
 
         // Act
-        Alarm result = service.applyPostingRules(alarm);
+        service.applyPostingRules(new Alarm());
 
         // Assert
-        assertSame(alarm, result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-        verifyNoMoreInteractions(ruleLoadingService, topoApiClient, utils);
+        verify(service, never()).applyPostingRule(any(), any(), any());
     }
 
     @Test
-    void testApplyPostingRules_MatchingRule_HigherPriority() {
+    void testApplyPostingRulesMatchResultTrueExistingPostingRuleMatch() {
         // Arrange
-        setPrivateFields();
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule.matchFilter(any())).thenReturn(true);
-        when(rule.getRulePriority()).thenReturn(10);
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        PostingRule existingMatch = new PostingRule(1L, "Rule1", 1, 1, "Criteria1");
+        PostingRule newMatch = new PostingRule(2L, "Rule2", 2, 1, "Criteria2");
+
+        when(ruleLoadingService.getRuleMap()).thenReturn(Map.of(
+            1L, existingMatch,
+            2L, newMatch
+        ));
+        when(existingMatch.matchFilter(alarmMap)).thenReturn(true);
+        when(newMatch.matchFilter(alarmMap)).thenReturn(true);
 
         // Act
-        Alarm result = service.applyPostingRules(alarm);
+        service.applyPostingRules(new Alarm());
 
         // Assert
-        assertSame(alarm, result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-        verify(rule, times(1)).matchFilter(any());
-        verify(rule, times(1)).getRulePriority();
-        verify(service, times(1)).applyPostingRule(alarm, rule, any());
+        verify(service, never()).applyPostingRule(any(), eq(existingMatch), any());
+        verify(service, times(1)).applyPostingRule(any(), eq(newMatch), any());
     }
 
-    @Test
-    void testApplyPostingRules_MatchingRule_LowerPriority() {
-        // Arrange
-        setPrivateFields();
-        PostingRule lowerPriorityRule = mock(PostingRule.class);
-        ruleMap.put("rule2", lowerPriorityRule);
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule.matchFilter(any())).thenReturn(true);
-        when(lowerPriorityRule.matchFilter(any())).thenReturn(true);
-        when(rule.getRulePriority()).thenReturn(10);
-        when(lowerPriorityRule.getRulePriority()).thenReturn(5);
-
-        // Act
-        Alarm result = service.applyPostingRules(alarm);
-
-        // Assert
-        assertSame(alarm, result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-        verify(rule, times(1)).matchFilter(any());
-        verify(rule, times(1)).getRulePriority();
-        verify(lowerPriorityRule, times(1)).matchFilter(any());
-        verify(lowerPriorityRule, times(1)).getRulePriority();
-        verify(service, times(1)).applyPostingRule(alarm, rule, any());
-    }
-
-    @Test
-    void testApplyPostingRules_NoRuleMatch() {
-        // Arrange
-        setPrivateFields();
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule.matchFilter(any())).thenReturn(false);
-
-        // Act
-        Alarm result = service.applyPostingRules(alarm);
-
-        // Assert
-        assertSame(alarm, result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-        verify(rule, times(1)).matchFilter(any());
-        verifyNoMoreInteractions(ruleLoadingService, topoApiClient, utils);
-    }
-
-    @Test
-    void testApplyPostingRules_MatchingRule() {
-        // Arrange
-        setPrivateFields();
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule.matchFilter(any())).thenReturn(true);
-        when(rule.getRulePriority()).thenReturn(10);
-
-        // Act
-        Alarm result = service.applyPostingRules(alarm);
-
-        // Assert
-        assertSame(alarm, result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-        verify(rule, times(1)).matchFilter(any());
-        verify(rule, times(1)).getRulePriority();
-        verify(service, times(1)).applyPostingRule(alarm, rule, any());
-    }
+    // Additional tests covering the other branches within the if block
 }
-```
-
-### Explanation:
-
-1. **Test Setup:**
-   - The `setUp` method initializes mock objects for `Alarm` and `PostingRule`.
-   - The `setPrivateFields` method uses `ReflectionTestUtils` to set private fields in the `PostingRuleProcessingService` class.
-
-2. **Test Cases:**
-   - **testApplyPostingRules_NoMatchingRule:** Tests the scenario where no posting rule matches.
-   - **testApplyPostingRules_MatchingRule_HigherPriority:** Tests the scenario where a matching rule with higher priority is found.
-   - **testApplyPostingRules_MatchingRule_LowerPriority:** Tests the scenario where a matching rule with lower priority is found but is overridden by a higher priority rule.
-   - **testApplyPostingRules_NoRuleMatch:** Tests the scenario where a rule exists but does not match.
-   - **testApplyPostingRules_MatchingRule:** Tests the scenario where a rule matches and is applied.
-
-These tests cover the different branches of the `if` statements within the `applyPostingRules` method, ensuring 100% code coverage.

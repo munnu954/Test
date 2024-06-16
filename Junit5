@@ -1,200 +1,168 @@
-To achieve 100% code coverage for the `if (duration > 0)` block, we need to consider two scenarios:
-1. `duration` is greater than 0.
-2. `duration` is less than or equal to 0.
+To write JUnit 5 test cases that cover all branches of the specific block in the `createAlarm` method, we need to consider the following scenarios:
 
-Below are the JUnit 5 test cases to cover these scenarios:
+1. `perceivedSeverity` is `null` and `stateValue` equals the cleared state.
+2. `perceivedSeverity` is not `null`, is empty, and `stateValue` equals the cleared state.
+3. `perceivedSeverity` is not `null`, is not empty, and `stateValue` equals the cleared state.
+4. `perceivedSeverity` is `null` and `stateValue` does not equal the cleared state.
+5. `perceivedSeverity` is not `null`, is empty, and `stateValue` does not equal the cleared state.
+6. `perceivedSeverity` is not `null`, is not empty, and `stateValue` does not equal the cleared state.
+
+I'll assume that `postgresConf` is a mockable configuration class that provides the mappings for `perceivedSeverity`, `alarmState`, and `alarmType`.
+
+Here is the JUnit 5 test code to cover all these scenarios:
 
 ```java
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.function.Executable;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
-import java.time.Instant;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+@ExtendWith(MockitoExtension.class)
 public class AlarmRepositoryImplTest {
 
     @Mock
     private Logger log;
 
+    @Mock
+    private PostgresConf postgresConf;
+
     @InjectMocks
     private AlarmRepositoryImpl alarmRepository;
 
+    private ObjectMapper objectMapper;
+
     @BeforeEach
     public void setup() {
-        MockitoAnnotations.openMocks(this);
+        objectMapper = new ObjectMapper();
     }
 
     @Test
-    public void testPostAlarmRetriesExceed() throws Exception {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("TestAlarm");
+    public void testPerceivedSeverityNullAndStateCleared() throws Exception {
+        String msg = "{\"perceivedSeverity\": null, \"State\": \"Cleared\"}";
+        setupMocksForPerceivedSeverityTest(null, "Cleared", true);
 
-        // Adjusting the retry count for the test scenario
-        setTransactionRetryCount(alarmRepository, 3);
+        Alarm alarm = alarmRepository.createAlarm(msg);
 
-        doReturn(-2).when(alarmRepository).postAlarmForEachIteration(any(Alarm.class), anyString());
-
-        Executable executable = () -> alarmRepository.postAlarm(alarm, "compId");
-
-        PostingRetryException exception = assertThrows(PostingRetryException.class, executable);
-        assertTrue(exception.getMessage().contains("Number of posting transaction retries has exceeded maximum limit"));
+        assertNotNull(alarm);
+        assertEquals(-1, alarm.getPerceivedSeverity());
     }
 
     @Test
-    public void testPostAlarmRetriesWithinLimit() throws Exception {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("TestAlarm");
+    public void testPerceivedSeverityEmptyAndStateCleared() throws Exception {
+        String msg = "{\"perceivedSeverity\": \"\", \"State\": \"Cleared\"}";
+        setupMocksForPerceivedSeverityTest("", "Cleared", true);
 
-        // Adjusting the retry count for the test scenario
-        setTransactionRetryCount(alarmRepository, 3);
+        Alarm alarm = alarmRepository.createAlarm(msg);
 
-        doReturn(-2).doReturn(1).when(alarmRepository).postAlarmForEachIteration(any(Alarm.class), anyString());
-
-        alarmRepository.postAlarm(alarm, "compId");
-
-        verify(log, times(1)).warn(anyString(), any());
+        assertNotNull(alarm);
+        assertEquals(-1, alarm.getPerceivedSeverity());
     }
 
     @Test
-    public void testPostAlarmProcessingRateDurationGreaterThanZero() throws Exception {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("TestAlarm");
+    public void testPerceivedSeverityNotEmptyAndStateCleared() throws Exception {
+        String msg = "{\"perceivedSeverity\": \"Warning\", \"State\": \"Cleared\"}";
+        setupMocksForPerceivedSeverityTest("Warning", "Cleared", true);
 
-        doReturn(1).when(alarmRepository).postAlarmForEachIteration(any(Alarm.class), anyString());
+        Alarm alarm = alarmRepository.createAlarm(msg);
 
-        AtomicLong totalAlarmsProcessed = alarmRepository.totalAlarmsProcessed;
-        totalAlarmsProcessed.set(1999);
-
-        AtomicLong prevSnapshotTime = alarmRepository.prevSnapshotTime;
-        prevSnapshotTime.set(Instant.now().toEpochMilli() - 1000);
-
-        AtomicLong curSnapshotTime = alarmRepository.curSnapshotTime;
-        curSnapshotTime.set(Instant.now().toEpochMilli());
-
-        alarmRepository.postAlarm(alarm, "compId");
-
-        verify(log, times(1)).info(anyString(), any(), any(), any());
+        assertNotNull(alarm);
+        assertEquals(1, alarm.getPerceivedSeverity()); // Assuming 1 is the value for "Warning" in perceivedSeverityMap
     }
 
     @Test
-    public void testPostAlarmProcessingRateDurationLessThanOrEqualToZero() throws Exception {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("TestAlarm");
+    public void testPerceivedSeverityNullAndStateNotCleared() throws Exception {
+        String msg = "{\"perceivedSeverity\": null, \"State\": \"Active\"}";
+        setupMocksForPerceivedSeverityTest(null, "Active", false);
 
-        doReturn(1).when(alarmRepository).postAlarmForEachIteration(any(Alarm.class), anyString());
+        Alarm alarm = alarmRepository.createAlarm(msg);
 
-        AtomicLong totalAlarmsProcessed = alarmRepository.totalAlarmsProcessed;
-        totalAlarmsProcessed.set(1999);
-
-        AtomicLong prevSnapshotTime = alarmRepository.prevSnapshotTime;
-        prevSnapshotTime.set(Instant.now().toEpochMilli());
-
-        AtomicLong curSnapshotTime = alarmRepository.curSnapshotTime;
-        curSnapshotTime.set(Instant.now().toEpochMilli());
-
-        alarmRepository.postAlarm(alarm, "compId");
-
-        verify(log, never()).info(anyString(), any(), any(), any());
+        assertNotNull(alarm);
+        assertEquals(1, alarm.getPerceivedSeverity()); // Assuming 1 is the value for Indeterminate in perceivedSeverityMap
     }
 
-    private void setTransactionRetryCount(AlarmRepositoryImpl alarmRepository, int retryCount) {
-        try {
-            java.lang.reflect.Field field = AlarmRepositoryImpl.class.getDeclaredField("transactionRetryCount");
-            field.setAccessible(true);
-            field.set(alarmRepository, retryCount);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
+    @Test
+    public void testPerceivedSeverityEmptyAndStateNotCleared() throws Exception {
+        String msg = "{\"perceivedSeverity\": \"\", \"State\": \"Active\"}";
+        setupMocksForPerceivedSeverityTest("", "Active", false);
+
+        Alarm alarm = alarmRepository.createAlarm(msg);
+
+        assertNotNull(alarm);
+        assertEquals(1, alarm.getPerceivedSeverity()); // Assuming 1 is the value for Indeterminate in perceivedSeverityMap
+    }
+
+    @Test
+    public void testPerceivedSeverityNotEmptyAndStateNotCleared() throws Exception {
+        String msg = "{\"perceivedSeverity\": \"Major\", \"State\": \"Active\"}";
+        setupMocksForPerceivedSeverityTest("Major", "Active", false);
+
+        Alarm alarm = alarmRepository.createAlarm(msg);
+
+        assertNotNull(alarm);
+        assertEquals(2, alarm.getPerceivedSeverity()); // Assuming 2 is the value for "Major" in perceivedSeverityMap
+    }
+
+    private void setupMocksForPerceivedSeverityTest(String perceivedSeverity, String state, boolean isCleared) {
+        Map<String, Integer> perceivedSeverityMap = new HashMap<>();
+        perceivedSeverityMap.put("Warning", 1);
+        perceivedSeverityMap.put("Indeterminate", 1);
+        perceivedSeverityMap.put("Major", 2);
+
+        Map<String, Integer> alarmStateMap = new HashMap<>();
+        alarmStateMap.put("Cleared", 0);
+        alarmStateMap.put("Active", 1);
+
+        when(postgresConf.getPerceivedSeverityMap()).thenReturn(perceivedSeverityMap);
+        when(postgresConf.getAlarmStateMap()).thenReturn(alarmStateMap);
+        when(postgresConf.getAlarmStateCleared()).thenReturn("Cleared");
+        when(postgresConf.getAlarmStateNew()).thenReturn("New");
+
+        when(postgresConf.getAlarmStateMap().get("Cleared")).thenReturn(0);
+        when(postgresConf.getAlarmStateMap().get("New")).thenReturn(1);
+
+        if (isCleared) {
+            when(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared())).thenReturn(0);
+        } else {
+            when(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared())).thenReturn(1);
         }
-    }
-}
-
-class AlarmRepositoryImpl {
-    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(AlarmRepositoryImpl.class);
-
-    private int transactionRetryCount = 3; // Assuming some default value
-    AtomicLong totalAlarmsProcessed = new AtomicLong(0);
-    AtomicLong prevAlarmsProcessed = new AtomicLong(0);
-    AtomicLong prevSnapshotTime = new AtomicLong(0);
-    AtomicLong curSnapshotTime = new AtomicLong(0);
-
-    public void postAlarm(Alarm alarm, String compId) throws Exception {
-        try {
-            LOG.debug("ALARM RAISED TIME: " + alarm.getAlarmRaisedTime());
-            int rowsAffected = 0;
-            int noofAttempts = 0;
-            alarm.setCountResetFlag(0);
-            while (rowsAffected == 0 || rowsAffected == -2) {
-                alarm.setCountResetFlag(0);
-                rowsAffected = postAlarmForEachIteration(alarm, compId);
-                if (rowsAffected == -2) {
-                    if (++noofAttempts == transactionRetryCount) {
-                        String errMsg = "Number of posting transaction retries has exceeded maximum limit -" + transactionRetryCount + " - Alarm Identity -" + alarm.getAlarmIdentity();
-                        throw new PostingRetryException(errMsg);
-                    }
-                    LOG.warn("Posting transaction processing retry - Attempt no:" + (noofAttempts + 1) + " after previous failure(s). Alarm identity - " + alarm.getAlarmIdentity());
-                }
-            }
-            totalAlarmsProcessed.getAndIncrement();
-            long totalAlarmsProcessedTmp = totalAlarmsProcessed.get();
-            if (totalAlarmsProcessedTmp % 2000 == 0) {
-                long prevAlarmsProcessedTmp = prevAlarmsProcessed.get();
-                prevAlarmsProcessed.set(totalAlarmsProcessedTmp);
-                long prevSnapshotTimeTmp = prevSnapshotTime.get();
-                curSnapshotTime.set(Instant.now().toEpochMilli());
-
-                long curSnapshotTimeTmp = curSnapshotTime.get();
-                prevSnapshotTime.set(curSnapshotTimeTmp);
-                long duration = curSnapshotTimeTmp - prevSnapshotTimeTmp;
-                if (duration > 0) {
-                    double processingRate = ((1000 * (totalAlarmsProcessedTmp - prevAlarmsProcessedTmp)) / duration);
-
-                    LOG.info("Total records processed by all threads <" + totalAlarmsProcessedTmp + "> Processing rate (alarms per sec) of last <" + (totalAlarmsProcessedTmp - prevAlarmsProcessedTmp) + ">alarms =<" + processingRate + ">");
-                }
-            }
-        } catch (PostingRetryException e) {
-            throw (e);
-        } catch (Exception e) {
-            LOG.error("Alarm posting failed (postAlarm) : <" + alarm.getAlarmIdentity() + ">Alarm message: " + alarm + "\n" + e);
-        }
-    }
-
-    // Mocking the postAlarmForEachIteration method as it's not provided in the original code
-    public int postAlarmForEachIteration(Alarm alarm, String compId) {
-        // Mock implementation
-        return 1;
-    }
-}
-
-class PostingRetryException extends Exception {
-    public PostingRetryException(String message) {
-        super(message);
     }
 }
 ```
 
 ### Explanation:
-1. **testPostAlarmRetriesExceed**:
-    - Covers the case where `rowsAffected` is `-2` and the number of attempts reaches `transactionRetryCount`.
-    - Expects `PostingRetryException` to be thrown.
+1. **testPerceivedSeverityNullAndStateCleared**:
+    - Tests when `perceivedSeverity` is `null` and `stateValue` equals the cleared state.
+    - Expects `perceivedSeverity` to be set to `-1`.
 
-2. **testPostAlarmRetriesWithinLimit**:
-    - Covers the case where `rowsAffected` is `-2` but the number of attempts does not reach `transactionRetryCount`.
-    - Expects a warning log to be written once.
+2. **testPerceivedSeverityEmptyAndStateCleared**:
+    - Tests when `perceivedSeverity` is empty and `stateValue` equals the cleared state.
+    - Expects `perceivedSeverity` to be set to `-1`.
 
-3. **testPostAlarmProcessingRateDurationGreaterThanZero**:
-    - Covers the scenario where the `duration` is greater than 0.
-    - Expects the information log to be written once.
+3. **testPerceivedSeverityNotEmptyAndStateCleared**:
+    - Tests when `perceivedSeverity` is not empty and `stateValue` equals the cleared state.
+    - Expects `perceivedSeverity` to be set to the corresponding value from the `perceivedSeverityMap`.
 
-4. **testPostAlarmProcessingRateDurationLessThanOrEqualToZero**:
-    - Covers the scenario where the `duration` is less than or equal to 0.
-    - Expects no information log to be written.
+4. **testPerceivedSeverityNullAndStateNotCleared**:
+    - Tests when `perceivedSeverity` is `null` and `stateValue` does not equal the cleared state.
+    - Expects `perceivedSeverity` to be set to the default indeterminate value from the `perceivedSeverityMap`.
 
-By adding these test cases, you ensure that all branches of the `if` condition inside the `postAlarm` method are covered, achieving 100% code coverage.
+5. **testPerceivedSeverityEmptyAndStateNotCleared**:
+    - Tests when `perceivedSeverity` is empty and `stateValue` does not equal the cleared state.
+    - Expects `perceivedSeverity` to be set to the default indeterminate value from the `perceivedSeverityMap`.
+
+6. **testPerceivedSeverityNotEmptyAndStateNotCleared**:
+    - Tests when `perceivedSeverity` is not empty and `stateValue` does not equal the cleared state.
+    - Expects `perceivedSeverity` to be set to the corresponding value from the `perceivedSeverityMap`.
+
+By covering these scenarios, we can ensure that all branches of the `else if` condition inside the `createAlarm` method are tested, achieving 100% code coverage for that block.

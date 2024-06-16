@@ -1,136 +1,75 @@
-Certainly! Below is the JUnit5 test case code that covers different branches of the `applyPostingRules` method for 100% code coverage using reflection APIs to access private fields.
-
-```java
-import org.junit.jupiter.api.BeforeEach;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
+import org.junit.jupiter.api.BeforeEach;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.mockito.InjectMocks;
 
-import java.util.HashMap;
-import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.*;
-
-@ExtendWith(MockitoExtension.class)
 public class PostingRuleProcessingServiceTest {
 
-    @InjectMocks
-    private PostingRuleProcessingService postingRuleProcessingService;
+  @InjectMocks
+  private PostingRuleProcessingService postingRuleProcessingService;
 
-    @Mock
-    private RuleLoadingService ruleLoadingService;
+  @Mock
+  private RuleLoadingService ruleLoadingService;
 
-    @Mock
-    private TopologyApiClient topoApiClient;
+  @Mock
+  private TopologyApiClient topoApiClient;
 
-    @Mock
-    private AlarmPostingUtils utils;
+  @Mock
+  private AlarmPostingUtils utils;
 
-    // Dummy values for reflection fields
-    private final String alarmedObjectExpression = "%TopoObject:OSS_Names[0]%";
-    private final String topologyDetailsAlarmedObjectExpression = "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}";
-    private final String topologyObjectEligibilityCheckValue = "%TopoObject:OSS_Names[0]%";
-    private final String topologyObjectEligibilityCheckExpression = "^(?!\\s*$).+";
-    private final String componentIDAttributeName = "reportingObject";
+  @BeforeEach
+  public void setUp() {
+    postingRuleProcessingService = new PostingRuleProcessingService();
+    ruleLoadingService = mock(RuleLoadingService.class);
+    topoApiClient = mock(TopologyApiClient.class);
+    utils = mock(AlarmPostingUtils.class);
+  }
 
-    @BeforeEach
-    public void setUp() {
-        // Set private fields using reflection
-        ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", alarmedObjectExpression);
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", topologyDetailsAlarmedObjectExpression);
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", topologyObjectEligibilityCheckValue);
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", topologyObjectEligibilityCheckExpression);
-        ReflectionTestUtils.setField(postingRuleProcessingService, "componentIDAttributeName", componentIDAttributeName);
-    }
+  @Test
+  public void testApplyPostingRules() {
+    Alarm alarm = new Alarm();
+    
+    // Mocking ruleLoadingService
+    PostingRule postingRule1 = new PostingRule(1, "Rule1", 1, 1, "Criteria1");
+    PostingRule postingRule2 = new PostingRule(2, "Rule2", 2, 1, "Criteria2");
+    when(ruleLoadingService.getRuleMap().values()).thenReturn(List.of(postingRule1, postingRule2));
+    
+    // Mocking rule match and rule priority
+    HashMap<String, Object> alarmMap = new HashMap<>();
+    when(postingRule1.matchFilter(alarmMap)).thenReturn(true);
+    when(postingRule1.getRulePriority()).thenReturn(2);
+    when(postingRule2.matchFilter(alarmMap)).thenReturn(false);
+    
+    // Mocking applyPostingRule method
+    when(postingRuleProcessingService.applyPostingRule(alarm, postingRule1, alarmMap)).thenReturn(alarm);
 
-    @Test
-    public void testApplyPostingRules_MatchFound() {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
+    // Call the method
+    Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
 
-        PostingRule rule1 = new PostingRule(1, "rule1", 1, 1, "criteria1");
-        PostingRule rule2 = new PostingRule(2, "rule2", 2, 1, "criteria2");
-        rule2.setRulePriority(2);
+    // Verify the result
+    assertEquals(alarm, result);
+  }
 
-        Map<Long, PostingRule> ruleMap = new HashMap<>();
-        ruleMap.put(1L, rule1);
-        ruleMap.put(2L, rule2);
+  @Test
+  public void testGetComponentIdForTopoTraversal() {
+    HashMap<String, Object> alarmMap = new HashMap<>();
+    PostingRule rule = new PostingRule();
+    
+    // Mocking utils.evaluateExpression method
+    when(utils.evaluateExpression("%Alarm:reportingObject%", alarmMap)).thenReturn("Component1");
 
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(false);
-        when(rule2.matchFilter(any())).thenReturn(true);
+    // Call the method
+    String componentId = postingRuleProcessingService.getComponentIdForTopoTraversal(alarmMap, rule);
 
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+    // Verify the result
+    assertEquals("Component1", componentId);
+  }
 
-        verify(ruleLoadingService).getRuleMap();
-        verify(rule2).matchFilter(any());
-        verify(rule1).matchFilter(any());
-
-        assertEquals("alarm1", result.getAlarmIdentity());
-    }
-
-    @Test
-    public void testApplyPostingRules_NoMatchFound() {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
-
-        PostingRule rule1 = new PostingRule(1, "rule1", 1, 1, "criteria1");
-        PostingRule rule2 = new PostingRule(2, "rule2", 2, 1, "criteria2");
-
-        Map<Long, PostingRule> ruleMap = new HashMap<>();
-        ruleMap.put(1L, rule1);
-        ruleMap.put(2L, rule2);
-
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(false);
-        when(rule2.matchFilter(any())).thenReturn(false);
-
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
-
-        verify(ruleLoadingService).getRuleMap();
-        verify(rule2).matchFilter(any());
-        verify(rule1).matchFilter(any());
-
-        assertEquals("alarm1", result.getAlarmIdentity());
-    }
-
-    @Test
-    public void testApplyPostingRules_MultipleMatches() {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
-
-        PostingRule rule1 = new PostingRule(1, "rule1", 1, 1, "criteria1");
-        PostingRule rule2 = new PostingRule(2, "rule2", 2, 1, "criteria2");
-
-        Map<Long, PostingRule> ruleMap = new HashMap<>();
-        ruleMap.put(1L, rule1);
-        ruleMap.put(2L, rule2);
-
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(true);
-
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
-
-        verify(ruleLoadingService).getRuleMap();
-        verify(rule2).matchFilter(any());
-        verify(rule1).matchFilter(any());
-
-        assertEquals("alarm1", result.getAlarmIdentity());
-    }
+  // Add more test cases to cover other scenarios in applyPostingRules method
 }
+  
 ```
-
-### Explanation
-1. **Reflection**: Using `ReflectionTestUtils` from Spring, we set the private fields of `PostingRuleProcessingService` to make them accessible for unit testing.
-2. **Mocks**: We mock the dependencies `RuleLoadingService`, `TopologyApiClient`, and `AlarmPostingUtils` using Mockito.
-3. **Test Cases**:
-    - **testApplyPostingRules_MatchFound**: Tests the scenario where a rule is found that matches the alarm.
-    - **testApplyPostingRules_NoMatchFound**: Tests the scenario where no rules match the alarm.
-    - **testApplyPostingRules_MultipleMatches**: Tests the scenario where multiple rules match, and the rule with the highest priority is chosen.
-
-These tests cover different branches of the if blocks in the `applyPostingRules` method for 100% code coverage.

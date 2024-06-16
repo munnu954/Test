@@ -1,10 +1,9 @@
-To achieve 100% code coverage of the `applyPostingRules` method in the `PostingRuleProcessingService` class, we need to ensure that all branches of the `if` statements are covered. Here's how you can write JUnit 5 test cases using Mockito and Reflection API to cover the `applyPostingRules` method:
+Sure! Here are additional JUnit 5 test cases that further cover different branches of the `applyPostingRules` method in the `PostingRuleProcessingService` class to achieve 100% code coverage:
 
 ```java
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -13,9 +12,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class PostingRuleProcessingServiceTest {
 
@@ -39,8 +39,9 @@ public class PostingRuleProcessingServiceTest {
         MockitoAnnotations.openMocks(this);
     }
 
+    @SuppressWarnings("unchecked")
     private void setPrivateField(Object target, String fieldName, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(fieldName);
+        java.lang.reflect.Field field = target.getClass().getDeclaredField(fieldName);
         field.setAccessible(true);
         field.set(target, value);
     }
@@ -146,15 +147,109 @@ public class PostingRuleProcessingServiceTest {
         assertSame(alarm, result);
         verify(service, never()).applyPostingRule(any(), any(), any());
     }
-}
-```
 
-**Explanation:**
-1. **setPrivateField Method**: This method uses Reflection to set private fields in the `PostingRuleProcessingService` class, thus avoiding making those fields public.
-2. **Test Cases**:
-   - `testApplyPostingRules_NoMatch`: Tests the scenario where no rules match the alarm.
-   - `testApplyPostingRules_MatchFoundHigherPriority`: Tests the scenario where multiple rules match, and the rule with the higher priority is applied.
-   - `testApplyPostingRules_MatchFoundLowerPriority`: Tests the scenario where multiple rules match, and the rule with the lower priority is applied.
-   - `testApplyPostingRules_NoRulesMatch`: Tests the scenario where no rules match the alarm.
+    @Test
+    void testApplyPostingRules_ExceptionInApplyPostingRule() throws Exception {
+        // Arrange
+        Alarm alarm = mock(Alarm.class);
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        when(objectMapper.convertValue(alarm, HashMap.class)).thenReturn(alarmMap);
 
-These test cases should cover all branches of the `if` statements in the `applyPostingRules` method for 100% code coverage. Make sure to adjust the mock behaviors and assertions according to the actual implementation details and expected outcomes.
+        PostingRule rule = mock(PostingRule.class);
+        when(rule.matchFilter(alarmMap)).thenReturn(true);
+        when(rule.getRulePriority()).thenReturn(1);
+
+        Map<Long, PostingRule> ruleMap = new HashMap<>();
+        ruleMap.put(1L, rule);
+        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
+
+        PostingRuleProcessingService spyService = spy(service);
+        doThrow(new RuntimeException()).when(spyService).applyPostingRule(alarm, rule, alarmMap);
+
+        // Act
+        Alarm result = spyService.applyPostingRules(alarm);
+
+        // Assert
+        assertSame(alarm, result);
+    }
+
+    @Test
+    void testApplyPostingRules_MultipleMatchingRules() throws Exception {
+        // Arrange
+        Alarm alarm = mock(Alarm.class);
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        when(objectMapper.convertValue(alarm, HashMap.class)).thenReturn(alarmMap);
+
+        PostingRule rule1 = mock(PostingRule.class);
+        PostingRule rule2 = mock(PostingRule.class);
+        PostingRule rule3 = mock(PostingRule.class);
+
+        when(rule1.matchFilter(alarmMap)).thenReturn(true);
+        when(rule1.getRulePriority()).thenReturn(1);
+
+        when(rule2.matchFilter(alarmMap)).thenReturn(true);
+        when(rule2.getRulePriority()).thenReturn(3);
+
+        when(rule3.matchFilter(alarmMap)).thenReturn(true);
+        when(rule3.getRulePriority()).thenReturn(2);
+
+        Map<Long, PostingRule> ruleMap = new HashMap<>();
+        ruleMap.put(1L, rule1);
+        ruleMap.put(2L, rule2);
+        ruleMap.put(3L, rule3);
+        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
+
+        PostingRuleProcessingService spyService = spy(service);
+        doReturn(alarm).when(spyService).applyPostingRule(alarm, rule2, alarmMap);
+
+        // Act
+        Alarm result = spyService.applyPostingRules(alarm);
+
+        // Assert
+        assertSame(alarm, result);
+        verify(spyService).applyPostingRule(alarm, rule2, alarmMap);
+    }
+
+    @Test
+    void testApplyPostingRules_EmptyRuleMap() throws Exception {
+        // Arrange
+        Alarm alarm = mock(Alarm.class);
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        when(objectMapper.convertValue(alarm, HashMap.class)).thenReturn(alarmMap);
+
+        when(ruleLoadingService.getRuleMap()).thenReturn(new HashMap<>());
+
+        // Act
+        Alarm result = service.applyPostingRules(alarm);
+
+        // Assert
+        assertSame(alarm, result);
+    }
+
+    @Test
+    void testApplyPostingRules_NonMatchingRule() throws Exception {
+        // Arrange
+        Alarm alarm = mock(Alarm.class);
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        when(objectMapper.convertValue(alarm, HashMap.class)).thenReturn(alarmMap);
+
+        PostingRule rule = mock(PostingRule.class);
+        when(rule.matchFilter(alarmMap)).thenReturn(false);
+
+        Map<Long, PostingRule> ruleMap = new HashMap<>();
+        ruleMap.put(1L, rule);
+        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
+
+        // Act
+        Alarm result = service.applyPostingRules(alarm);
+
+        // Assert
+        assertSame(alarm, result);
+        verify(service, never()).applyPostingRule(any(), any(), any());
+    }
+
+    @Test
+    void testApplyPostingRules_RuleWithNullPriority() throws Exception {
+        // Arrange
+        Alarm alarm = mock(Alarm.class);
+        HashMap<String, Object> alarmMap = new

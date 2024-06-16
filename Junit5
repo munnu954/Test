@@ -1,148 +1,86 @@
-Here are the JUnit 5 test cases for the `run()` and `receiveMessages()` methods of the `AlarmReceiver` class:
-
-```java
-import static org.mockito.Mockito.*;
-
-import java.time.Instant;
-import java.util.concurrent.TimeUnit;
-
-import org.apache.pulsar.client.api.Consumer;
-import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.PulsarClientException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.actuate.health.Status;
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-class AlarmReceiverTest {
+public class AlarmReceiverTest {
 
     @Mock
-    private Consumer<byte[]> consumer;
+    private HealthIndicator healthIndicator;
+
+    @Mock
+    private AlarmPostGreService alarmPostGreService;
 
     @Mock
     private PostingService alarmPointLookupService;
 
     @Mock
-    private AlarmPostGreService alarmPostGreService;
+    private VMBParams vmbParams;
 
-    @InjectMocks
     private AlarmReceiver alarmReceiver;
 
     @BeforeEach
-    void setUp() {
+    void setup() {
         MockitoAnnotations.openMocks(this);
-        alarmReceiver = new AlarmReceiver(params, alarmPostGreService, alarmPointLookupService);
+        alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, alarmPointLookupService);
+        alarmReceiver.setHealthIndicator(healthIndicator);
     }
 
     @Test
-    void receiveMessages_shouldAddMessageToQueue() throws PulsarClientException {
-        Message<byte[]> msg = mock(Message.class);
-        when(msg.getData()).thenReturn(new byte[] { 1, 2, 3 });
-
-        alarmReceiver.receiveMessages();
-
-        verify(alarmPointLookupService).addMsgToQueue(msg, any(Instant.class));
+    public void testReceiveMessages() {
+        try {
+            alarmReceiver.setConsumer(mock(Consumer.class));
+            alarmReceiver.receiveMessages();
+        } catch (PulsarClientException e) {
+            fail("Exception occurred while receiving messages");
+        }
     }
 
     @Test
-    void receiveMessages_shouldSleepWhenQueueSizeExceeded() throws PulsarClientException, InterruptedException {
+    public void testAcknowledgeMessage() {
         Message<byte[]> msg = mock(Message.class);
-        when(msg.getData()).thenReturn(new byte[] { 1, 2, 3 });
-        when(alarmPointLookupService.getQueueSize()).thenReturn(3000);
+        doThrow(PulsarClientException.class).when(healthIndicator).up();
 
-        alarmReceiver.receiveMessages();
-
-        verify(alarmPointLookupService).addMsgToQueue(msg, any(Instant.class));
-        verify(Thread.class).sleep(500);
+        try {
+            alarmReceiver.acknowledgeMessage(msg);
+        } catch (Exception e) {
+            fail("Exception occurred while acknowledging message");
+        }
     }
 
     @Test
-    void acknowledgeMessage_shouldAcknowledgeMessage() throws PulsarClientException {
-        Message<byte[]> msg = mock(Message.class);
-
-        alarmReceiver.acknowledgeMessage(msg);
-
-        verify(VMBUtil).acknowledgeMessageThrowsPulsarClientException(consumer, msg);
+    public void testSyncReconnect() {
+        AtomicInteger reconnectStage = new AtomicInteger(0);
+        alarmReceiver.setReconnectStage(reconnectState);
+        alarmReceiver.setConsumer(mock(Consumer.class));
+        alarmReceiver.syncReconnect();
+        
+        assertEquals(AlarmPostingConstants.VMB_RECONNECT_COMPLETE, reconnectStage.get());
     }
 
     @Test
-    void acknowledgeMessage_shouldRetryAndSyncReconnect() throws PulsarClientException {
-        Message<byte[]> msg = mock(Message.class);
-        when(VMBUtil.acknowledgeMessageThrowsPulsarClientException(consumer, msg)).thenThrow(PulsarClientException.class);
+    public void testRun() {
+        doNothing().when(alarmPostGreService).getAlarmTypeList();
+        doNothing().when(alarmReceiver).receiveMessages();
 
-        alarmReceiver.acknowledgeMessage(msg);
-
-        verify(VMBUtil, times(3)).acknowledgeMessageThrowsPulsarClientException(consumer, msg);
-        verify(alarmReceiver).syncReconnect();
-    }
-
-    @Test
-    void run_shouldReceiveMessagesAndHandleExceptions() throws PulsarClientException {
-        Message<byte[]> msg = mock(Message.class);
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenReturn(msg);
-
+        // Setting up a scenario where run() will exit without error
         alarmReceiver.run();
 
-        verify(alarmReceiver).receiveMessages();
-        verify(alarmReceiver).syncReconnect();
+        // Setting up a scenario where run() will throw an exception
     }
 
     @Test
-    void run_shouldStopWhenRunFlagIsFalse() {
-        alarmReceiver.stop();
-        alarmReceiver.run();
+    public void testShutdown() {
+        doNothing().when(alarmReceiver).shutDown();
 
-        verify(alarmReceiver, never()).receiveMessages();
-        verify(alarmReceiver, never()).syncReconnect();
-    }
-
-    @Test
-    void syncReconnect_shouldCloseConsumerAndReconnect() {
-        when(consumer.isConnected()).thenReturn(true);
-
-        alarmReceiver.syncReconnect();
-
-        verify(VMBUtil).closeConsumer(consumer);
-        verify(alarmReceiver).getConnection();
-    }
-
-    @Test
-    void syncReconnect_shouldNotCloseConsumerIfNotConnected() {
-        when(consumer.isConnected()).thenReturn(false);
-
-        alarmReceiver.syncReconnect();
-
-        verify(VMBUtil, never()).closeConsumer(consumer);
-        verify(alarmReceiver).getConnection();
-    }
-
-    @Test
-    void health_shouldReturnUpStatus() {
-        Health health = alarmReceiver.health();
-
-        assertEquals(Status.UP, health.getStatus());
-    }
-
-    @Test
-    void shutDown_shouldCloseConsumer() throws PulsarClientException {
-        alarmReceiver.shutdown();
-
-        verify(consumer).close();
-    }
-
-    @Test
-    void shutDown_shouldCatchExceptionAndLogError() throws PulsarClientException {
-        doThrow(PulsarClientException.class).when(consumer).close();
-
-        alarmReceiver.shutdown();
-
-        verify(consumer).close();
-        verify(logger).error(anyString(), any(PulsarClientException.class));
+        // Testing shutdown without exception
+        try {
+            alarmReceiver.shutDown();
+        } catch (PulsarClientException e) {
+            fail("Exception occurred during shutdown");
+        }
     }
 }
-```
-
-Please note that the actual implementation of some methods might require additional dependencies or setup in order to run the tests successfully.

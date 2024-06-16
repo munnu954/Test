@@ -1,61 +1,80 @@
-@Test
-void testApplyPostingRule_case1() throws Exception {
-    Alarm alarm = new Alarm();
-    PostingRule rule = new PostingRule();
-    HashMap<String, Object> alarmMap = new HashMap<>();
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import java.util.concurrent.TimeUnit;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-    ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", "%Mock:AlarmExpression%");
-    ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%Mock:EligibilityValue%");
-    ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
-    ReflectionTestUtils.setField(postingRuleProcessingService, "componentIDAttributeName", "MockAttributeName");
+public class AlarmReceiverTest {
 
-    Mockito.when(topoApiClient.fetchTopologyTraversalDetails(Mockito.any(Alarm.class), Mockito.any(PostingRule.class), Mockito.anyString())).thenReturn(null);
+    @Mock
+    PostingService postingService;
 
-    Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+    @Mock
+    AlarmPostGreService alarmPostGreService;
 
-    assertEquals(alarm, result);
+    @Mock
+    VMBParams vmbParams;
+
+    @BeforeEach
+    void setup() {
+        postingService = Mockito.mock(PostingService.class);
+        alarmPostGreService = Mockito.mock(AlarmPostGreService.class);
+        vmbParams = Mockito.mock(VMBParams.class);
+    }
+
+    @Test
+    void testReceiveMessages() throws Exception {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, postingService);
+
+        alarmReceiver._consumer = Mockito.mock(Consumer.class);
+
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(alarmReceiver._consumer, 3, TimeUnit.SECONDS)).thenReturn(Mockito.mock(Message.class));
+
+        assertDoesNotThrow(() -> alarmReceiver.receiveMessages());
+    }
+
+    @Test
+    void testAcknowledgeMessage() throws Exception {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, postingService);
+
+        alarmReceiver._consumer = Mockito.mock(Consumer.class);
+        Message<byte[]> msg = Mockito.mock(Message.class);
+
+        doThrow(new PulsarClientException("Test Exception")).doNothing().when(VMBUtil.class);
+        VMBUtil.acknowledgeMessageThrowsPulsarClientException(alarmReceiver._consumer, msg);
+
+        assertDoesNotThrow(() -> alarmReceiver.acknowledgeMessage(msg));
+    }
+
+    @Test
+    void testSyncReconnect() throws Exception {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, postingService);
+
+        alarmReceiver._consumer = Mockito.mock(Consumer.class);
+        AtomicInteger reconnectStage = new AtomicInteger(0);
+        FieldUtils.writeField(alarmReceiver, "reconnectStage", reconnectStage, true);
+
+        when(alarmReceiver._consumer.isConnected()).thenReturn(false);
+        when(VMBUtil.createConsumerConnection(any(), any())).thenReturn(alarmReceiver._consumer);
+
+        assertDoesNotThrow(() -> alarmReceiver.syncReconnect());
+    }
+
+    @Test
+    void testRun() {
+        AlarmReceiver alarmReceiver = new AlarmReceiver(vmbParams, alarmPostGreService, postingService);
+
+        alarmReceiver._consumer = Mockito.mock(Consumer.class);
+        FieldUtils.writeField(alarmReceiver, "_run", false, true);
+
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(
+            alarmReceiver._consumer,
+            3,
+            TimeUnit.SECONDS
+        )).thenReturn(Mockito.mock(Message.class));
+
+        assertDoesNotThrow(() -> alarmReceiver.run());
+    }
 }
-
-@Test
-void testApplyPostingRule_case2() throws Exception {
-    Alarm alarm = new Alarm();
-    PostingRule rule = new PostingRule();
-    HashMap<String, Object> alarmMap = new HashMap<>();
-
-    ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", "%Mock:AlarmExpression%");
-    ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%Mock:EligibilityValue%");
-    ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
-    ReflectionTestUtils.setField(postingRuleProcessingService, "componentIDAttributeName", "MockAttributeName");
-
-    ResponseEntity<String> responseEntity = ResponseEntity.ok("{\"key\": \"value\"}");
-    Mockito.when(topoApiClient.fetchTopologyTraversalDetails(Mockito.any(Alarm.class), Mockito.any(PostingRule.class), Mockito.anyString())).thenReturn(responseEntity);
-
-    Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-    assertNotNull(result);
-    assertEquals(alarm, result);
-}
-
-@Test
-void testApplyPostingRule_case3() throws Exception {
-    Alarm alarm = new Alarm();
-    PostingRule rule = new PostingRule();
-    HashMap<String, Object> alarmMap = new HashMap<>();
-
-    ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", "%Mock:AlarmExpression%");
-    ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%Mock:EligibilityValue%");
-    ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
-    ReflectionTestUtils.setField(postingRuleProcessingService, "componentIDAttributeName", "MockAttributeName");
-
-    ResponseEntity<String> responseEntity = ResponseEntity.ok("{\"key\": \"value\"}");
-    Mockito.when(topoApiClient.fetchTopologyTraversalDetails(Mockito.any(Alarm.class), Mockito.any(PostingRule.class), Mockito.anyString())).thenReturn(responseEntity);
-
-    Mockito.when(utils.evaluateExpression(Mockito.anyString(), Mockito.anyMap())).thenReturn("TestValue");
-
-    Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-    assertNotNull(result);
-    assertEquals(alarm, result);
-}
-
-// Add more test cases to cover other branches of applyPostingRule method.

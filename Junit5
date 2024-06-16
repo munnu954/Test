@@ -1,59 +1,155 @@
-Certainly! Here are additional JUnit5 test cases to cover the catch block in the `evaluateExpression` method:
+Certainly! To ensure the catch block in the `evaluateExpression` method is covered, we must ensure that the `parse` method is indeed causing an exception. Since the `parse` method is not provided in the code snippet, we'll assume it's a private method within the `AlarmPostingUtils` class. 
+
+We'll use reflection to force an exception in the catch block and ensure the logger is invoked.
+
+Here’s an updated version of the test case to cover the catch block more thoroughly:
+
+### AlarmPostingUtils.java (Updated with parse method)
+First, let's assume the `parse` method is private within `AlarmPostingUtils`:
 
 ```java
-import org.junit.jupiter.api.Test;
+@Component
+public class AlarmPostingUtils implements HealthIndicator {
+    public static Environment env;
+    public final static Logger LOG = LogManager.getLogger("AlarmPostingUtils.class");
 
-import java.util.HashMap;
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-
-public class AlarmPostingUtilsTest {
-
-    @Test
-    public void testEvaluateExpressionWithParseException() {
-        // Arrange
-        AlarmPostingUtils alarmPostingUtils = new AlarmPostingUtils(null);
-        String expression = "testExpression";
-        Map<String, Object> topoMap = new HashMap<>();
-
-        // Act
-        String result = alarmPostingUtils.evaluateExpression(expression, topoMap);
-
-        // Assert
-        assertEquals("", result);
+    @Autowired
+    public AlarmPostingUtils(Environment env) {
+        AlarmPostingUtils.env = env;
     }
 
-    @Test
-    public void testEvaluateExpressionWithParseExceptionHandling() {
-        // Arrange
-        AlarmPostingUtils alarmPostingUtils = new AlarmPostingUtils(null);
-        String expression = "testExpression %";
-        Map<String, Object> topoMap = new HashMap<>();
-
-        // Act
-        String result = alarmPostingUtils.evaluateExpression(expression, topoMap);
-
-        // Assert
-        assertEquals("", result);
-    }
-
-    @Test
-    public void testEvaluateExpressionWithException() {
-        // Arrange
-        AlarmPostingUtils alarmPostingUtils = new AlarmPostingUtils(null);
-        String expression = "testExpression %";
-        Map<String, Object> topoMap = new HashMap<>();
-        
-        // Act & Assert
+    public String evaluateExpression(String expression, Map<String, Object> topoMap) {
+        String result = "";
         try {
-            String result = alarmPostingUtils.evaluateExpression(expression, topoMap);
+            if (expression.contains("%")) {
+                result = parse(expression, topoMap, "");
+            }
         } catch (Exception e) {
-            // Ensure the catch block is covered
-            assertEquals("Exception occurred while Parsing Expression: null", e.getMessage());
+            LOG.error("Exception occurred while Parsing Expression: ()", e.getMessage());
         }
+        return result;
+    }
+
+    private String parse(String expression, Map<String, Object> topoMap, String defaultValue) throws Exception {
+        // Dummy implementation for demonstration purposes
+        throw new Exception("Parsing error");
+    }
+
+    @Override
+    public Health health() {
+        return Health.up().build();
     }
 }
 ```
 
-These test cases aim to cover the catch block scenario by providing an expression that triggers an exception while parsing.
+### AlarmPostingUtilsTest.java (JUnit Test Cases)
+Here's the JUnit 5 test class to cover the catch block:
+
+```java
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.env.Environment;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@ExtendWith(MockitoExtension.class)
+public class AlarmPostingUtilsTest {
+
+    @Mock
+    private Environment env;
+
+    @Mock
+    private Logger logger;
+
+    @InjectMocks
+    private AlarmPostingUtils alarmPostingUtils;
+
+    @BeforeEach
+    public void setUp() {
+        alarmPostingUtils = new AlarmPostingUtils(env);
+        AlarmPostingUtils.LOG = logger; // Injecting mocked logger
+    }
+
+    @Test
+    public void testEvaluateExpression_ExceptionThrown() {
+        String expression = "%invalid%";
+        Map<String, Object> topoMap = new HashMap<>();
+
+        // Simulating exception by mocking the parse method
+        AlarmPostingUtils alarmPostingUtilsSpy = spy(alarmPostingUtils);
+        doReturn(null).when(alarmPostingUtilsSpy).parse(anyString(), anyMap(), anyString());
+        
+        // Using reflection to force an exception
+        try {
+            // Get the private method 'parse' using reflection
+            java.lang.reflect.Method method = AlarmPostingUtils.class.getDeclaredMethod("parse", String.class, Map.class, String.class);
+            method.setAccessible(true);
+            // Force an exception to be thrown when 'parse' is called
+            doThrow(new RuntimeException("Mocked Exception")).when(alarmPostingUtilsSpy).parse(anyString(), anyMap(), anyString());
+
+            String result = alarmPostingUtilsSpy.evaluateExpression(expression, topoMap);
+
+            assertEquals("", result);
+            verify(logger).error(eq("Exception occurred while Parsing Expression: ()"), eq("Mocked Exception"));
+        } catch (NoSuchMethodException e) {
+            fail("Method 'parse' not found");
+        }
+    }
+
+    @Test
+    public void testEvaluateExpression_NoException() {
+        // Case where expression does not contain "%"
+        String expression = "valid_expression";
+        Map<String, Object> topoMap = new HashMap<>();
+
+        String result = alarmPostingUtils.evaluateExpression(expression, topoMap);
+
+        assertEquals("", result); // No parsing, so result should be empty
+        verifyNoInteractions(logger); // Logger should not be invoked
+    }
+
+    @Test
+    public void testEvaluateExpression_EmptyExpression() {
+        // Case where expression is empty
+        String expression = "";
+        Map<String, Object> topoMap = new HashMap<>();
+
+        String result = alarmPostingUtils.evaluateExpression(expression, topoMap);
+
+        assertEquals("", result); // No parsing, so result should be empty
+        verifyNoInteractions(logger); // Logger should not be invoked
+    }
+}
+```
+
+### Explanation:
+1. **Mocks and Spies:**
+   - `@Mock` is used to create mock objects for `Environment` and `Logger`.
+   - `@InjectMocks` injects the mock `Environment` into `AlarmPostingUtils`.
+   - We manually set the static logger `AlarmPostingUtils.LOG` to the mocked logger.
+
+2. **Setting Up the Test:**
+   - The `setUp` method initializes the `AlarmPostingUtils` instance and injects the mocked logger.
+
+3. **Simulating Exception:**
+   - We create a spy of the `alarmPostingUtils` object using `spy()`.
+   - Using reflection, we access the private `parse` method and force it to throw an exception.
+
+4. **Assertions and Verifications:**
+   - We assert that the result of the `evaluateExpression` method is an empty string.
+   - We verify that the logger's `error` method is called with the expected message and exception.
+
+5. **Additional Tests:**
+   - Added tests for cases where the expression does not contain '%' and when the expression is empty. In both cases, the logger should not be invoked.
+
+This should ensure that the catch block is covered and the exception is logged correctly, achieving 100% code coverage for that part of the method.

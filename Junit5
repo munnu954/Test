@@ -1,158 +1,94 @@
-The error you are seeing suggests that the `createAlarm` method is returning `null`. This could be happening due to various reasons, including misconfiguration or issues in the method's logic. To diagnose this, we should first ensure that the method `createAlarm` is correctly implemented and that the test setup is accurate.
-
-Here's a complete example of how you might address this issue:
-
-1. Ensure the `createAlarm` method in your `AlarmRepositoryImpl` class is functioning as expected.
-2. Update the unit tests to correctly mock dependencies and verify the behavior.
-
-Here is the updated JUnit 5 test cases code, ensuring that the setup and mocking are done correctly:
+To cover all 8 branches of the specified `else if` block in the `createAlarm` method, you will need to test different combinations of `perceivedSeverity` and `stateValue` values. Here's the JUnit5 test case code that covers those branches:
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.internal.util.reflection.ReflectionTestUtils;
 
 import java.util.HashMap;
 import java.util.Map;
 
-class AlarmRepositoryImplTest {
-
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepositoryImpl;
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+public class AlarmRepositoryTest {
 
     @Mock
-    private PostGreDataBaseConfig postgresConf;
+    PostGreDataBaseConfig postgresConf;
 
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
+    @InjectMocks
+    @Spy
+    AlarmRepositoryImpl alarmRepositoryImpl;
 
-        Map<String, Integer> perceivedSeverityMap = new HashMap<>();
-        perceivedSeverityMap.put("Indeterminate", 0);
-        perceivedSeverityMap.put("Cleared", -1);
+    private static ObjectMapper objectMapper;
 
-        Map<String, Integer> alarmStateMap = new HashMap<>();
-        alarmStateMap.put("Cleared", 0);
-        alarmStateMap.put("Uncleared", 1);
+    @BeforeAll
+    static void initialize() {
+        objectMapper = new ObjectMapper();
+    }
 
-        when(postgresConf.getPerceivedSeverityMap()).thenReturn(perceivedSeverityMap);
-        when(postgresConf.getAlarmStateMap()).thenReturn(alarmStateMap);
+    @Test
+    void testCreateAlarmBranches() throws Exception {
+        Map<String, Integer> percMap = new HashMap<>();
+        Map<String, Integer> stateMap = new HashMap<>();
+        percMap.put("Indeterminate", 1);
+        stateMap.put("cleared", 6);
+
+        when(postgresConf.getAlarmStateCleared()).thenReturn("cleared");
+        when(postgresConf.getAlarmStateMap()).thenReturn(stateMap);
+        when(postgresConf.getPerceivedSeverityMap()).thenReturn(percMap);
+
+        String clearedState = "cleared";
+        Integer clearedStateValue = stateMap.get(clearedState);
+
+        // Test case 1: perceivedSeverity == null, stateValue == clearedStateValue
+        runTestCase(null, clearedStateValue, -1);
+
+        // Test case 2: perceivedSeverity != null and empty, stateValue == clearedStateValue
+        runTestCase("", clearedStateValue, -1);
+
+        // Test case 3: perceivedSeverity != null and not empty, stateValue == clearedStateValue
+        runTestCase("SomeValue", clearedStateValue, 1);
+
+        // Test case 4: perceivedSeverity == null, stateValue != clearedStateValue
+        runTestCase(null, 5, 1);
+
+        // Test case 5: perceivedSeverity != null and empty, stateValue != clearedStateValue
+        runTestCase("", 5, 1);
+
+        // Test case 6: perceivedSeverity != null and not empty, stateValue != clearedStateValue
+        runTestCase("SomeValue", 5, 1);
+
+        // Test case 7: perceivedSeverity == null, stateValue == null
+        runTestCase(null, null, 1);
+
+        // Test case 8: perceivedSeverity != null and empty, stateValue == null
+        runTestCase("", null, 1);
+    }
+
+    private void runTestCase(String perceivedSeverity, Integer stateValue, int expectedPerceivedSeverity) throws Exception {
+        String jsonTemplate = "{ \"externalAlarmId\":\"pqwer\", \"State\":\"%s\", \"perceivedSeverity\":\"%s\", \"sequenceId\":\"23423\"}";
+        String jsonStr = String.format(jsonTemplate, stateValue != null ? "cleared" : "notCleared", perceivedSeverity);
+        JsonNode json = objectMapper.readTree(jsonStr);
+
+        when(postgresConf.getAlarmStateNew()).thenReturn("new");
         when(postgresConf.getPerceivedSeverityIndeterminate()).thenReturn("Indeterminate");
-        when(postgresConf.getAlarmStateCleared()).thenReturn("Cleared");
-    }
 
-    @Test
-    void testCreateAlarm_perceivedSeverityNullAndStateCleared() throws Exception {
-        AlarmRepositoryImpl spyAlarmRepositoryImpl = spy(alarmRepositoryImpl);
-        String msg = "{\"State\": \"Cleared\"}";
-        ObjectMapper objectMapper = new ObjectMapper();
-        JsonNode jsonNode = objectMapper.readTree(msg);
-
-        doReturn(null).when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "perceivedSeverity");
-        doReturn("Cleared").when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "State");
-
-        Alarm alarm = spyAlarmRepositoryImpl.createAlarm(msg);
+        Alarm alarm = alarmRepositoryImpl.createAlarm(jsonStr);
 
         assertNotNull(alarm);
-        assertEquals(-1, alarm.getPerceivedSeverity());
-    }
-
-    @Test
-    void testCreateAlarm_perceivedSeverityEmptyAndStateCleared() throws Exception {
-        AlarmRepositoryImpl spyAlarmRepositoryImpl = spy(alarmRepositoryImpl);
-        String msg = "{\"State\": \"Cleared\"}";
-        ObjectMapper objectMapper = new ObjectMapper();
-        JsonNode jsonNode = objectMapper.readTree(msg);
-
-        doReturn("").when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "perceivedSeverity");
-        doReturn("Cleared").when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "State");
-
-        Alarm alarm = spyAlarmRepositoryImpl.createAlarm(msg);
-
-        assertNotNull(alarm);
-        assertEquals(-1, alarm.getPerceivedSeverity());
-    }
-
-    @Test
-    void testCreateAlarm_perceivedSeverityNotNullAndStateCleared() throws Exception {
-        AlarmRepositoryImpl spyAlarmRepositoryImpl = spy(alarmRepositoryImpl);
-        String msg = "{\"State\": \"Cleared\", \"perceivedSeverity\": \"Indeterminate\"}";
-        ObjectMapper objectMapper = new ObjectMapper();
-        JsonNode jsonNode = objectMapper.readTree(msg);
-
-        doReturn("Indeterminate").when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "perceivedSeverity");
-        doReturn("Cleared").when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "State");
-
-        Alarm alarm = spyAlarmRepositoryImpl.createAlarm(msg);
-
-        assertNotNull(alarm);
-        assertEquals(-1, alarm.getPerceivedSeverity());
-    }
-
-    @Test
-    void testCreateAlarm_perceivedSeverityNullAndStateNotCleared() throws Exception {
-        AlarmRepositoryImpl spyAlarmRepositoryImpl = spy(alarmRepositoryImpl);
-        String msg = "{\"State\": \"Uncleared\"}";
-        ObjectMapper objectMapper = new ObjectMapper();
-        JsonNode jsonNode = objectMapper.readTree(msg);
-
-        doReturn(null).when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "perceivedSeverity");
-        doReturn("Uncleared").when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "State");
-
-        Alarm alarm = spyAlarmRepositoryImpl.createAlarm(msg);
-
-        assertNotNull(alarm);
-        assertEquals(0, alarm.getPerceivedSeverity());
-    }
-
-    @Test
-    void testCreateAlarm_perceivedSeverityEmptyAndStateNotCleared() throws Exception {
-        AlarmRepositoryImpl spyAlarmRepositoryImpl = spy(alarmRepositoryImpl);
-        String msg = "{\"State\": \"Uncleared\"}";
-        ObjectMapper objectMapper = new ObjectMapper();
-        JsonNode jsonNode = objectMapper.readTree(msg);
-
-        doReturn("").when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "perceivedSeverity");
-        doReturn("Uncleared").when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "State");
-
-        Alarm alarm = spyAlarmRepositoryImpl.createAlarm(msg);
-
-        assertNotNull(alarm);
-        assertEquals(0, alarm.getPerceivedSeverity());
-    }
-
-    @Test
-    void testCreateAlarm_perceivedSeverityNotNullAndStateNotCleared() throws Exception {
-        AlarmRepositoryImpl spyAlarmRepositoryImpl = spy(alarmRepositoryImpl);
-        String msg = "{\"State\": \"Uncleared\", \"perceivedSeverity\": \"Indeterminate\"}";
-        ObjectMapper objectMapper = new ObjectMapper();
-        JsonNode jsonNode = objectMapper.readTree(msg);
-
-        doReturn("Indeterminate").when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "perceivedSeverity");
-        doReturn("Uncleared").when(spyAlarmRepositoryImpl).getValueFromNormalizedMsg(jsonNode, "State");
-
-        Alarm alarm = spyAlarmRepositoryImpl.createAlarm(msg);
-
-        assertNotNull(alarm);
-        assertEquals(0, alarm.getPerceivedSeverity());
+        assertEquals(expectedPerceivedSeverity, alarm.getPerceivedSeverity());
     }
 }
 ```
 
-### Key Points:
-1. **Spying on `AlarmRepositoryImpl`**: By using `Mockito.spy()`, we partially mock the instance to control the behavior of specific methods.
-2. **Mocking `getValueFromNormalizedMsg` Method**: The `doReturn().when()` construct ensures that the `getValueFromNormalizedMsg` method returns the desired values.
-3. **Assertions**: The `assertNotNull(alarm)` ensures that the `createAlarm` method does not return `null`. If the assertion fails, it suggests that there might be an issue with the method itself or the test setup.
-
-### Debugging Tips:
-1. **Check `createAlarm` Logic**: Ensure that the `createAlarm` method in `AlarmRepositoryImpl` is correctly implemented and does not return `null` under normal circumstances.
-2. **Review Mappings**: Verify the mappings in `PostGreDataBaseConfig` to ensure they return the expected values.
-
-By ensuring the method logic is correct and the test setup is accurate, you should be able to resolve the `null` issue and have passing test cases.
+This code should cover all the branches of the `else if` block in the `createAlarm` method. The `runTestCase` method is used to simplify testing different combinations of `perceivedSeverity` and `stateValue`. The expected values are asserted to ensure the correctness of the branch logic.

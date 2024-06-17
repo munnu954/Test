@@ -2,10 +2,9 @@ import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.state.CheckpointConfig;
 import org.apache.flink.api.common.state.CheckpointingMode;
-import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.client.JobClient;
-import org.apache.flink.runtime.state.hashmap.HashMapStateBackend;
+import org.apache.flink.runtime.state.filesystem.FsStateBackend;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.connectors.kafka.KafkaSource;
@@ -38,24 +37,29 @@ public class XmlTransformerJob {
 
     public void execute() throws Exception {
         Configuration config = new Configuration();
-        config.setString(ConfigOptions.key("state.backend").stringType().noDefaultValue(), "filesystem");
-        config.setString(ConfigOptions.key("state.checkpoints.dir").stringType().noDefaultValue(), appProp.getAppProperties().get("flink.checkpoints.path"));
+        config.setString("state.backend", "filesystem");
+        config.setString("state.checkpoints.dir", appProp.getAppProperties().get("flink.checkpoints.path"));
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
-        env.setRestartStrategy(RestartStrategies.fixedDelayRestart(3, 10000));  // Example restart strategy
+
+        // Set the state backend to the FsStateBackend for durable storage
+        env.setStateBackend(new FsStateBackend(appProp.getAppProperties().get("flink.checkpoints.path")));
+
+        // Enable checkpointing
+        env.enableCheckpointing(Long.parseLong(appProp.getAppProperties().get("flink.checkpoint.interval")));
+        env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
+        env.getCheckpointConfig().setMinPauseBetweenCheckpoints(Long.parseLong(appProp.getAppProperties().get("flink.checkpoint.min-pause")));
+        env.getCheckpointConfig().setCheckpointTimeout(Long.parseLong(appProp.getAppProperties().get("flink.checkpoint.timeout")));
+        env.getCheckpointConfig().setMaxConcurrentCheckpoints(Integer.parseInt(appProp.getAppProperties().get("flink.checkpoint.max-concurrent")));
+        env.getCheckpointConfig().enableExternalizedCheckpoints(CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
+
+        // Set a restart strategy in case of job failure
+        env.setRestartStrategy(RestartStrategies.fixedDelayRestart(3, 10000));  // 3 retries with a delay of 10 seconds
 
         CollectionAudit collectionAudit = new CollectionAudit();
 
         try {
             env.setParallelism(Integer.parseInt(appProp.getAppProperties().get("flink.parallelism")));
-            env.enableCheckpointing(Long.parseLong(appProp.getAppProperties().get("flink.checkpoint.interval")));
-            env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
-            env.getCheckpointConfig().setMinPauseBetweenCheckpoints(Long.parseLong(appProp.getAppProperties().get("flink.checkpoint.min-pause")));
-            env.getCheckpointConfig().setCheckpointTimeout(Long.parseLong(appProp.getAppProperties().get("flink.checkpoint.timeout")));
-            env.getCheckpointConfig().setMaxConcurrentCheckpoints(Integer.parseInt(appProp.getAppProperties().get("flink.checkpoint.max-concurrent")));
-            env.getCheckpointConfig().enableExternalizedCheckpoints(CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
-
-            env.setStateBackend(new HashMapStateBackend());
 
             OffsetsInitializer offsetsInitializer = jobUtil.getOffsetsInitializer(appProp.getAppProperties().get("spring.kafka.consumer.auto-offset-reset"));
             collectionAudit = jobUtil.setCollectionAuditProperties(collectionAudit);

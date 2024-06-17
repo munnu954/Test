@@ -1,65 +1,200 @@
-Sure! Here are some additional JUnit 5 test cases to cover different branches of the `createAlarm` method in the `AlarmRepositoryImpl` class:
+To achieve 100% code coverage for the `if (duration > 0)` block, we need to consider two scenarios:
+1. `duration` is greater than 0.
+2. `duration` is less than or equal to 0.
 
-1. Testing when `perceivedSeverity` and `stateValue` both are null:
+Below are the JUnit 5 test cases to cover these scenarios:
+
 ```java
-@Test
-void testCreateAlarm_PerceivedSeverityNullAndStateNull_StateNew() throws Exception {
-    // Arrange
-    String msg = "{ \"externalAlarmId\":\"pqwer\", \"State\":\"new\",\"sequenceId\":\"23423\"}";
-    Map<String, Integer> percMap = new HashMap<>();
-    Map<String, Integer> stateMap = new HashMap<>();
-    percMap.put("Other", 6);
-    percMap.put("Indeterminate", 1);
-    stateMap.put("cleared", 6);
-    
-    when(postgresConf.getAlarmTypeMap()).thenReturn(percMap);
-    when(postgresConf.getPerceivedSeverityMap()).thenReturn(percMap);
-    when(postgresConf.getAlarmStateMap()).thenReturn(stateMap);
-    when(postgresConf.getAlarmTypeOther()).thenReturn("Other");
-    when(postgresConf.getAlarmStateNew()).thenReturn("New");
-    when(postgresConf.getPerceivedSeverityIndeterminate()).thenReturn("Indeterminate");
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.slf4j.Logger;
 
-    // Act
-    alarmRepositoryImpl.createAlarm(msg);
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicLong;
 
-    // Assert
-    ArgumentCaptor<Alarm> alarmCaptor = ArgumentCaptor.forClass(Alarm.class);
-    verify(alarmRepositoryImpl).createAlarm(msg);
-    verify(alarmRepositoryImpl).postAlarm(alarmCaptor.capture(), eq("compId"));
-    
-    assertEquals(1, alarmCaptor.getValue().getPerceivedSeverity());
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+public class AlarmRepositoryImplTest {
+
+    @Mock
+    private Logger log;
+
+    @InjectMocks
+    private AlarmRepositoryImpl alarmRepository;
+
+    @BeforeEach
+    public void setup() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    public void testPostAlarmRetriesExceed() throws Exception {
+        Alarm alarm = new Alarm();
+        alarm.setAlarmIdentity("TestAlarm");
+
+        // Adjusting the retry count for the test scenario
+        setTransactionRetryCount(alarmRepository, 3);
+
+        doReturn(-2).when(alarmRepository).postAlarmForEachIteration(any(Alarm.class), anyString());
+
+        Executable executable = () -> alarmRepository.postAlarm(alarm, "compId");
+
+        PostingRetryException exception = assertThrows(PostingRetryException.class, executable);
+        assertTrue(exception.getMessage().contains("Number of posting transaction retries has exceeded maximum limit"));
+    }
+
+    @Test
+    public void testPostAlarmRetriesWithinLimit() throws Exception {
+        Alarm alarm = new Alarm();
+        alarm.setAlarmIdentity("TestAlarm");
+
+        // Adjusting the retry count for the test scenario
+        setTransactionRetryCount(alarmRepository, 3);
+
+        doReturn(-2).doReturn(1).when(alarmRepository).postAlarmForEachIteration(any(Alarm.class), anyString());
+
+        alarmRepository.postAlarm(alarm, "compId");
+
+        verify(log, times(1)).warn(anyString(), any());
+    }
+
+    @Test
+    public void testPostAlarmProcessingRateDurationGreaterThanZero() throws Exception {
+        Alarm alarm = new Alarm();
+        alarm.setAlarmIdentity("TestAlarm");
+
+        doReturn(1).when(alarmRepository).postAlarmForEachIteration(any(Alarm.class), anyString());
+
+        AtomicLong totalAlarmsProcessed = alarmRepository.totalAlarmsProcessed;
+        totalAlarmsProcessed.set(1999);
+
+        AtomicLong prevSnapshotTime = alarmRepository.prevSnapshotTime;
+        prevSnapshotTime.set(Instant.now().toEpochMilli() - 1000);
+
+        AtomicLong curSnapshotTime = alarmRepository.curSnapshotTime;
+        curSnapshotTime.set(Instant.now().toEpochMilli());
+
+        alarmRepository.postAlarm(alarm, "compId");
+
+        verify(log, times(1)).info(anyString(), any(), any(), any());
+    }
+
+    @Test
+    public void testPostAlarmProcessingRateDurationLessThanOrEqualToZero() throws Exception {
+        Alarm alarm = new Alarm();
+        alarm.setAlarmIdentity("TestAlarm");
+
+        doReturn(1).when(alarmRepository).postAlarmForEachIteration(any(Alarm.class), anyString());
+
+        AtomicLong totalAlarmsProcessed = alarmRepository.totalAlarmsProcessed;
+        totalAlarmsProcessed.set(1999);
+
+        AtomicLong prevSnapshotTime = alarmRepository.prevSnapshotTime;
+        prevSnapshotTime.set(Instant.now().toEpochMilli());
+
+        AtomicLong curSnapshotTime = alarmRepository.curSnapshotTime;
+        curSnapshotTime.set(Instant.now().toEpochMilli());
+
+        alarmRepository.postAlarm(alarm, "compId");
+
+        verify(log, never()).info(anyString(), any(), any(), any());
+    }
+
+    private void setTransactionRetryCount(AlarmRepositoryImpl alarmRepository, int retryCount) {
+        try {
+            java.lang.reflect.Field field = AlarmRepositoryImpl.class.getDeclaredField("transactionRetryCount");
+            field.setAccessible(true);
+            field.set(alarmRepository, retryCount);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
+
+class AlarmRepositoryImpl {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(AlarmRepositoryImpl.class);
+
+    private int transactionRetryCount = 3; // Assuming some default value
+    AtomicLong totalAlarmsProcessed = new AtomicLong(0);
+    AtomicLong prevAlarmsProcessed = new AtomicLong(0);
+    AtomicLong prevSnapshotTime = new AtomicLong(0);
+    AtomicLong curSnapshotTime = new AtomicLong(0);
+
+    public void postAlarm(Alarm alarm, String compId) throws Exception {
+        try {
+            LOG.debug("ALARM RAISED TIME: " + alarm.getAlarmRaisedTime());
+            int rowsAffected = 0;
+            int noofAttempts = 0;
+            alarm.setCountResetFlag(0);
+            while (rowsAffected == 0 || rowsAffected == -2) {
+                alarm.setCountResetFlag(0);
+                rowsAffected = postAlarmForEachIteration(alarm, compId);
+                if (rowsAffected == -2) {
+                    if (++noofAttempts == transactionRetryCount) {
+                        String errMsg = "Number of posting transaction retries has exceeded maximum limit -" + transactionRetryCount + " - Alarm Identity -" + alarm.getAlarmIdentity();
+                        throw new PostingRetryException(errMsg);
+                    }
+                    LOG.warn("Posting transaction processing retry - Attempt no:" + (noofAttempts + 1) + " after previous failure(s). Alarm identity - " + alarm.getAlarmIdentity());
+                }
+            }
+            totalAlarmsProcessed.getAndIncrement();
+            long totalAlarmsProcessedTmp = totalAlarmsProcessed.get();
+            if (totalAlarmsProcessedTmp % 2000 == 0) {
+                long prevAlarmsProcessedTmp = prevAlarmsProcessed.get();
+                prevAlarmsProcessed.set(totalAlarmsProcessedTmp);
+                long prevSnapshotTimeTmp = prevSnapshotTime.get();
+                curSnapshotTime.set(Instant.now().toEpochMilli());
+
+                long curSnapshotTimeTmp = curSnapshotTime.get();
+                prevSnapshotTime.set(curSnapshotTimeTmp);
+                long duration = curSnapshotTimeTmp - prevSnapshotTimeTmp;
+                if (duration > 0) {
+                    double processingRate = ((1000 * (totalAlarmsProcessedTmp - prevAlarmsProcessedTmp)) / duration);
+
+                    LOG.info("Total records processed by all threads <" + totalAlarmsProcessedTmp + "> Processing rate (alarms per sec) of last <" + (totalAlarmsProcessedTmp - prevAlarmsProcessedTmp) + ">alarms =<" + processingRate + ">");
+                }
+            }
+        } catch (PostingRetryException e) {
+            throw (e);
+        } catch (Exception e) {
+            LOG.error("Alarm posting failed (postAlarm) : <" + alarm.getAlarmIdentity() + ">Alarm message: " + alarm + "\n" + e);
+        }
+    }
+
+    // Mocking the postAlarmForEachIteration method as it's not provided in the original code
+    public int postAlarmForEachIteration(Alarm alarm, String compId) {
+        // Mock implementation
+        return 1;
+    }
+}
+
+class PostingRetryException extends Exception {
+    public PostingRetryException(String message) {
+        super(message);
+    }
 }
 ```
 
-2. Testing when `perceivedSeverity` is null and `stateValue` does not match any defined state:
-```java
-@Test
-void testCreateAlarm_PerceivedSeverityNullAndStateInvalid_StateUnspecified() throws Exception {
-    // Arrange
-    String msg = "{ \"externalAlarmId\":\"pqwer\", \"State\":\"invalid\",\"sequenceId\":\"23423\"}";
-    Map<String, Integer> percMap = new HashMap<>();
-    Map<String, Integer> stateMap = new HashMap<>();
-    percMap.put("Other", 6);
-    percMap.put("Indeterminate", 1);
-    stateMap.put("cleared", 6);
-    
-    when(postgresConf.getAlarmTypeMap()).thenReturn(percMap);
-    when(postgresConf.getPerceivedSeverityMap()).thenReturn(percMap);
-    when(postgresConf.getAlarmStateMap()).thenReturn(stateMap);
-    when(postgresConf.getAlarmTypeOther()).thenReturn("Other");
-    when(postgresConf.getAlarmStateNew()).thenReturn("New");
-    when(postgresConf.getPerceivedSeverityIndeterminate()).thenReturn("Indeterminate");
+### Explanation:
+1. **testPostAlarmRetriesExceed**:
+    - Covers the case where `rowsAffected` is `-2` and the number of attempts reaches `transactionRetryCount`.
+    - Expects `PostingRetryException` to be thrown.
 
-    // Act
-    alarmRepositoryImpl.createAlarm(msg);
+2. **testPostAlarmRetriesWithinLimit**:
+    - Covers the case where `rowsAffected` is `-2` but the number of attempts does not reach `transactionRetryCount`.
+    - Expects a warning log to be written once.
 
-    // Assert
-    ArgumentCaptor<Alarm> alarmCaptor = ArgumentCaptor.forClass(Alarm.class);
-    verify(alarmRepositoryImpl).createAlarm(msg);
-    verify(alarmRepositoryImpl).postAlarm(alarmCaptor.capture(), eq("compId"));
-    
-    assertEquals(-1, alarmCaptor.getValue().getPerceivedSeverity());
-}
-```
+3. **testPostAlarmProcessingRateDurationGreaterThanZero**:
+    - Covers the scenario where the `duration` is greater than 0.
+    - Expects the information log to be written once.
 
-These test cases cover additional branches of the `createAlarm` method to achieve 100% code coverage of the `AlarmRepositoryImpl` class. Each test case targets a specific scenario to ensure all possible outcomes are tested.
+4. **testPostAlarmProcessingRateDurationLessThanOrEqualToZero**:
+    - Covers the scenario where the `duration` is less than or equal to 0.
+    - Expects no information log to be written.
+
+By adding these test cases, you ensure that all branches of the `if` condition inside the `postAlarm` method are covered, achieving 100% code coverage.

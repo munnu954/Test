@@ -1,110 +1,67 @@
-import org.apache.flink.api.common.JobID;
-import org.apache.flink.api.common.JobStatus;
-import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.runtime.state.hashmap.HashMapStateBackend;
-import org.apache.flink.runtime.state.storage.FileSystemCheckpointStorage;
-import org.apache.flink.streaming.api.CheckpointingMode;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.CheckpointConfig;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.source.SourceFunction;
-import org.apache.flink.streaming.connectors.kafka.KafkaSource;
-import org.apache.kafka.clients.consumer.OffsetResetStrategy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.json.JSONObject;
+app:
+  log:
+    path: C:\\prod\\eclapp\\10g
+    name: custom-xml-data-transformer
+  flink:
+    api:
+      url: http://localhost:8081
+    log:
+      file: C:\\prod\\eclapp\\log\\FlinkJobManager.log
+    parallelism: 10
+  checkpoint:
+    interval: 60000
+    min-pause: 5000
+    timeout: 600000
+    max-concurrent: 1
+    path: file:///C:/flink_checkpoints
 
-public class XmlTransformerJob {
+s3:
+  accessKey: 008730baf239ce612ba
+  secretKey: 1XBerWiLensDF+wCyBPptfc3jEQDREGVLnsZkX8D
+  bucketName: spaceucsdev
+  host: http://10.194.198.52
+  httpHost: 10.194.198.52
+  region: us-west-2
+  method: GET
+  awsService: s3
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(XmlTransformerJob.class);
-    public static final AppProperties APP_PROP = AppProperties.getInstance();
-    private static final String FLINK_JOB_NAME = "Xml to JSON Transformer Job";
+test:
+  testAccessKey: testAccessKey
+  testSecretKey: testSecretKey
+  testBucket: testBucket
 
-    private final XmlTransformerJobUtil jobUtil;
-    private final PublishAuditMessage pubAuditMsg;
+pulsar:
+  publishVMB: false
+  caCert: ca.cert.pem
+  enmyCert: enmy.cert.pem
+  enmyKey: enmy.key-pkspem
+  serviceUrl: pulsar+ssl://vmb-aws-us-west-2-nonprod.verizon.com:6651
+  topics: persistent://enmy/custom-interfaces/data
 
-    public XmlTransformerJob(PublishAuditMessage pubAuditMsg) {
-        this(pubAuditMsg, new XmlTransformerJobUtil(pubAuditMsg));
-    }
-
-    public XmlTransformerJob(PublishAuditMessage pubAuditMsg, XmlTransformerJobUtil xmlTransformerJobUtil) {
-        this.jobUtil = xmlTransformerJobUtil;
-        this.pubAuditMsg = pubAuditMsg;
-    }
-
-    public PublishAuditMessage getPubAuditMsg() {
-        return pubAuditMsg;
-    }
-
-    public void execute() throws Exception {
-
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(Integer.parseInt(APP_PROP.getAppProperties("flink.parallelism")));
-
-        // Configure state backend and checkpoint storage
-        env.setStateBackend(new HashMapStateBackend());
-        env.getCheckpointConfig().setCheckpointStorage(new FileSystemCheckpointStorage("file:///path/to/checkpoints"));
-
-        // Enable checkpointing
-        env.enableCheckpointing(60000, CheckpointingMode.EXACTLY_ONCE);
-        CheckpointConfig checkpointConfig = env.getCheckpointConfig();
-        checkpointConfig.setMinPauseBetweenCheckpoints(500);
-        checkpointConfig.setCheckpointTimeout(60000);
-        checkpointConfig.setMaxConcurrentCheckpoints(1);
-        checkpointConfig.enableExternalizedCheckpoints(CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
-
-        CollectionAudit collectionAudit = new CollectionAudit();
-
-        try {
-            OffsetsInitializer offsetsInitializer = jobUtil.getOffsetsInitializer(APP_PROP.getAppProperties("spring.kafka.consumer.auto-offset-reset"));
-            collectionAudit = jobUtil.setCollectionAuditProperties(collectionAudit);
-            jobUtil.validateKafka(collectionAudit);
-
-            KafkaSource<String> source = jobUtil.buildKafkaSource(
-                collectionAudit,
-                offsetsInitializer,
-                APP_PROP.getAppProperties("spring.kafka.consumer.group-id")
-            );
-
-            DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Kafka Source");
-
-            DataStream<CollectionAudit> collectionAuditStream = XmlTransformerJobUtil.convertStreamToCollectionAudit(stream, collectionAudit);
-            DataStream<Tuple2<String, CollectionAudit>> xmlDataStream = XmlTransformerJobUtil.getXmlDataStream(collectionAuditStream);
-            DataStream<Tuple2<JSONObject, CollectionAudit>> jsonNodeStream = XmlTransformerJobUtil.convertXmlToJson(xmlDataStream);
-            DataStream<Tuple2<String, CollectionAudit>> finalDataStream = XmlTransformerJobUtil.encapsulateJson(jsonNodeStream);
-
-            if (finalDataStream != null) {
-                publishTransformedData(finalDataStream, null);
-            }
-
-            JobClient jobClient = env.executeAsync(FLINK_JOB_NAME);
-            JobID jobId = jobClient.getJobID();
-            LOGGER.info("JobID is********************** [{}]", jobId);
-
-        } catch (Exception e) {
-            LOGGER.info("Error while executing XmlTransformerJob {}", e);
-            throw e; // Ensure the job fails and restarts based on the checkpointing configuration
-        }
-    }
-
-    public void publishTransformedData(DataStream<Tuple2<String, CollectionAudit>> encapsulatedJsonStream, String jobId) {
-        try {
-            DataStream<String> jsonStringStream = jobUtil.getJsonStringStream(encapsulatedJsonStream);
-
-            if (jobUtil.shouldPublishKafka()) {
-                jobUtil.publishToKafka(jsonStringStream);
-            }
-
-            if (jobUtil.shouldPublishVMB()) {
-                jobUtil.publishToVMB(jsonStringStream);
-            }
-
-            jobUtil.processStream(encapsulatedJsonStream, JobStatus.FLINK_JOB_SUCCESSFUL);
-
-        } catch (Exception e) {
-            LOGGER.error("Error while publishing data to Sink {} ", e);
-            jobUtil.processStream(encapsulatedJsonStream, JobStatus.FLINK_JOB_FAILED);
-        }
-    }
-}
+spring:
+  kafka:
+    publishKafka: true
+    audit-topic-name: 3459-DEV-COLLECTION-AUDIT-QUEUE
+    data-topic-name: 3459-DEV-COLLECTION-DATA-QUEUE
+    consumer:
+      bootstrap-servers: localhost:9092
+      group-id: tbp
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    properties:
+      spring:
+        deserializer:
+          key:
+            delegate:
+              class: org.apache.kafka.common.serialization.StringDeserializer
+          value:
+            delegate:
+              class: org.apache.kafka.common.serialization.StringDeserializer
+  json:
+    trustea:
+      packages: "*"
+  producer:
+    max:
+      request:
+        size: 2000000

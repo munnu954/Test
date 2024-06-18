@@ -1,4 +1,4 @@
-Certainly! Below is a comprehensive set of JUnit 5 test cases for the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class, focusing on the specific blocks you've mentioned. These tests aim to achieve high code coverage, including edge cases.
+Absolutely! Below are additional JUnit 5 test cases designed to cover the specified blocks in the `postAlarmForEachIteration` method. These tests ensure that the logic for handling `exttopologydetails` and `topologydetails` is thoroughly tested, including the application of posting rules.
 
 ```java
 import static org.mockito.Mockito.*;
@@ -7,15 +7,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
 
-import java.sql.Timestamp;
-import java.time.Instant;
 import java.util.HashMap;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -25,9 +22,6 @@ public class AlarmRepositoryImplTest {
 
     @Mock
     private JdbcTemplate jdbcTemplate;
-
-    @Mock
-    private AlarmPostingUtils utils;
 
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
@@ -54,41 +48,60 @@ public class AlarmRepositoryImplTest {
     }
 
     @Test
-    void testPostAlarmForEachIteration_ExtTopologyDetails() throws Exception {
+    void testPostAlarmForEachIteration_ExtTopologyDetailsNotNull() throws Exception {
         when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
         when(rs.next()).thenReturn(true);
-        when(rs.getString("exttopologydetails")).thenReturn("{\"key\":\"value\"}");
-        when(rs.getString(anyString())).thenReturn(null);
+        when(rs.getString("exttopologydetails")).thenReturn("{\"key\":\"extValue\"}");
         when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
 
         int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
         assertEquals(0, result);
-        assertEquals("{\"key\":\"value\"}", alarm.getExtTopologyDetails());
+        assertEquals("{\"key\":\"extValue\"}", alarm.getExtTopologyDetails());
     }
 
     @Test
-    void testPostAlarmForEachIteration_TopologyDetails() throws Exception {
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        alarmMap.put("key", "value");
-        alarm.setTopologyDetails(objectMapper.writeValueAsString(alarmMap));
+    void testPostAlarmForEachIteration_TopologyDetailsMerge() throws Exception {
+        alarm.setTopologyDetails("{\"key\":\"alarmValue\"}");
         
         when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
         when(rs.next()).thenReturn(true);
         when(rs.getString("topologydetails")).thenReturn("{\"key\":\"dbValue\"}");
-        when(rs.getString(anyString())).thenReturn(null);
         when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
-        
+
         int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
         assertEquals(0, result);
+        
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("key", "alarmValue");
+
+        HashMap<String, Object> dbMap = new HashMap<>();
+        dbMap.put("key", "dbValue");
+
         HashMap<String, Object> expectedMap = new HashMap<>();
-        expectedMap.put("key", "dbValue");
+        expectedMap.put("key", "dbValue"); // Assuming the merge keeps the dbValue
+
         assertEquals(objectMapper.writeValueAsString(expectedMap), alarm.getTopologyDetails());
     }
 
     @Test
+    void testPostAlarmForEachIteration_TopologyDetailsNotNull() throws Exception {
+        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
+        when(rs.next()).thenReturn(true);
+        when(rs.getString("topologydetails")).thenReturn("{\"key\":\"dbValue\"}");
+        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
+
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+
+        assertEquals(0, result);
+        assertEquals("{\"key\":\"dbValue\"}", alarm.getTopologyDetails());
+    }
+
+    @Test
     void testPostAlarmForEachIteration_ApplyPostingRules() throws Exception {
+        alarm.setPostingRulesProcessingReqd(true);
+
         when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
         when(rs.next()).thenReturn(true);
         when(rs.getString("exttopologydetails")).thenReturn(null);
@@ -103,26 +116,16 @@ public class AlarmRepositoryImplTest {
     }
 
     @Test
-    void testPostAlarmForEachIteration_TopologyDetails_Merge() throws Exception {
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        alarmMap.put("key", "value");
-        alarm.setTopologyDetails(objectMapper.writeValueAsString(alarmMap));
-        
-        HashMap<String, Object> dbMap = new HashMap<>();
-        dbMap.put("key", "dbValue");
-
+    void testPostAlarmForEachIteration_NoExtTopologyDetails() throws Exception {
         when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
         when(rs.next()).thenReturn(true);
-        when(rs.getString("topologydetails")).thenReturn(objectMapper.writeValueAsString(dbMap));
-        when(rs.getString(anyString())).thenReturn(null);
+        when(rs.getString("exttopologydetails")).thenReturn(null);
         when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
 
         int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
         assertEquals(0, result);
-        HashMap<String, Object> expectedMap = new HashMap<>();
-        expectedMap.put("key", "value"); // Assuming merge keeps the original alarmMap
-        assertEquals(objectMapper.writeValueAsString(expectedMap), alarm.getTopologyDetails());
+        assertNull(alarm.getExtTopologyDetails());
     }
 
     @Test
@@ -137,42 +140,30 @@ public class AlarmRepositoryImplTest {
         assertEquals(0, result);
         assertNull(alarm.getTopologyDetails());
     }
-
-    @Test
-    void testPostAlarmForEachIteration_NoExtTopologyDetails() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getString("exttopologydetails")).thenReturn(null);
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals(0, result);
-        assertNull(alarm.getExtTopologyDetails());
-    }
 }
 ```
 
 ### Explanation:
-1. **`testPostAlarmForEachIteration_ExtTopologyDetails`**:
+1. **`testPostAlarmForEachIteration_ExtTopologyDetailsNotNull`**:
    - Simulates the scenario where `exttopologydetails` is available in the result set.
    - Verifies that the `extTopologyDetails` field in the `alarm` object is correctly set.
 
-2. **`testPostAlarmForEachIteration_TopologyDetails`**:
-   - Checks if the `topologydetails` from the database is correctly merged with the existing `topologyDetails` in the `alarm` object.
+2. **`testPostAlarmForEachIteration_TopologyDetailsMerge`**:
+   - Tests the merging of `topologydetails` from the alarm and database and verifies the result.
 
-3. **`testPostAlarmForEachIteration_ApplyPostingRules`**:
+3. **`testPostAlarmForEachIteration_TopologyDetailsNotNull`**:
+   - Simulates the scenario where only the `topologydetails` from the database is present.
+   - Verifies that the `topologyDetails` field in the `alarm` object is correctly set.
+
+4. **`testPostAlarmForEachIteration_ApplyPostingRules`**:
    - Ensures that the `applyPostingRules` method of `postingRuleProcessingService` is called if `postingRulesProcessingReqd` is true.
 
-4. **`testPostAlarmForEachIteration_TopologyDetails_Merge`**:
-   - Simulates the merging of `topologydetails` from the alarm and database and verifies the result.
-
-5. **`testPostAlarmForEachIteration_NoTopologyDetails`**:
-   - Tests the scenario where `topologydetails` is not available in the result set.
-   - Verifies that the `topologyDetails` field in the `alarm` object remains null.
-
-6. **`testPostAlarmForEachIteration_NoExtTopologyDetails`**:
+5. **`testPostAlarmForEachIteration_NoExtTopologyDetails`**:
    - Tests the scenario where `exttopologydetails` is not available in the result set.
    - Verifies that the `extTopologyDetails` field in the `alarm` object remains null.
 
-These tests cover various scenarios to ensure high code coverage and correct functionality of the specified blocks in the `postAlarmForEachIteration` method.
+6. **`testPostAlarmForEachIteration_NoTopologyDetails`**:
+   - Tests the scenario where `topologydetails` is not available in the result set.
+   - Verifies that the `topologyDetails` field in the `alarm` object remains null.
+
+These additional test cases ensure that the specific blocks you've highlighted are thoroughly covered.

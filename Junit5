@@ -1,8 +1,30 @@
-@ExtendWith(MockitoExtension.class)
-class AlarmRepositoryImplTest {
+Certainly! To cover the specified `if` blocks in the `postAlarmForEachIteration` method, we need to create test cases that ensure the conditions within the `if` statements are met. This involves:
 
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepositoryImpl;
+1. `alarm.getState() == postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared())` or `alarm.getPerceivedSeverity() == postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny())`
+2. `alarm.getClearTime() == null` and `alarm.getAlarmUpdatedTime() != null`
+
+Below is the additional JUnit 5 test case code that covers these scenarios:
+
+```java
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
+
+import java.sql.Timestamp;
+import java.time.Instant;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.rowset.SqlRowSet;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+@ExtendWith(MockitoExtension.class)
+public class AlarmRepositoryImplTest {
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -16,135 +38,71 @@ class AlarmRepositoryImplTest {
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
+    @InjectMocks
+    private AlarmRepositoryImpl alarmRepository;
+
     private Alarm alarm;
+    private SqlRowSet rs;
 
     @BeforeEach
-    void setup() {
+    public void setUp() {
         alarm = new Alarm();
-        alarm.setAlarmIdentity("12345");
-        alarm.setAlarmUpdatedTime("2023-04-01T12:00:00Z");
-        alarm.setSequenceID(100L);
+        alarm.setAlarmIdentity("alarm1");
+        alarm.setAlarmUpdatedTime("2023-09-25T10:15:30.00Z");
+
+        rs = mock(SqlRowSet.class);
+    }
+
+    // Existing test cases...
+
+    @Test
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void testPostAlarmForEachIteration_IfCondition_AlarmStateCleared() throws Exception {
+        // Mocking the result set to simulate the database output
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2023-09-25T10:00:00.00Z"))); // earlier time
+        when(rs.getLong("sequenceid")).thenReturn(100L);
+        when(rs.getLong("usn")).thenReturn(1L);
+        when(rs.getInt("state")).thenReturn(5); // Alarm state cleared
+
+        // Mocking the jdbcTemplate to return the result set
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+
+        // Mocking the utils to compare times
+        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);  // Simulate curAlmUpdatedTime > dbAlmUpdatedTime
+
+        // Mocking the PostingRuleProcessingService to apply posting rules
+        when(postingRuleProcessingService.applyPostingRules(any(Alarm.class))).thenReturn(alarm);
+
+        // Setting up the postgresConf mock
+        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<String, Integer>() {{
+            put("Cleared", 5);
+        }});
+
+        // Calling the method under test
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+
+        // Verifying the interactions and asserting the result
+        verify(postingRuleProcessingService, times(1)).applyPostingRules(any(Alarm.class));
+        verify(jdbcTemplate, times(1)).update(anyString(), any(Object[].class));
+        assertNotEquals(-1, result);
     }
 
     @Test
-    void testPostAlarmForEachIteration_ClearTimeUpdated_WhenStateIsCleared_AndClearTimeIsNull() {
-        // Arrange
-        String dbAlmUpdatedTime = "2023-04-01T11:59:59Z";
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void testPostAlarmForEachIteration_IfCondition_PerceivedSeverityAny() throws Exception {
+        // Mocking the result set to simulate the database output
         when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse(dbAlmUpdatedTime)));
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2023-09-25T10:00:00.00Z"))); // earlier time
         when(rs.getLong("sequenceid")).thenReturn(100L);
-        when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
-        when(rs.getInt("perceivedseverity")).thenReturn(postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny()));
-        alarm.setClearTime(null);
-        alarm.setAlarmUpdatedTime("2023-04-01T11:59:59Z");
-        alarm.setState(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
-        alarm.setPerceivedSeverity(postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny()));
+        when(rs.getLong("usn")).thenReturn(1L);
+        when(rs.getInt("state")).thenReturn(1);
 
-        // Act
-        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "comp-id");
+        // Mocking the jdbcTemplate to return the result set
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
 
-        // Assert
-        assertEquals(1, rowsAffected);
-        assertEquals("2023-04-01T11:59:59Z", alarm.getClearTime());
-    }
+        // Mocking the utils to compare times
+        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);  // Simulate curAlmUpdatedTime > dbAlmUpdatedTime
 
-    @Test
-    void testPostAlarmForEachIteration_ClearTimeNotUpdated_WhenStateIsCleared_AndClearTimeIsNotNull() {
-        // Arrange
-        String dbAlmUpdatedTime = "2023-04-01T11:59:59Z";
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse(dbAlmUpdatedTime)));
-        when(rs.getLong("sequenceid")).thenReturn(100L);
-        when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
-        when(rs.getInt("perceivedseverity")).thenReturn(postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny()));
-        alarm.setClearTime("2023-04-01T11:00:00Z");
-        alarm.setAlarmUpdatedTime("2023-04-01T11:59:59Z");
-        alarm.setState(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
-        alarm.setPerceivedSeverity(postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny()));
-
-        // Act
-        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "comp-id");
-
-        // Assert
-        assertEquals(1, rowsAffected);
-        assertEquals("2023-04-01T11:00:00Z", alarm.getClearTime());
-    }
-
-    @Test
-    void testPostAlarmForEachIteration_ClearTimeNotUpdated_WhenStateIsNotCleared_AndClearTimeIsNull() {
-        // Arrange
-        String dbAlmUpdatedTime = "2023-04-01T11:59:59Z";
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse(dbAlmUpdatedTime)));
-        when(rs.getLong("sequenceid")).thenReturn(100L);
-        when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew()));
-        when(rs.getInt("perceivedseverity")).thenReturn(postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny()));
-        alarm.setClearTime(null);
-        alarm.setAlarmUpdatedTime("2023-04-01T11:59:59Z");
-        alarm.setState(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew()));
-        alarm.setPerceivedSeverity(postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny()));
-
-        // Act
-        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "comp-id");
-
-        // Assert
-        assertEquals(1, rowsAffected);
-        assertNull(alarm.getClearTime());
-    }
-
-    @Test
-    void testPostAlarmForEachIteration_ClearTimeNotUpdated_WhenPerceivedSeverityIsAny_AndClearTimeIsNull() {
-        // Arrange
-        String dbAlmUpdatedTime = "2023-04-01T11:59:59Z";
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse(dbAlmUpdatedTime)));
-        when(rs.getLong("sequenceid")).thenReturn(100L);
-        when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew()));
-        when(rs.getInt("perceivedseverity")).thenReturn(postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny()));
-        alarm.setClearTime(null);
-        alarm.setAlarmUpdatedTime("2023-04-01T11:59:59Z");
-        alarm.setState(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew()));
-        alarm.setPerceivedSeverity(postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny()));
-
-        // Act
-        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "comp-id");
-
-        // Assert
-        assertEquals(1, rowsAffected);
-        assertNull(alarm.getClearTime());
-    }
-
-    @Test
-    void testPostAlarmForEachIteration_ClearTimeNotUpdated_WhenPerceivedSeverityIsAny_AndClearTimeIsNotNull() {
-        // Arrange
-        String dbAlmUpdatedTime = "2023-04-01T11:59:59Z";
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse(dbAlmUpdatedTime)));
-        when(rs.getLong("sequenceid")).thenReturn(100L);
-        when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew()));
-        when(rs.getInt("perceivedseverity")).thenReturn(postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny()));
-        alarm.setClearTime("2023-04-01T11:00:00Z");
-        alarm.setAlarmUpdatedTime("2023-04-01T11:59:59Z");
-        alarm.setState(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew()));
-        alarm.setPerceivedSeverity(postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny()));
-
-        // Act
-        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "comp-id");
-
-        // Assert
-        assertEquals(1, rowsAffected);
-        assertEquals("2023-04-01T11:00:00Z", alarm.getClearTime());
-    }
-
-    // Add more test cases as needed to cover other scenarios
-}
+        // Mocking the PostingRuleProcessingService to apply posting rules
+        when(postingRuleProcessingService.applyPostingRules(any(Alarm

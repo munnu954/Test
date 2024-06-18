@@ -1,30 +1,33 @@
-Certainly! To cover the specified `if` blocks in the `postAlarmForEachIteration` method, we need to create test cases that ensure the conditions within the `if` statements are met. This involves:
-
-1. `alarm.getState() == postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared())` or `alarm.getPerceivedSeverity() == postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny())`
-2. `alarm.getClearTime() == null` and `alarm.getAlarmUpdatedTime() != null`
-
-Below is the additional JUnit 5 test case code that covers these scenarios:
+Certainly! Below are the JUnit 5 test cases that cover the specific block within the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class:
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
 import java.time.Instant;
+import java.util.Calendar;
+import java.util.HashMap;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.rowset.SqlRowSet;
+import org.springframework.jdbc.support.SqlRowSet;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 @ExtendWith(MockitoExtension.class)
-public class AlarmRepositoryImplTest {
+class AlarmRepositoryImplTest {
+
+    @InjectMocks
+    private AlarmRepositoryImpl alarmRepository;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -38,71 +41,143 @@ public class AlarmRepositoryImplTest {
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
-
     private Alarm alarm;
-    private SqlRowSet rs;
+    private String compId = "compId123";
 
     @BeforeEach
-    public void setUp() {
+    void setUp() {
         alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
-        alarm.setAlarmUpdatedTime("2023-09-25T10:15:30.00Z");
-
-        rs = mock(SqlRowSet.class);
+        alarm.setAlarmIdentity("testAlarmId");
+        alarm.setAlarmUpdatedTime("2023-10-10T10:10:10Z");
+        alarm.setState(1);
+        alarm.setPerceivedSeverity(1);
     }
 
-    // Existing test cases...
-
     @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_IfCondition_AlarmStateCleared() throws Exception {
-        // Mocking the result set to simulate the database output
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2023-09-25T10:00:00.00Z"))); // earlier time
-        when(rs.getLong("sequenceid")).thenReturn(100L);
-        when(rs.getLong("usn")).thenReturn(1L);
-        when(rs.getInt("state")).thenReturn(5); // Alarm state cleared
-
-        // Mocking the jdbcTemplate to return the result set
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-
-        // Mocking the utils to compare times
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);  // Simulate curAlmUpdatedTime > dbAlmUpdatedTime
-
-        // Mocking the PostingRuleProcessingService to apply posting rules
-        when(postingRuleProcessingService.applyPostingRules(any(Alarm.class))).thenReturn(alarm);
-
-        // Setting up the postgresConf mock
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<String, Integer>() {{
-            put("Cleared", 5);
+    void testPostAlarmForEachIteration_ClearedStateAndNoClearTime() throws Exception {
+        // Mocking the PostGreDataBaseConfig values
+        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>() {{
+            put(postgresConf.getAlarmStateCleared(), 1);
+        }});
+        when(postgresConf.getPerceivedSeverityMap()).thenReturn(new HashMap<>() {{
+            put(postgresConf.getPerceivedSeverityAny(), 1);
         }});
 
-        // Calling the method under test
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        // Mocking the result set
+        SqlRowSet rs = mock(SqlRowSet.class);
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.now()));
+        when(rs.getLong("sequenceid")).thenReturn(1L);
+        when(rs.getInt("state")).thenReturn(1);
+        when(rs.getString("externalalarmid")).thenReturn("extAlarmId");
+        when(rs.getString("sourcesystemid")).thenReturn("srcSystemId");
+        when(rs.getInt("alarmtype")).thenReturn(1);
+        when(rs.getInt("perceivedseverity")).thenReturn(1);
+        when(rs.getTimestamp("cleartime")).thenReturn(Timestamp.from(Instant.now()));
+        when(rs.getString("alarmdetails")).thenReturn("{\"detail\": \"value\"}");
+        when(rs.getObject("tag")).thenReturn(new String[]{"tag1", "tag2"});
+        when(rs.getString("componentid")).thenReturn("compId");
+        when(rs.getString("alarmedobject")).thenReturn("alarmedObj");
+        when(rs.getString("reportingobject")).thenReturn("reportingObj");
+        when(rs.getString("equipmentobject")).thenReturn("equipObj");
+        when(rs.getString("tid")).thenReturn("tid123");
+        when(rs.getString("aid")).thenReturn("aid123");
+        when(rs.getString("rawmessage")).thenReturn("rawMsg");
+        when(rs.getInt("stage")).thenReturn(1);
+        when(rs.getString("exttopologydetails")).thenReturn("{\"extTopo\": \"details\"}");
+        when(rs.getString("topologydetails")).thenReturn("{\"topo\": \"details\"}");
 
-        // Verifying the interactions and asserting the result
-        verify(postingRuleProcessingService, times(1)).applyPostingRules(any(Alarm.class));
-        verify(jdbcTemplate, times(1)).update(anyString(), any(Object[].class));
-        assertNotEquals(-1, result);
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
+
+        int result = alarmRepository.postAlarmForEachIteration(alarm, compId);
+
+        assertEquals(0, result);
+        assertNotNull(alarm.getClearTime());
+        assertEquals(alarm.getAlarmUpdatedTime(), alarm.getClearTime());
     }
 
     @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_IfCondition_PerceivedSeverityAny() throws Exception {
-        // Mocking the result set to simulate the database output
+    void testPostAlarmForEachIteration_PerceivedSeverityAnyAndNoClearTime() throws Exception {
+        // Mocking the PostGreDataBaseConfig values
+        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>() {{
+            put(postgresConf.getAlarmStateCleared(), 1);
+        }});
+        when(postgresConf.getPerceivedSeverityMap()).thenReturn(new HashMap<>() {{
+            put(postgresConf.getPerceivedSeverityAny(), 1);
+        }});
+
+        // Mocking the result set
+        SqlRowSet rs = mock(SqlRowSet.class);
         when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2023-09-25T10:00:00.00Z"))); // earlier time
-        when(rs.getLong("sequenceid")).thenReturn(100L);
-        when(rs.getLong("usn")).thenReturn(1L);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.now()));
+        when(rs.getLong("sequenceid")).thenReturn(1L);
         when(rs.getInt("state")).thenReturn(1);
+        when(rs.getString("externalalarmid")).thenReturn("extAlarmId");
+        when(rs.getString("sourcesystemid")).thenReturn("srcSystemId");
+        when(rs.getInt("alarmtype")).thenReturn(1);
+        when(rs.getInt("perceivedseverity")).thenReturn(1);
+        when(rs.getTimestamp("cleartime")).thenReturn(Timestamp.from(Instant.now()));
+        when(rs.getString("alarmdetails")).thenReturn("{\"detail\": \"value\"}");
+        when(rs.getObject("tag")).thenReturn(new String[]{"tag1", "tag2"});
+        when(rs.getString("componentid")).thenReturn("compId");
+        when(rs.getString("alarmedobject")).thenReturn("alarmedObj");
+        when(rs.getString("reportingobject")).thenReturn("reportingObj");
+        when(rs.getString("equipmentobject")).thenReturn("equipObj");
+        when(rs.getString("tid")).thenReturn("tid123");
+        when(rs.getString("aid")).thenReturn("aid123");
+        when(rs.getString("rawmessage")).thenReturn("rawMsg");
+        when(rs.getInt("stage")).thenReturn(1);
+        when(rs.getString("exttopologydetails")).thenReturn("{\"extTopo\": \"details\"}");
+        when(rs.getString("topologydetails")).thenReturn("{\"topo\": \"details\"}");
 
-        // Mocking the jdbcTemplate to return the result set
         when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
 
-        // Mocking the utils to compare times
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);  // Simulate curAlmUpdatedTime > dbAlmUpdatedTime
+        alarm.setPerceivedSeverity(postgresConf.getPerceivedSeverityMap().get(postgresConf.getPerceivedSeverityAny()));
 
-        // Mocking the PostingRuleProcessingService to apply posting rules
-        when(postingRuleProcessingService.applyPostingRules(any(Alarm
+        int result = alarmRepository.postAlarmForEachIteration(alarm, compId);
+
+        assertEquals(0, result);
+        assertNotNull(alarm.getClearTime());
+        assertEquals(alarm.getAlarmUpdatedTime(), alarm.getClearTime());
+    }
+
+    @Test
+    void testPostAlarmForEachIteration_ClearedStateAndClearTimeNotNull() throws Exception {
+        // Mocking the PostGreDataBaseConfig values
+        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>() {{
+            put(postgresConf.getAlarmStateCleared(), 1);
+        }});
+        when(postgresConf.getPerceivedSeverityMap()).thenReturn(new HashMap<>() {{
+            put(postgresConf.getPerceivedSeverityAny(), 1);
+        }});
+
+        // Mocking the result set
+        SqlRowSet rs = mock(SqlRowSet.class);
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.now()));
+        when(rs.getLong("sequenceid")).thenReturn(1L);
+        when(rs.getInt("state")).thenReturn(1);
+        when(rs.getString("externalalarmid")).thenReturn("extAlarmId");
+        when(rs.getString("sourcesystemid")).thenReturn("srcSystemId");
+        when(rs.getInt("alarmtype")).thenReturn(1);
+        when(rs.getInt("perceivedseverity")).thenReturn(1);
+        when(rs.getTimestamp("cleartime")).thenReturn(Timestamp.from(Instant.now()));
+        when(rs.getString("alarmdetails")).thenReturn("{\"detail\": \"value\"}");
+        when(rs.getObject("tag")).thenReturn(new String[]{"tag1", "tag2"});
+        when(rs.getString("componentid")).thenReturn("compId");
+        when(rs.getString("alarmedobject")).thenReturn("alarmedObj");
+        when(rs.getString("reportingobject")).thenReturn("reportingObj");
+        when(rs.getString("equipmentobject")).thenReturn("equipObj");
+        when(rs.getString("tid")).thenReturn("tid123");
+        when(rs.getString("aid")).thenReturn("aid123");
+        when(rs.getString("rawmessage")).thenReturn("rawMsg");
+        when(rs.getInt("stage")).thenReturn(1);
+        when(rs.getString("exttopologydetails")).thenReturn("{\"extTopo\": \"details\"}");
+        when(rs.getString("topologydetails")).thenReturn("{\"topo\": \"details\"}");
+
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
+
+        alarm.setClearTime("2023-10-10T10:20

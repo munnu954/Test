@@ -1,7 +1,17 @@
-Certainly! Below are JUnit 5 test cases for the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class. These test cases are designed to achieve 100% code coverage for the specific blocks of code you mentioned.
+Certainly! Let's create specific JUnit 5 test cases to cover the `if` block you mentioned within the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class.
+
+Here is the relevant test code:
 
 ```java
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
+
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,19 +21,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.sql.Timestamp;
-import java.text.SimpleDateFormat;
-import java.time.Instant;
-import java.util.*;
 
 @ExtendWith(MockitoExtension.class)
 public class AlarmRepositoryImplTest {
-
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -37,106 +37,91 @@ public class AlarmRepositoryImplTest {
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
+    @InjectMocks
+    private AlarmRepositoryImpl alarmRepository;
+
     private Alarm alarm;
-    private SqlRowSet sqlRowSet;
+    private Map<String, Integer> alarmStateMap;
 
     @BeforeEach
     public void setUp() {
         alarm = new Alarm();
-        alarm.setAlarmIdentity("testIdentity");
-        sqlRowSet = mock(SqlRowSet.class);
+        alarm.setAlarmIdentity("identity");
+        alarm.setState(2); // Initial state is not cleared
 
-        when(postgresConf.getAlarmStateMap()).thenReturn(getAlarmStateMap());
-        when(postgresConf.getPerceivedSeverityMap()).thenReturn(getPerceivedSeverityMap());
-    }
+        // Setting up mock maps
+        alarmStateMap = new HashMap<>();
 
-    private Map<String, Integer> getAlarmStateMap() {
-        Map<String, Integer> map = new HashMap<>();
-        map.put("Cleared", 1);
-        map.put("New", 2);
-        return map;
-    }
+        alarmStateMap.put("cleared", 1);
+        alarmStateMap.put("new", 3);
 
-    private Map<String, Integer> getPerceivedSeverityMap() {
-        Map<String, Integer> map = new HashMap<>();
-        map.put("Any", 1);
-        map.put("Indeterminate", -1);
-        return map;
+        when(postgresConf.getAlarmStateMap()).thenReturn(alarmStateMap);
+        when(postgresConf.getAlarmStateCleared()).thenReturn("cleared");
+        when(postgresConf.getAlarmStateNew()).thenReturn("new");
     }
 
     @Test
-    public void testPostAlarmForEachIteration_StateCleared_PerceivedSeverityAny() throws Exception {
-        alarm.setState(1); // Cleared state
-        alarm.setPerceivedSeverity(1); // Perceived severity Any
-        alarm.setAlarmUpdatedTime("2023-01-01T00:00:00Z");
+    public void testCountResetFlagSetAndStateUpdatedWhenStateTransitionsToCleared() throws Exception {
+        // Set the state to "cleared" for the test
+        int clearedState = alarmStateMap.get("cleared");
+        alarm.setState(2); // Some other state initially
 
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(sqlRowSet);
-        when(sqlRowSet.next()).thenReturn(false);
+        SqlRowSet rs = mock(SqlRowSet.class);
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+        when(rs.next()).thenReturn(true);
+        when(rs.getInt(anyString())).thenReturn(clearedState);
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        assertEquals(0, result);
-        assertEquals("2023-01-01T00:00:00Z", alarm.getClearTime());
+        assertEquals(1, alarm.getCountResetFlag());
+        assertEquals(alarmStateMap.get("new"), alarm.getState());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_StateCleared_ClearTimeNull() throws Exception {
-        alarm.setState(1); // Cleared state
-        alarm.setPerceivedSeverity(1); // Perceived severity Any
-        alarm.setAlarmUpdatedTime("2023-01-01T00:00:00Z");
-        alarm.setClearTime(null);
+    public void testCountResetFlagNotSetWhenStateIsAlreadyCleared() throws Exception {
+        // Set the state to "cleared"
+        int clearedState = alarmStateMap.get("cleared");
+        alarm.setState(clearedState); // Already cleared
 
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(sqlRowSet);
-        when(sqlRowSet.next()).thenReturn(false);
+        SqlRowSet rs = mock(SqlRowSet.class);
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+        when(rs.next()).thenReturn(true);
+        when(rs.getInt(anyString())).thenReturn(clearedState);
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        assertEquals(0, result);
-        assertEquals("2023-01-01T00:00:00Z", alarm.getClearTime());
+        assertNotEquals(1, alarm.getCountResetFlag()); // Count reset flag should not be set
+        assertEquals(clearedState, alarm.getState()); // State should remain cleared
     }
 
     @Test
-    public void testPostAlarmForEachIteration_StateCleared_ClearTimeNotNull() throws Exception {
-        alarm.setState(1); // Cleared state
-        alarm.setPerceivedSeverity(1); // Perceived severity Any
-        alarm.setAlarmUpdatedTime("2023-01-01T00:00:00Z");
-        alarm.setClearTime("2023-01-01T01:00:00Z");
+    public void testCountResetFlagNotSetWhenStateDoesNotTransitionToCleared() throws Exception {
+        // Set the state to something other than "cleared"
+        int newState = alarmStateMap.get("new");
+        alarm.setState(2); // Some other state initially
 
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(sqlRowSet);
-        when(sqlRowSet.next()).thenReturn(false);
+        SqlRowSet rs = mock(SqlRowSet.class);
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+        when(rs.next()).thenReturn(true);
+        when(rs.getInt(anyString())).thenReturn(newState);
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        assertEquals(0, result);
-        assertEquals("2023-01-01T01:00:00Z", alarm.getClearTime());
-    }
-
-    @Test
-    public void testPostAlarmForEachIteration_StateNotCleared_PerceivedSeverityAny() throws Exception {
-        alarm.setState(2); // Not Cleared state
-        alarm.setPerceivedSeverity(1); // Perceived severity Any
-        alarm.setAlarmUpdatedTime("2023-01-01T00:00:00Z");
-
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(sqlRowSet);
-        when(sqlRowSet.next()).thenReturn(false);
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals(0, result);
-        assertNull(alarm.getClearTime());
+        assertNotEquals(1, alarm.getCountResetFlag()); // Count reset flag should not be set
+        assertNotEquals(newState, alarm.getState()); // State should not change to "new"
     }
 }
 ```
 
-### Explanation:
-1. **Test Setup**: 
-   - The `setUp` method initializes the `Alarm` object and mocks dependencies like `JdbcTemplate` and `SqlRowSet`.
-   - The `getAlarmStateMap` and `getPerceivedSeverityMap` methods provide mock data for the `PostGreDataBaseConfig` class.
+### Explanation of Test Cases:
 
-2. **Test Cases**:
-    - **testPostAlarmForEachIteration_StateCleared_PerceivedSeverityAny**: Tests the scenario where the alarm state is "Cleared" and perceived severity is "Any". The `clearTime` should be set to `alarmUpdatedTime`.
-    - **testPostAlarmForEachIteration_StateCleared_ClearTimeNull**: Similar to the previous test but explicitly sets `clearTime` to `null` before the method call.
-    - **testPostAlarmForEachIteration_StateCleared_ClearTimeNotNull**: Tests the scenario where `clearTime` is already set, ensuring it does not change.
-    - **testPostAlarmForEachIteration_StateNotCleared_PerceivedSeverityAny**: Tests the scenario where the alarm state is not "Cleared" but perceived severity is "Any". The `clearTime` should not be set.
+1. **`testCountResetFlagSetAndStateUpdatedWhenStateTransitionsToCleared`**:
+   - Ensures that `countResetFlag` is set to 1 and `state` is updated to "new" when the state transitions to "cleared".
 
-These test cases ensure that the specific blocks of code you mentioned are covered and behave as expected under different conditions.
+2. **`testCountResetFlagNotSetWhenStateIsAlreadyCleared`**:
+   - Ensures that `countResetFlag` is not set and the state remains "cleared" when the state is already "cleared".
+
+3. **`testCountResetFlagNotSetWhenStateDoesNotTransitionToCleared`**:
+   - Ensures that `countResetFlag` is not set and the state does not change to "new" when the state does not transition to "cleared".
+
+These test cases are designed to cover the specific `if` condition by testing various scenarios where the state transitions to "cleared" or not, ensuring that the logic behaves as expected.

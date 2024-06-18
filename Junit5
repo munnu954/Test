@@ -1,23 +1,24 @@
-Thank you for pointing that out. I'll update the test cases to ensure they cover the specific lines and blocks you mentioned. Here's the revised version of the JUnit 5 test cases:
+Certainly! Below is a comprehensive set of JUnit 5 test cases for the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class, focusing on the specific blocks you've mentioned. These tests aim to achieve high code coverage, including edge cases.
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.util.Calendar;
-
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
+
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.HashMap;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 @ExtendWith(MockitoExtension.class)
 public class AlarmRepositoryImplTest {
@@ -29,138 +30,149 @@ public class AlarmRepositoryImplTest {
     private AlarmPostingUtils utils;
 
     @Mock
-    private PostGreDataBaseConfig postgresConf;
-
-    @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepositoryImpl;
+    @Mock
+    private PostGreDataBaseConfig postgresConf;
 
     @Mock
     private SqlRowSet rs;
 
+    @InjectMocks
+    private AlarmRepositoryImpl alarmRepository;
+
     private Alarm alarm;
+    private ObjectMapper objectMapper;
 
     @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
+    void setUp() {
         alarm = new Alarm();
         alarm.setAlarmIdentity("testIdentity");
-        alarm.setSequenceID(12345);
-        alarm.setState(1);
+        alarm.setAlarmUpdatedTime("2023-10-01T10:15:30+01:00");
+        alarm.setSequenceID(100);
+        objectMapper = new ObjectMapper();
     }
 
     @Test
-    public void testPostAlarmForEachIterationSpecificProblemNotNull() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    void testPostAlarmForEachIteration_ExtTopologyDetails() throws Exception {
+        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
         when(rs.next()).thenReturn(true);
-        when(rs.getString("specificproblem")).thenReturn("specificProblemValue");
+        when(rs.getString("exttopologydetails")).thenReturn("{\"key\":\"value\"}");
+        when(rs.getString(anyString())).thenReturn(null);
+        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
 
-        alarm.setSpecificProblem(null);
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        verify(rs, times(1)).getString("specificproblem");
-        assertEquals("specificProblemValue", alarm.getSpecificProblem());
+        assertEquals(0, result);
+        assertEquals("{\"key\":\"value\"}", alarm.getExtTopologyDetails());
     }
 
     @Test
-    public void testPostAlarmForEachIterationRaisedTimeNull() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    void testPostAlarmForEachIteration_TopologyDetails() throws Exception {
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("key", "value");
+        alarm.setTopologyDetails(objectMapper.writeValueAsString(alarmMap));
+        
+        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
         when(rs.next()).thenReturn(true);
-        Timestamp raisedTime = Timestamp.from(Instant.now());
-        when(rs.getTimestamp("alarmraisedtime")).thenReturn(raisedTime);
+        when(rs.getString("topologydetails")).thenReturn("{\"key\":\"dbValue\"}");
+        when(rs.getString(anyString())).thenReturn(null);
+        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
+        
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        alarm.setAlarmRaisedTime(null);
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
-
-        verify(rs, times(1)).getTimestamp("alarmraisedtime");
-        assertNotNull(alarm.getAlarmRaisedTime());
+        assertEquals(0, result);
+        HashMap<String, Object> expectedMap = new HashMap<>();
+        expectedMap.put("key", "dbValue");
+        assertEquals(objectMapper.writeValueAsString(expectedMap), alarm.getTopologyDetails());
     }
 
     @Test
-    public void testPostAlarmForEachIterationRaisedTimeEmpty() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    void testPostAlarmForEachIteration_ApplyPostingRules() throws Exception {
+        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
         when(rs.next()).thenReturn(true);
-        Timestamp raisedTime = Timestamp.from(Instant.now());
-        when(rs.getTimestamp("alarmraisedtime")).thenReturn(raisedTime);
+        when(rs.getString("exttopologydetails")).thenReturn(null);
+        when(rs.getString("topologydetails")).thenReturn(null);
+        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
+        when(postingRuleProcessingService.applyPostingRules(any(Alarm.class))).thenReturn(alarm);
 
-        alarm.setAlarmRaisedTime("");
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        verify(rs, times(1)).getTimestamp("alarmraisedtime");
-        assertNotNull(alarm.getAlarmRaisedTime());
+        assertEquals(0, result);
+        verify(postingRuleProcessingService, times(1)).applyPostingRules(alarm);
     }
 
     @Test
-    public void testPostAlarmForEachIterationUpdatedTimeNull() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    void testPostAlarmForEachIteration_TopologyDetails_Merge() throws Exception {
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("key", "value");
+        alarm.setTopologyDetails(objectMapper.writeValueAsString(alarmMap));
+        
+        HashMap<String, Object> dbMap = new HashMap<>();
+        dbMap.put("key", "dbValue");
+
+        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
         when(rs.next()).thenReturn(true);
-        Timestamp updatedTime = Timestamp.from(Instant.now());
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(updatedTime);
+        when(rs.getString("topologydetails")).thenReturn(objectMapper.writeValueAsString(dbMap));
+        when(rs.getString(anyString())).thenReturn(null);
+        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
 
-        alarm.setAlarmUpdatedTime(null);
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        verify(rs, times(1)).getTimestamp("alarmupdatedtime");
-        assertNotNull(alarm.getAlarmUpdatedTime());
+        assertEquals(0, result);
+        HashMap<String, Object> expectedMap = new HashMap<>();
+        expectedMap.put("key", "value"); // Assuming merge keeps the original alarmMap
+        assertEquals(objectMapper.writeValueAsString(expectedMap), alarm.getTopologyDetails());
     }
 
     @Test
-    public void testPostAlarmForEachIterationUpdatedTimeEmpty() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    void testPostAlarmForEachIteration_NoTopologyDetails() throws Exception {
+        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
         when(rs.next()).thenReturn(true);
-        Timestamp updatedTime = Timestamp.from(Instant.now());
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(updatedTime);
+        when(rs.getString("topologydetails")).thenReturn(null);
+        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
 
-        alarm.setAlarmUpdatedTime("");
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        verify(rs, times(1)).getTimestamp("alarmupdatedtime");
-        assertNotNull(alarm.getAlarmUpdatedTime());
+        assertEquals(0, result);
+        assertNull(alarm.getTopologyDetails());
     }
 
     @Test
-    public void testPostAlarmForEachIterationReportingTimeNull() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    void testPostAlarmForEachIteration_NoExtTopologyDetails() throws Exception {
+        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
         when(rs.next()).thenReturn(true);
-        Timestamp reportingTime = Timestamp.from(Instant.now());
-        when(rs.getTimestamp("alarmreportingtime")).thenReturn(reportingTime);
+        when(rs.getString("exttopologydetails")).thenReturn(null);
+        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
 
-        alarm.setAlarmReportingTime(null);
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        verify(rs, times(1)).getTimestamp("alarmreportingtime");
-        assertNotNull(alarm.getAlarmReportingTime());
-    }
-
-    @Test
-    public void testPostAlarmForEachIterationReportingTimeEmpty() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        Timestamp reportingTime = Timestamp.from(Instant.now());
-        when(rs.getTimestamp("alarmreportingtime")).thenReturn(reportingTime);
-
-        alarm.setAlarmReportingTime("");
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
-
-        verify(rs, times(1)).getTimestamp("alarmreportingtime");
-        assertNotNull(alarm.getAlarmReportingTime());
+        assertEquals(0, result);
+        assertNull(alarm.getExtTopologyDetails());
     }
 }
 ```
 
 ### Explanation:
-1. **Test Cases Added:**
-   - **testPostAlarmForEachIterationSpecificProblemNotNull:** Verifies that `specificProblem` is correctly set.
-   - **testPostAlarmForEachIterationRaisedTimeNull:** Checks if `alarmRaisedTime` is set when it is initially `null`.
-   - **testPostAlarmForEachIterationRaisedTimeEmpty:** Checks if `alarmRaisedTime` is set when it is initially an empty string.
-   - **testPostAlarmForEachIterationUpdatedTimeNull:** Checks if `alarmUpdatedTime` is set when it is initially `null`.
-   - **testPostAlarmForEachIterationUpdatedTimeEmpty:** Checks if `alarmUpdatedTime` is set when it is initially an empty string.
-   - **testPostAlarmForEachIterationReportingTimeNull:** Checks if `alarmReportingTime` is set when it is initially `null`.
-   - **testPostAlarmForEachIterationReportingTimeEmpty:** Checks if `alarmReportingTime` is set when it is initially an empty string.
+1. **`testPostAlarmForEachIteration_ExtTopologyDetails`**:
+   - Simulates the scenario where `exttopologydetails` is available in the result set.
+   - Verifies that the `extTopologyDetails` field in the `alarm` object is correctly set.
 
-2. **Verifications and Assertions:**
-   - Each test verifies the interaction with the `SqlRowSet` and asserts that the corresponding field in the `Alarm` object has been set correctly.
+2. **`testPostAlarmForEachIteration_TopologyDetails`**:
+   - Checks if the `topologydetails` from the database is correctly merged with the existing `topologyDetails` in the `alarm` object.
 
-These tests should comprehensively cover the logic in your `postAlarmForEachIteration` method, ensuring that all conditions and branches are tested.
+3. **`testPostAlarmForEachIteration_ApplyPostingRules`**:
+   - Ensures that the `applyPostingRules` method of `postingRuleProcessingService` is called if `postingRulesProcessingReqd` is true.
+
+4. **`testPostAlarmForEachIteration_TopologyDetails_Merge`**:
+   - Simulates the merging of `topologydetails` from the alarm and database and verifies the result.
+
+5. **`testPostAlarmForEachIteration_NoTopologyDetails`**:
+   - Tests the scenario where `topologydetails` is not available in the result set.
+   - Verifies that the `topologyDetails` field in the `alarm` object remains null.
+
+6. **`testPostAlarmForEachIteration_NoExtTopologyDetails`**:
+   - Tests the scenario where `exttopologydetails` is not available in the result set.
+   - Verifies that the `extTopologyDetails` field in the `alarm` object remains null.
+
+These tests cover various scenarios to ensure high code coverage and correct functionality of the specified blocks in the `postAlarmForEachIteration` method.

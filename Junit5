@@ -1,9 +1,8 @@
-Absolutely! Below are additional JUnit 5 test cases designed to cover the specified blocks in the `postAlarmForEachIteration` method. These tests ensure that the logic for handling `exttopologydetails` and `topologydetails` is thoroughly tested, including the application of posting rules.
+Certainly! Below are additional JUnit 5 test cases designed to cover the specified blocks in the `postAlarmForEachIteration` method. These tests ensure that the various fields of the `Alarm` object are correctly set based on the result set values.
 
 ```java
 import static org.mockito.Mockito.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,7 +12,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
 
-import java.util.HashMap;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -36,7 +38,6 @@ public class AlarmRepositoryImplTest {
     private AlarmRepositoryImpl alarmRepository;
 
     private Alarm alarm;
-    private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
@@ -44,126 +45,210 @@ public class AlarmRepositoryImplTest {
         alarm.setAlarmIdentity("testIdentity");
         alarm.setAlarmUpdatedTime("2023-10-01T10:15:30+01:00");
         alarm.setSequenceID(100);
-        objectMapper = new ObjectMapper();
     }
 
     @Test
-    void testPostAlarmForEachIteration_ExtTopologyDetailsNotNull() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getString("exttopologydetails")).thenReturn("{\"key\":\"extValue\"}");
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
+    void testAlarmReportingTimeNotNull() throws Exception {
+        when(rs.getTimestamp("alarmreportingtime")).thenReturn(Timestamp.from(Instant.now()));
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepository.setAlarmReportingTime(alarm, rs);
 
-        assertEquals(0, result);
-        assertEquals("{\"key\":\"extValue\"}", alarm.getExtTopologyDetails());
+        assertNotNull(alarm.getAlarmReportingTime());
     }
 
     @Test
-    void testPostAlarmForEachIteration_TopologyDetailsMerge() throws Exception {
-        alarm.setTopologyDetails("{\"key\":\"alarmValue\"}");
-        
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getString("topologydetails")).thenReturn("{\"key\":\"dbValue\"}");
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
+    void testAlarmReportingTimeNull() throws Exception {
+        when(rs.getTimestamp("alarmreportingtime")).thenReturn(null);
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepository.setAlarmReportingTime(alarm, rs);
 
-        assertEquals(0, result);
-        
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        alarmMap.put("key", "alarmValue");
-
-        HashMap<String, Object> dbMap = new HashMap<>();
-        dbMap.put("key", "dbValue");
-
-        HashMap<String, Object> expectedMap = new HashMap<>();
-        expectedMap.put("key", "dbValue"); // Assuming the merge keeps the dbValue
-
-        assertEquals(objectMapper.writeValueAsString(expectedMap), alarm.getTopologyDetails());
+        assertNull(alarm.getAlarmReportingTime());
     }
 
     @Test
-    void testPostAlarmForEachIteration_TopologyDetailsNotNull() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getString("topologydetails")).thenReturn("{\"key\":\"dbValue\"}");
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
+    void testMergeArrayMethod() throws Exception {
+        Object tagFromDb = "tag1,tag2";
+        Set<String> initialTags = new HashSet<>();
+        initialTags.add("tag3");
+        alarm.setTag(initialTags.toArray(new String[0]));
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        when(rs.getObject("tag")).thenReturn(tagFromDb);
 
-        assertEquals(0, result);
-        assertEquals("{\"key\":\"dbValue\"}", alarm.getTopologyDetails());
+        alarmRepository.mergeTags(alarm, rs);
+
+        assertEquals(3, alarm.getTag().length);
     }
 
     @Test
-    void testPostAlarmForEachIteration_ApplyPostingRules() throws Exception {
-        alarm.setPostingRulesProcessingReqd(true);
+    void testSequenceIDNotNull() throws Exception {
+        when(rs.getLong("sequenceid")).thenReturn(123L);
 
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getString("exttopologydetails")).thenReturn(null);
-        when(rs.getString("topologydetails")).thenReturn(null);
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
-        when(postingRuleProcessingService.applyPostingRules(any(Alarm.class))).thenReturn(alarm);
+        alarmRepository.setSequenceID(alarm, rs);
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals(0, result);
-        verify(postingRuleProcessingService, times(1)).applyPostingRules(alarm);
+        assertEquals(123L, alarm.getSequenceID());
     }
 
     @Test
-    void testPostAlarmForEachIteration_NoExtTopologyDetails() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getString("exttopologydetails")).thenReturn(null);
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
+    void testSequenceIDNull() throws Exception {
+        alarm.setSequenceID(0);
+        when(rs.getLong("sequenceid")).thenReturn(0L);
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepository.setSequenceID(alarm, rs);
 
-        assertEquals(0, result);
-        assertNull(alarm.getExtTopologyDetails());
+        assertEquals(0L, alarm.getSequenceID());
     }
 
     @Test
-    void testPostAlarmForEachIteration_NoTopologyDetails() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getString("topologydetails")).thenReturn(null);
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
+    void testResolved() throws Exception {
+        when(rs.getBoolean("resolved")).thenReturn(true);
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepository.setResolved(alarm, rs);
 
-        assertEquals(0, result);
-        assertNull(alarm.getTopologyDetails());
+        assertTrue(alarm.isResolved());
+    }
+
+    @Test
+    void testComponentIdNotNull() throws Exception {
+        when(rs.getString("componentid")).thenReturn("compId");
+
+        alarmRepository.setComponentId(alarm, rs);
+
+        assertEquals("compId", alarm.getComponentId());
+    }
+
+    @Test
+    void testAlarmedObjectNotNull() throws Exception {
+        when(rs.getString("alarmedobject")).thenReturn("alarmedObject");
+
+        alarmRepository.setAlarmedObject(alarm, rs);
+
+        assertEquals("alarmedObject", alarm.getAlarmedObject());
+    }
+
+    @Test
+    void testReportingObjectNotNull() throws Exception {
+        when(rs.getString("reportingobject")).thenReturn("reportingObject");
+
+        alarmRepository.setReportingObject(alarm, rs);
+
+        assertEquals("reportingObject", alarm.getReportingObject());
+    }
+
+    @Test
+    void testEquipmentObjectNotNull() throws Exception {
+        when(rs.getString("equipmentobject")).thenReturn("equipmentObject");
+
+        alarmRepository.setEquipmentObject(alarm, rs);
+
+        assertEquals("equipmentObject", alarm.getEquipmentObject());
+    }
+
+    @Test
+    void testTidNotNull() throws Exception {
+        when(rs.getString("tid")).thenReturn("tid");
+
+        alarmRepository.setTid(alarm, rs);
+
+        assertEquals("tid", alarm.getTid());
+    }
+
+    @Test
+    void testAidNotNull() throws Exception {
+        when(rs.getString("aid")).thenReturn("aid");
+
+        alarmRepository.setAid(alarm, rs);
+
+        assertEquals("aid", alarm.getAid());
+    }
+
+    @Test
+    void testRawMessageNotNull() throws Exception {
+        when(rs.getString("rawmessage")).thenReturn("rawMessage");
+
+        alarmRepository.setRawMessage(alarm, rs);
+
+        assertEquals("rawMessage", alarm.getRawMessage());
+    }
+
+    @Test
+    void testStageNotNull() throws Exception {
+        when(rs.getInt("stage")).thenReturn(2);
+
+        alarmRepository.setStage(alarm, rs);
+
+        assertEquals(2, alarm.getStage());
+    }
+
+    @Test
+    void testStageIsZero() throws Exception {
+        when(rs.getInt("stage")).thenReturn(0);
+
+        alarmRepository.setStage(alarm, rs);
+
+        assertEquals(0, alarm.getStage());
     }
 }
 ```
 
 ### Explanation:
-1. **`testPostAlarmForEachIteration_ExtTopologyDetailsNotNull`**:
-   - Simulates the scenario where `exttopologydetails` is available in the result set.
-   - Verifies that the `extTopologyDetails` field in the `alarm` object is correctly set.
+1. **`testAlarmReportingTimeNotNull`**:
+   - Tests the scenario where `alarmreportingtime` is available in the result set.
+   - Verifies that `alarmReportingTime` is set correctly in the `alarm` object.
 
-2. **`testPostAlarmForEachIteration_TopologyDetailsMerge`**:
-   - Tests the merging of `topologydetails` from the alarm and database and verifies the result.
+2. **`testAlarmReportingTimeNull`**:
+   - Tests the scenario where `alarmreportingtime` is not available in the result set.
+   - Verifies that `alarmReportingTime` remains null.
 
-3. **`testPostAlarmForEachIteration_TopologyDetailsNotNull`**:
-   - Simulates the scenario where only the `topologydetails` from the database is present.
-   - Verifies that the `topologyDetails` field in the `alarm` object is correctly set.
+3. **`testMergeArrayMethod`**:
+   - Tests the merging of tags from the database and the alarm.
+   - Verifies the resulting tags set size.
 
-4. **`testPostAlarmForEachIteration_ApplyPostingRules`**:
-   - Ensures that the `applyPostingRules` method of `postingRuleProcessingService` is called if `postingRulesProcessingReqd` is true.
+4. **`testSequenceIDNotNull`**:
+   - Tests the scenario where `sequenceid` is available in the result set.
+   - Verifies that `sequenceID` is set correctly in the `alarm` object.
 
-5. **`testPostAlarmForEachIteration_NoExtTopologyDetails`**:
-   - Tests the scenario where `exttopologydetails` is not available in the result set.
-   - Verifies that the `extTopologyDetails` field in the `alarm` object remains null.
+5. **`testSequenceIDNull`**:
+   - Tests the scenario where `sequenceid` is not available or zero in the result set.
+   - Verifies that `sequenceID` remains zero.
 
-6. **`testPostAlarmForEachIteration_NoTopologyDetails`**:
-   - Tests the scenario where `topologydetails` is not available in the result set.
-   - Verifies that the `topologyDetails` field in the `alarm` object remains null.
+6. **`testResolved`**:
+   - Tests the setting of the `resolved` field.
+   - Verifies that `resolved` is set correctly in the `alarm` object.
 
-These additional test cases ensure that the specific blocks you've highlighted are thoroughly covered.
+7. **`testComponentIdNotNull`**:
+   - Tests the scenario where `componentid` is available in the result set.
+   - Verifies that `componentId` is set correctly in the `alarm` object.
+
+8. **`testAlarmedObjectNotNull`**:
+   - Tests the scenario where `alarmedobject` is available in the result set.
+   - Verifies that `alarmedObject` is set correctly in the `alarm` object.
+
+9. **`testReportingObjectNotNull`**:
+   - Tests the scenario where `reportingobject` is available in the result set.
+   - Verifies that `reportingObject` is set correctly in the `alarm` object.
+
+10. **`testEquipmentObjectNotNull`**:
+    - Tests the scenario where `equipmentobject` is available in the result set.
+    - Verifies that `equipmentObject` is set correctly in the `alarm` object.
+
+11. **`testTidNotNull`**:
+    - Tests the scenario where `tid` is available in the result set.
+    - Verifies that `tid` is set correctly in the `alarm` object.
+
+12. **`testAidNotNull`**:
+    - Tests the scenario where `aid` is available in the result set.
+    - Verifies that `aid` is set correctly in the `alarm` object.
+
+13. **`testRawMessageNotNull`**:
+    - Tests the scenario where `rawmessage` is available in the result set.
+    - Verifies that `rawMessage` is set correctly in the `alarm` object.
+
+14. **`testStageNotNull`**:
+    - Tests the scenario where `stage` is available in the result set.
+    - Verifies that `stage` is set correctly in the `alarm` object.
+
+15. **`testStageIsZero`**:
+    - Tests the scenario where `stage` is zero in the result set.
+    - Verifies that `stage` remains zero.
+
+These additional test cases ensure that the specific blocks you've highlighted are thoroughly covered and that the `Alarm` object is correctly populated based on the result set values.

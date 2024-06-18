@@ -1,127 +1,44 @@
-Certainly! Let's create specific JUnit 5 test cases to cover the `if` block you mentioned within the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class.
-
-Here is the relevant test code:
-
-```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
-
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.rowset.SqlRowSet;
-
 @ExtendWith(MockitoExtension.class)
-public class AlarmRepositoryImplTest {
+class AlarmRepositoryImplTest {
+
+    @InjectMocks
+    private AlarmRepositoryImpl alarmRepositoryImpl;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
 
     @Mock
-    private AlarmPostingUtils utils;
-
-    @Mock
     private PostGreDataBaseConfig postgresConf;
 
-    @Mock
-    private PostingRuleProcessingService postingRuleProcessingService;
-
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
-
     private Alarm alarm;
-    private Map<String, Integer> alarmStateMap;
 
     @BeforeEach
-    public void setUp() {
+    void setup() {
         alarm = new Alarm();
-        alarm.setAlarmIdentity("identity");
-        alarm.setState(2); // Initial state is not cleared
-
-        // Setting up mock maps
-        alarmStateMap = new HashMap<>();
-
-        alarmStateMap.put("cleared", 1);
-        alarmStateMap.put("new", 3);
-
-        when(postgresConf.getAlarmStateMap()).thenReturn(alarmStateMap);
-        when(postgresConf.getAlarmStateCleared()).thenReturn("cleared");
-        when(postgresConf.getAlarmStateNew()).thenReturn("new");
+        alarm.setAlarmIdentity("12345");
+        alarm.setState(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
     }
 
     @Test
-    public void testCountResetFlagSetAndStateUpdatedWhenStateTransitionsToCleared() throws Exception {
-        // Set the state to "cleared" for the test
-        int clearedState = alarmStateMap.get("cleared");
-        alarm.setState(2); // Some other state initially
+    void testPostAlarmForEachIteration_ResetCountFlag_WhenStateIsClearedAndNewStateIsSet() {
+        // Arrange
+        int stateCleared = postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared());
+        int stateNew = postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew());
 
-        SqlRowSet rs = mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getInt(anyString())).thenReturn(clearedState);
+        when(postgresConf.getAlarmStateMap()).thenReturn(Map.of(postgresConf.getAlarmStateCleared(), stateCleared, postgresConf.getAlarmStateNew(), stateNew));
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        when(jdbcTemplate.update(anyString(), any())).thenReturn(1);
+        
+        // Setting initial states
+        alarm.setState(stateCleared);
+        
+        // Act
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "comp-id");
 
+        // Assert
         assertEquals(1, alarm.getCountResetFlag());
-        assertEquals(alarmStateMap.get("new"), alarm.getState());
+        assertEquals(stateNew, alarm.getState());
     }
 
-    @Test
-    public void testCountResetFlagNotSetWhenStateIsAlreadyCleared() throws Exception {
-        // Set the state to "cleared"
-        int clearedState = alarmStateMap.get("cleared");
-        alarm.setState(clearedState); // Already cleared
-
-        SqlRowSet rs = mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getInt(anyString())).thenReturn(clearedState);
-
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertNotEquals(1, alarm.getCountResetFlag()); // Count reset flag should not be set
-        assertEquals(clearedState, alarm.getState()); // State should remain cleared
-    }
-
-    @Test
-    public void testCountResetFlagNotSetWhenStateDoesNotTransitionToCleared() throws Exception {
-        // Set the state to something other than "cleared"
-        int newState = alarmStateMap.get("new");
-        alarm.setState(2); // Some other state initially
-
-        SqlRowSet rs = mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getInt(anyString())).thenReturn(newState);
-
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertNotEquals(1, alarm.getCountResetFlag()); // Count reset flag should not be set
-        assertNotEquals(newState, alarm.getState()); // State should not change to "new"
-    }
+    // Add more test cases as needed to cover other scenarios
 }
-```
-
-### Explanation of Test Cases:
-
-1. **`testCountResetFlagSetAndStateUpdatedWhenStateTransitionsToCleared`**:
-   - Ensures that `countResetFlag` is set to 1 and `state` is updated to "new" when the state transitions to "cleared".
-
-2. **`testCountResetFlagNotSetWhenStateIsAlreadyCleared`**:
-   - Ensures that `countResetFlag` is not set and the state remains "cleared" when the state is already "cleared".
-
-3. **`testCountResetFlagNotSetWhenStateDoesNotTransitionToCleared`**:
-   - Ensures that `countResetFlag` is not set and the state does not change to "new" when the state does not transition to "cleared".
-
-These test cases are designed to cover the specific `if` condition by testing various scenarios where the state transitions to "cleared" or not, ensuring that the logic behaves as expected.

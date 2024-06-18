@@ -1,110 +1,22 @@
-import org.apache.flink.api.common.restartstrategy.RestartStrategies;
-import org.apache.flink.api.common.time.Time;
-import org.apache.flink.runtime.state.hashmap.HashMapStateBackend;
-import org.apache.flink.runtime.state.storage.FileSystemCheckpointStorage;
-import org.apache.flink.streaming.api.CheckpointingMode;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.streaming.api.functions.sink.SinkFunction;
-import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.functions.source.SourceFunction;
-import org.apache.flink.streaming.connectors.kafka.KafkaSource;
-import org.apache.kafka.clients.consumer.OffsetResetStrategy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+# Kafka configuration
+spring.kafka.bootstrap-servers=your_kafka_bootstrap_servers
+spring.kafka.consumer.group-id=your_consumer_group_id
+spring.kafka.consumer.auto-offset-reset=latest
 
-import java.util.Properties;
-import java.util.concurrent.TimeUnit;
+# Flink configuration
+flink.parallelism=4
 
-public class XmlTransformerJob {
-    private static final Logger LOGGER = LoggerFactory.getLogger(XmlTransformerJob.class);
-    public static AppProperties appProp = AppProperties.getInstance();
-    String flinkJobName = "Xml to JSON Transformer Job";
-    private XmlTransformerJobUtil jobUtil;
-    private final PublishAuditMessage pubAuditMsg;
+# Checkpointing and state backend configuration
+flink.checkpoint.interval=10000 # Checkpoint every 10 seconds
+flink.checkpoint.timeout=60000  # Checkpoint timeout 60 seconds
+flink.checkpoint.min-pause=500  # Minimum pause between checkpoints
+flink.checkpoint.max-concurrent=1 # Maximum concurrent checkpoints
 
-    public XmlTransformerJob(PublishAuditMessage pubAuditMsg) {
-        this.jobUtil = new XmlTransformerJobUtil(pubAuditMsg);
-        this.pubAuditMsg = pubAuditMsg;
-    }
+# State backend and checkpoint storage
+flink.state.backend=hashmap
+flink.state.checkpoints.dir=file:///tmp/flink/checkpoints
 
-    public XmlTransformerJob(PublishAuditMessage pubAuditMsg, XmlTransformerJobUtil xmlTransformerJobUtil) {
-        this.jobUtil = xmlTransformerJobUtil;
-        this.pubAuditMsg = pubAuditMsg;
-    }
-
-    public PublishAuditMessage getPubAuditMsg() {
-        return pubAuditMsg;
-    }
-
-    public void execute() throws Exception {
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        CollectionAudit collectionAudit = new CollectionAudit();
-
-        try {
-            env.setParallelism(Integer.valueOf(appProp.getAppProperties("flink.parallelism")));
-
-            // Enable checkpointing
-            env.enableCheckpointing(10000); // Checkpoint every 10 seconds
-            env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
-            env.getCheckpointConfig().setMinPauseBetweenCheckpoints(500);
-            env.getCheckpointConfig().setCheckpointTimeout(60000);
-            env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
-
-            // Set state backend and checkpoint storage
-            env.setStateBackend(new HashMapStateBackend());
-            env.getCheckpointConfig().setCheckpointStorage(new FileSystemCheckpointStorage("file:///tmp/flink/checkpoints"));
-
-            // Set restart strategy
-            env.setRestartStrategy(RestartStrategies.fixedDelayRestart(
-                    3, // number of restart attempts
-                    Time.of(10, TimeUnit.SECONDS) // delay between attempts
-            ));
-
-            OffsetsInitializer offsetsInitializer = jobUtil.getOffsetsInitializer(appProp.getAppProperties("spring.kafka.consumer.auto-offset-reset"));
-            collectionAudit = jobUtil.setCollectionAuditProperties(collectionAudit);
-            jobUtil.validateKafka(collectionAudit);
-
-            Properties properties = new Properties();
-            properties.setProperty("bootstrap.servers", appProp.getAppProperties("spring.kafka.bootstrap-servers"));
-            properties.setProperty("group.id", appProp.getAppProperties("spring.kafka.consumer-group-id"));
-
-            KafkaSource<String> source = jobUtil.buildKafkaSource(collectionAudit, offsetsInitializer, properties);
-            DataStream<String> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Kafka Source");
-
-            DataStream<CollectionAudit> collectionAuditStream = XmlTransformerJobUtil.convertStreamToCollectionAudit(stream, collectionAudit);
-            DataStream<Tuple2<String, CollectionAudit>> xmlDataStream = XmlTransformerJobUtil.getXmlDataStream(collectionAuditStream);
-            DataStream<Tuple2<JSONObject, CollectionAudit>> jsonNodeStream = XmlTransformerJobUtil.convertXmlToJson(xmlDataStream);
-            DataStream<Tuple2<String, CollectionAudit>> finalDataStream = XmlTransformerJobUtil.encapsulateJson(jsonNodeStream);
-
-            if (finalDataStream != null) {
-                publishTransformedData(finalDataStream, null);
-            }
-
-            JobClient jobClient = env.executeAsync(flinkJobName);
-            JobID jobId = jobClient.getJobID();
-            LOGGER.info("JobID is: {}", jobId);
-        } catch (Exception e) {
-            LOGGER.info("Error while executing XmlTransformerJob!", e);
-        }
-    }
-
-    public void publishTransformedData(DataStream<Tuple2<String, CollectionAudit>> encapsulatedJsonStream, String jobId) {
-        try {
-            DataStream<String> jsonStringStream = jobUtil.getJsonStringStream(encapsulatedJsonStream);
-
-            if (jobUtil.shouldPublishKafka()) {
-                jobUtil.publishToKafka(jsonStringStream);
-            }
-
-            if (jobUtil.shouldPublishVMB()) {
-                jobUtil.publishToVMB(jsonStringStream);
-            }
-
-            jobUtil.processStream(encapsulatedJsonStream, JobStatus.FLINK_JOB_SUCCESSFUL);
-        } catch (Exception e) {
-            LOGGER.error("Error while publishing data to Sink", e);
-            jobUtil.processStream(encapsulatedJsonStream, JobStatus.FLINK_JOB_FAILED);
-        }
-    }
-}
+# Restart strategy
+flink.restart.strategy=fixed-delay
+flink.restart.attempts=3
+flink.restart.delay=10s

@@ -1,23 +1,7 @@
-Sure, I understand your requirement better now. Let's create specific test cases to cover the nested `if` block conditions. 
-
-The focus will be to ensure that the inner block executes correctly when:
-1. `alarm.getState()` matches the cleared state.
-2. `alarm.getPerceivedSeverity()` matches the perceived severity any.
-3. `alarm.getClearTime()` is `null`.
-4. `alarm.getAlarmUpdatedTime()` is not `null`.
-
-Here are the relevant test cases:
+Certainly! Below are JUnit 5 test cases for the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class. These test cases are designed to achieve 100% code coverage for the specific blocks of code you mentioned.
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
-
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,9 +11,19 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.util.*;
 
 @ExtendWith(MockitoExtension.class)
 public class AlarmRepositoryImplTest {
+
+    @InjectMocks
+    private AlarmRepositoryImpl alarmRepository;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -43,149 +37,106 @@ public class AlarmRepositoryImplTest {
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
-
     private Alarm alarm;
-    private Map<String, Integer> alarmStateMap;
-    private Map<String, Integer> perceivedSeverityMap;
+    private SqlRowSet sqlRowSet;
 
     @BeforeEach
     public void setUp() {
         alarm = new Alarm();
-        alarm.setAlarmIdentity("identity");
-        alarm.setState(1);
-        alarm.setPerceivedSeverity(1);
+        alarm.setAlarmIdentity("testIdentity");
+        sqlRowSet = mock(SqlRowSet.class);
 
-        // Setting up mock maps
-        alarmStateMap = new HashMap<>();
-        perceivedSeverityMap = new HashMap<>();
+        when(postgresConf.getAlarmStateMap()).thenReturn(getAlarmStateMap());
+        when(postgresConf.getPerceivedSeverityMap()).thenReturn(getPerceivedSeverityMap());
+    }
 
-        alarmStateMap.put("cleared", 1);
-        perceivedSeverityMap.put("any", 1);
+    private Map<String, Integer> getAlarmStateMap() {
+        Map<String, Integer> map = new HashMap<>();
+        map.put("Cleared", 1);
+        map.put("New", 2);
+        return map;
+    }
 
-        when(postgresConf.getAlarmStateMap()).thenReturn(alarmStateMap);
-        when(postgresConf.getPerceivedSeverityMap()).thenReturn(perceivedSeverityMap);
-        when(postgresConf.getAlarmStateCleared()).thenReturn("cleared");
-        when(postgresConf.getPerceivedSeverityAny()).thenReturn("any");
+    private Map<String, Integer> getPerceivedSeverityMap() {
+        Map<String, Integer> map = new HashMap<>();
+        map.put("Any", 1);
+        map.put("Indeterminate", -1);
+        return map;
     }
 
     @Test
-    public void testClearTimeUpdatedWhenStateClearedAndClearTimeNull() throws Exception {
-        // Set state to "cleared" and clearTime is null
-        alarm.setState(1);
-        alarm.setAlarmUpdatedTime(Instant.now().toString());
-        alarm.setClearTime(null);
+    public void testPostAlarmForEachIteration_StateCleared_PerceivedSeverityAny() throws Exception {
+        alarm.setState(1); // Cleared state
+        alarm.setPerceivedSeverity(1); // Perceived severity Any
+        alarm.setAlarmUpdatedTime("2023-01-01T00:00:00Z");
 
-        SqlRowSet rs = mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp(anyString())).thenReturn(Timestamp.from(Instant.now()));
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(false);
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        assertEquals(alarm.getAlarmUpdatedTime(), alarm.getClearTime());
+        assertEquals(0, result);
+        assertEquals("2023-01-01T00:00:00Z", alarm.getClearTime());
     }
 
     @Test
-    public void testClearTimeUpdatedWhenPerceivedSeverityAnyAndClearTimeNull() throws Exception {
-        // Set perceived severity to "any" and clearTime is null
-        alarm.setState(2); // Some other state
-        alarm.setPerceivedSeverity(1);
-        alarm.setAlarmUpdatedTime(Instant.now().toString());
+    public void testPostAlarmForEachIteration_StateCleared_ClearTimeNull() throws Exception {
+        alarm.setState(1); // Cleared state
+        alarm.setPerceivedSeverity(1); // Perceived severity Any
+        alarm.setAlarmUpdatedTime("2023-01-01T00:00:00Z");
         alarm.setClearTime(null);
 
-        SqlRowSet rs = mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp(anyString())).thenReturn(Timestamp.from(Instant.now()));
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(false);
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        assertEquals(alarm.getAlarmUpdatedTime(), alarm.getClearTime());
+        assertEquals(0, result);
+        assertEquals("2023-01-01T00:00:00Z", alarm.getClearTime());
     }
 
     @Test
-    public void testClearTimeNotUpdatedWhenStateNotCleared() throws Exception {
-        // Set state to something other than "cleared"
-        alarm.setState(2); // Not cleared
-        alarm.setPerceivedSeverity(2); // Not any
-        alarm.setAlarmUpdatedTime(Instant.now().toString());
-        alarm.setClearTime(null);
+    public void testPostAlarmForEachIteration_StateCleared_ClearTimeNotNull() throws Exception {
+        alarm.setState(1); // Cleared state
+        alarm.setPerceivedSeverity(1); // Perceived severity Any
+        alarm.setAlarmUpdatedTime("2023-01-01T00:00:00Z");
+        alarm.setClearTime("2023-01-01T01:00:00Z");
 
-        SqlRowSet rs = mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp(anyString())).thenReturn(Timestamp.from(Instant.now()));
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(false);
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
+        assertEquals(0, result);
+        assertEquals("2023-01-01T01:00:00Z", alarm.getClearTime());
+    }
+
+    @Test
+    public void testPostAlarmForEachIteration_StateNotCleared_PerceivedSeverityAny() throws Exception {
+        alarm.setState(2); // Not Cleared state
+        alarm.setPerceivedSeverity(1); // Perceived severity Any
+        alarm.setAlarmUpdatedTime("2023-01-01T00:00:00Z");
+
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(false);
+
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+
+        assertEquals(0, result);
         assertNull(alarm.getClearTime());
-    }
-
-    @Test
-    public void testClearTimeNotUpdatedWhenPerceivedSeverityNotAny() throws Exception {
-        // Set perceived severity to something other than "any"
-        alarm.setState(1); // Cleared
-        alarm.setPerceivedSeverity(2); // Not any
-        alarm.setAlarmUpdatedTime(Instant.now().toString());
-        alarm.setClearTime(null);
-
-        SqlRowSet rs = mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp(anyString())).thenReturn(Timestamp.from(Instant.now()));
-
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertNull(alarm.getClearTime());
-    }
-
-    @Test
-    public void testClearTimeNotUpdatedWhenAlarmUpdatedTimeNull() throws Exception {
-        // Set alarmUpdatedTime to null
-        alarm.setState(1); // Cleared
-        alarm.setPerceivedSeverity(1); // Any
-        alarm.setAlarmUpdatedTime(null);
-        alarm.setClearTime(null);
-
-        SqlRowSet rs = mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp(anyString())).thenReturn(Timestamp.from(Instant.now()));
-
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertNull(alarm.getClearTime());
-    }
-
-    @Test
-    public void testClearTimeNotUpdatedWhenClearTimeNotNull() throws Exception {
-        // Set clearTime to not null
-        alarm.setState(1); // Cleared
-        alarm.setPerceivedSeverity(1); // Any
-        alarm.setAlarmUpdatedTime(Instant.now().toString());
-        alarm.setClearTime(Instant.now().minusSeconds(60).toString());
-
-        SqlRowSet rs = mock(SqlRowSet.class);
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp(anyString())).thenReturn(Timestamp.from(Instant.now()));
-
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertNotEquals(alarm.getAlarmUpdatedTime(), alarm.getClearTime());
     }
 }
 ```
 
-### Explanation of Test Cases:
+### Explanation:
+1. **Test Setup**: 
+   - The `setUp` method initializes the `Alarm` object and mocks dependencies like `JdbcTemplate` and `SqlRowSet`.
+   - The `getAlarmStateMap` and `getPerceivedSeverityMap` methods provide mock data for the `PostGreDataBaseConfig` class.
 
-1. **`testClearTimeUpdatedWhenStateClearedAndClearTimeNull`**: Ensures `clearTime` is updated when the state is "cleared" and `clearTime` is `null`.
-2. **`testClearTimeUpdatedWhenPerceivedSeverityAnyAndClearTimeNull`**: Ensures `clearTime` is updated when the perceived severity is "any" and `clearTime` is `null`.
-3. **`testClearTimeNotUpdatedWhenStateNotCleared`**: Ensures `clearTime` is not updated when the state is not "cleared".
-4. **`testClearTimeNotUpdatedWhenPerceivedSeverityNotAny`**: Ensures `clearTime` is not updated when the perceived severity is not "any".
-5. **`testClearTimeNotUpdatedWhenAlarmUpdatedTimeNull`**: Ensures `clearTime` is not updated when `alarmUpdatedTime` is `null`.
-6. **`testClearTimeNotUpdatedWhenClearTimeNotNull`**: Ensures `clearTime` is not updated when `clearTime` is not `null`.
+2. **Test Cases**:
+    - **testPostAlarmForEachIteration_StateCleared_PerceivedSeverityAny**: Tests the scenario where the alarm state is "Cleared" and perceived severity is "Any". The `clearTime` should be set to `alarmUpdatedTime`.
+    - **testPostAlarmForEachIteration_StateCleared_ClearTimeNull**: Similar to the previous test but explicitly sets `clearTime` to `null` before the method call.
+    - **testPostAlarmForEachIteration_StateCleared_ClearTimeNotNull**: Tests the scenario where `clearTime` is already set, ensuring it does not change.
+    - **testPostAlarmForEachIteration_StateNotCleared_PerceivedSeverityAny**: Tests the scenario where the alarm state is not "Cleared" but perceived severity is "Any". The `clearTime` should not be set.
 
-These test cases specifically target the nested `if` conditions and ensure that each branch of the logic is properly tested.
+These test cases ensure that the specific blocks of code you mentioned are covered and behave as expected under different conditions.

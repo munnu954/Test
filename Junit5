@@ -1,46 +1,99 @@
+Sure, let's write a JUnit 5 test case for the specific code block within the `postAlarmForEachIteration` method:
+
+The code block we want to test is:
+```java
+if(state == postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()) && alarm.getState() != postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared())) {
+    alarm.setCountResetFlag(1);
+    alarm.setState(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew()));
+}
+```
+
+Here is the JUnit 5 test case to cover this block:
+
+```java
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.rowset.SqlRowSet;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
+@ExtendWith(MockitoExtension.class)
 public class AlarmRepositoryImplTest {
-    
+
+    @Mock
+    private JdbcTemplate jdbcTemplate;
+
+    @Mock
+    private AlarmPostingUtils utils;
+
+    @Mock
+    private PostGreDataBaseConfig postgresConf;
+
+    @Mock
+    private PostingRuleProcessingService postingRuleProcessingService;
+
+    @InjectMocks
     private AlarmRepositoryImpl alarmRepository;
-    private PostgresConfiguration postgresConf;
-    
+
+    private Alarm alarm;
+
     @BeforeEach
-    public void setup() {
-        postgresConf = mock(PostgresConfiguration.class);
-        alarmRepository = new AlarmRepositoryImpl(postgresConf);
+    public void setUp() {
+        alarm = new Alarm();
+        alarm.setAlarmIdentity("testAlarmIdentity");
+        alarm.setState(1); // setting a state that is not cleared
     }
-    
+
     @Test
-    public void testPostAlarmForEachIteration_ClearedState() {
-        when(postgresConf.getAlarmStateCleared()).thenReturn("Cleared");
-        when(postgresConf.getAlarmStateMap().get("Cleared")).thenReturn(0);
-        
-        Alarm alarm = new Alarm();
-        alarm.setState(1); // Assuming initial state is not Cleared
-        
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-        
-        assertEquals(1, alarm.getCountResetFlag());
-        assertEquals(0, alarm.getState());
-    }
-    
-    @Test
-    public void testPostAlarmForEachIteration_NonClearedState() {
-        when(postgresConf.getAlarmStateCleared()).thenReturn("Cleared");
-        when(postgresConf.getAlarmStateMap().get("Cleared")).thenReturn(0);
-        when(postgresConf.getAlarmStateMap().get("New")).thenReturn(1);
-        
-        Alarm alarm = new Alarm();
-        alarm.setState(0); // Assuming initial state is Cleared
-        
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-        
+    public void testPostAlarmForEachIteration_StateCleared() throws Exception {
+        // Mock the SqlRowSet to return the needed values
+        SqlRowSet rs = mock(SqlRowSet.class);
+        when(rs.next()).thenReturn(true);
+        when(rs.getInt("state")).thenReturn(3); //mock state to cleared
+       
+        when(postgresConf.getAlarmStateMap()).thenReturn(Map.of(
+            "CLEARED", 3,
+            "NEW", 1
+        ));
+
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(rs);
+
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+
         assertEquals(1, alarm.getCountResetFlag());
         assertEquals(1, alarm.getState());
     }
 }
+```
+
+Explanation of the test case:
+
+1. **Setup**
+   - We use the `@Mock` annotation to create mock objects for `JdbcTemplate`, `AlarmPostingUtils`, `PostGreDataBaseConfig`, and `PostingRuleProcessingService`.
+   - We use the `@InjectMocks` annotation to inject these mocks into the `AlarmRepositoryImpl` object.
+   - We initialize an `Alarm` object and set its state to a value that is not "cleared".
+
+2. **Test Method**
+   - We mock the `SqlRowSet` to simulate database results.
+   - We set up the `SqlRowSet` to return values that will trigger the specific code block we want to test.
+   - We mock the `PostGreDataBaseConfig` to return a map of alarm states.
+   - We invoke the `postAlarmForEachIteration` method.
+   - We assert that the `countResetFlag` is set to 1 and the state is set to "new".
+
+This test case ensures that the specified code block is executed and performs as expected.

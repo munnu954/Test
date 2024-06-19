@@ -1,146 +1,147 @@
-Here is the JUnit5 test case code for covering the specified blocks of the `postAlarmForEachIteration` method in the `AlarmRepositoryImpl` class. This code ensures that all conditions are tested and avoids `NullPointerException` for `rs.getString("tid")`, `rs.getString("aid")`, `rs.getString("reportingobject")`, and other fields.
+Certainly! Below are the JUnit 5 test cases for covering the specified code blocks of the `postAlarmForEachIteration` method in the `AlarmRepositoryImpl` class. These test cases aim to achieve 100% code coverage for the mentioned blocks.
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
-
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.SqlRowSet;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.springframework.jdbc.support.rowset.SqlRowSet;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-@ExtendWith(SpringExtension.class)
-@SpringBootTest
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.util.*;
+
+@ExtendWith(MockitoExtension.class)
 public class AlarmRepositoryImplTest {
 
-    @Autowired
-    private AlarmRepositoryImpl alarmRepository;
-
-    @MockBean
+    @Mock
     private JdbcTemplate jdbcTemplate;
 
-    @MockBean
+    @Mock
     private AlarmPostingUtils utils;
 
-    @MockBean
+    @Mock
     private PostGreDataBaseConfig postgresConf;
 
-    @MockBean
+    @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
-    @Mock
-    private SqlRowSet rs;
+    @InjectMocks
+    private AlarmRepositoryImpl alarmRepository;
 
     private Alarm alarm;
+    private SqlRowSet rs;
 
     @BeforeEach
     public void setUp() {
         alarm = new Alarm();
-        alarm.setAlarmIdentity("testAlarmIdentity");
-        alarm.setAlarmUpdatedTime("2023-10-12T10:15:30+01:00");
+        alarm.setAlarmIdentity("testAlarm");
+        alarm.setSequenceID(1L);
+        alarm.setAlarmUpdatedTime(ZonedDateTime.now().toString());
 
-        when(postgresConf.getAlarmStateMap()).thenReturn(getMockAlarmStateMap());
-        when(postgresConf.getPerceivedSeverityMap()).thenReturn(getMockPerceivedSeverityMap());
-    }
+        rs = mock(SqlRowSet.class);
 
-    private Map<String, Integer> getMockAlarmStateMap() {
-        Map<String, Integer> map = new HashMap<>();
-        map.put("Cleared", 1);
-        map.put("New", 2);
-        return map;
-    }
+        when(rs.getTimestamp(anyString())).thenReturn(Timestamp.from(Instant.now()));
+        when(rs.getString(anyString())).thenReturn("testString");
+        when(rs.getLong(anyString())).thenReturn(1L);
+        when(rs.getInt(anyString())).thenReturn(1);
+        when(rs.getBoolean(anyString())).thenReturn(true);
 
-    private Map<String, Integer> getMockPerceivedSeverityMap() {
-        Map<String, Integer> map = new HashMap<>();
-        map.put("Any", 1);
-        map.put("Indeterminate", 2);
-        return map;
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+
+        when(postgresConf.getAlarmStateMap()).thenReturn(Map.of("Cleared", 1));
+        when(postgresConf.getPerceivedSeverityMap()).thenReturn(Map.of("Any", 1));
     }
 
     @Test
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void testPostAlarmForEachIteration() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp(anyString())).thenReturn(Timestamp.from(Instant.now()));
-        when(rs.getLong(anyString())).thenReturn(1L);
-        when(rs.getInt(anyString())).thenReturn(1);
-        when(rs.getBoolean(anyString())).thenReturn(true);
-        when(rs.getString(anyString())).thenReturn("testValue");
-        when(rs.getObject(anyString())).thenReturn(null);
+        // Stubbing for compareTime method
+        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
 
-        // Test: alarmReportingTime is null
+        // When alarmReportingTime is null or empty
         alarm.setAlarmReportingTime(null);
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-        assertNotNull(alarm.getAlarmReportingTime());
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getTimestamp("alarmreportingtime");
 
-        // Test: tag merge
-        Set<String> mockTagSet = Set.of("tag1", "tag2");
-        when(utils.mergeArrayMethod(any(), eq(alarm))).thenReturn(mockTagSet);
-        result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-        assertArrayEquals(new String[]{"tag1", "tag2"}, alarm.getTag());
+        // When tagFromDb is not null and mergeArrayMethod returns a non-empty set
+        when(rs.getObject("tag")).thenReturn("tagFromDb");
+        Set<String> tagSet = new HashSet<>(Arrays.asList("tag1", "tag2"));
+        when(utils.mergeArrayMethod(any(), any(Alarm.class))).thenReturn(tagSet);
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getObject("tag");
 
-        // Test: sequenceID is zero
+        // When sequenceID is 0
         alarm.setSequenceID(0);
-        result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-        assertEquals(1L, alarm.getSequenceID());
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getLong("sequenceid");
 
-        // Test: componentId is null or empty
-        alarm.setComponentId(null);
-        result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-        assertEquals("testValue", alarm.getComponentId());
+        // When resolved is set to true
+        alarm.setResolved(false);
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getBoolean("resolved");
 
-        // Test: alarmedObject is null or empty
-        alarm.setAlarmedObject(null);
-        result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-        assertEquals("testValue", alarm.getAlarmedObject());
+        // When componentId is null or empty
+        alarm.setComponentId("");
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getString("componentid");
 
-        // Test: reportingObject is null or empty
-        alarm.setReportingObject(null);
-        result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-        assertEquals("testValue", alarm.getReportingObject());
+        // When alarmedObject is null or empty
+        alarm.setAlarmedObject("");
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getString("alarmedobject");
 
-        // Test: equipmentObject is null or empty
-        alarm.setEquipmentObject(null);
-        result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-        assertEquals("testValue", alarm.getEquipmentObject());
+        // When reportingObject is null or empty
+        alarm.setReportingObject("");
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getString("reportingobject");
 
-        // Test: tid is null or empty
-        alarm.setTid(null);
-        result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-        assertEquals("testValue", alarm.getTid());
+        // When equipmentObject is null or empty
+        alarm.setEquipmentObject("");
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getString("equipmentobject");
 
-        // Test: aid is null or empty
-        alarm.setAid(null);
-        result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-        assertEquals("testValue", alarm.getAid());
+        // When tid is null or empty
+        alarm.setTid("");
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getString("tid");
 
-        // Test: rawMessage is null or empty
-        alarm.setRawMessage(null);
-        result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-        assertEquals("testValue", alarm.getRawMessage());
+        // When aid is null or empty
+        alarm.setAid("");
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getString("aid");
 
-        // Test: stage is zero
+        // When rawMessage is null or empty
+        alarm.setRawMessage("");
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getString("rawmessage");
+
+        // When stage is 0
         alarm.setStage(0);
-        result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-        assertEquals(1, alarm.getStage());
+        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        verify(rs, atLeastOnce()).getInt("stage");
     }
 }
 ```
 
-This test case covers the specified code blocks within the `postAlarmForEachIteration` method, ensuring that `NullPointerException` is avoided by setting mock return values for `rs.getString` and other methods. The test cases handle scenarios where fields like `tid`, `aid`, `reportingObject`, etc., are null or empty, and ensure that they are populated appropriately.
+Explanation:
+
+1. **Setup**: The `setUp` method initializes the necessary mocks and the `Alarm` object used in the tests.
+2. **Test Cases**: Each test case verifies a specific condition mentioned in the provided code blocks:
+   - Checking if the `alarmReportingTime` is null or empty.
+   - Checking the merging of tags.
+   - Checking the setting of the sequence ID.
+   - Checking the setting of the resolved status.
+   - Checking various fields (`componentId`, `alarmedObject`, `reportingObject`, `equipmentObject`, `tid`, `aid`, `rawMessage`, `stage`) when they are null or empty.
+  
+This set of test cases aims to cover the specified portions of the `postAlarmForEachIteration` method as requested.

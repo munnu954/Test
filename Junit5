@@ -1,31 +1,24 @@
-Certainly! Here's the JUnit 5 test case that covers the specific code blocks in the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class. This test utilizes Mockito to mock dependencies and uses reflection to access private methods.
+Certainly! Below is an example of how you can write JUnit 5 test cases to cover the specific blocks of the `postAlarmForEachIteration` method within the `AlarmRepositoryImpl` class. These tests ensure that the field values are not null and are properly set from the result set.
 
 ```java
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.SqlRowSet;
-
-import java.lang.reflect.Method;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import java.sql.Timestamp;
-import java.time.Instant;
-import java.util.Calendar;
-import java.util.HashMap;
-import java.util.Set;
 
 @ExtendWith(MockitoExtension.class)
 public class AlarmRepositoryImplTest {
-
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -39,21 +32,31 @@ public class AlarmRepositoryImplTest {
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
+    @InjectMocks
+    private AlarmRepositoryImpl alarmRepositoryImpl;
+
     private Alarm alarm;
     private SqlRowSet rs;
 
     @BeforeEach
     public void setUp() {
+        MockitoAnnotations.openMocks(this);
+        // Initialize the alarm object
         alarm = new Alarm();
+        alarm.setAlarmIdentity("testAlarmIdentity");
+        alarm.setSequenceID(0); // Set to 0 to ensure it gets updated
+
+        // Mock the SqlRowSet
         rs = mock(SqlRowSet.class);
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
     }
 
     @Test
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void testPostAlarmForEachIteration() throws Exception {
-        alarm.setAlarmIdentity("testIdentity");
-        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(rs);
+        // Mock the result set values
         when(rs.next()).thenReturn(true);
-        when(rs.getLong("sequenceid")).thenReturn(1L);
+        when(rs.getLong("sequenceid")).thenReturn(100L);
         when(rs.getBoolean("resolved")).thenReturn(true);
         when(rs.getString("componentid")).thenReturn("componentId");
         when(rs.getString("alarmedobject")).thenReturn("alarmedObject");
@@ -64,11 +67,12 @@ public class AlarmRepositoryImplTest {
         when(rs.getString("rawmessage")).thenReturn("rawMessage");
         when(rs.getInt("stage")).thenReturn(1);
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        // Call the method under test
+        int result = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        // Validate if the values have been correctly set in the alarm object
-        assertEquals(1L, alarm.getSequenceID());
-        assertEquals(true, alarm.isResolved());
+        // Verify the expected results
+        assertEquals(100L, alarm.getSequenceID());
+        assertTrue(alarm.isResolved());
         assertEquals("componentId", alarm.getComponentId());
         assertEquals("alarmedObject", alarm.getAlarmedObject());
         assertEquals("reportingObject", alarm.getReportingObject());
@@ -77,29 +81,53 @@ public class AlarmRepositoryImplTest {
         assertEquals("aid", alarm.getAid());
         assertEquals("rawMessage", alarm.getRawMessage());
         assertEquals(1, alarm.getStage());
+
+        // Verify that the method completed successfully
+        assertNotEquals(-1, result);
     }
 
     @Test
-    public void testAddTagsToSet() throws Exception {
-        String[] tags = {"tag1", "tag2"};
-        Method method = AlarmRepositoryImpl.class.getDeclaredMethod("addTagsToSet", String[].class);
-        method.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        Set<String> result = (Set<String>) method.invoke(alarmRepository, (Object) tags);
-        assertEquals(2, result.size());
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void testPostAlarmForEachIterationWithEmptyFields() throws Exception {
+        // Mock the result set values
+        when(rs.next()).thenReturn(true);
+        when(rs.getLong("sequenceid")).thenReturn(200L);
+        when(rs.getBoolean("resolved")).thenReturn(false);
+        when(rs.getString("componentid")).thenReturn("");
+        when(rs.getString("alarmedobject")).thenReturn("");
+        when(rs.getString("reportingobject")).thenReturn("");
+        when(rs.getString("equipmentobject")).thenReturn("");
+        when(rs.getString("tid")).thenReturn("");
+        when(rs.getString("aid")).thenReturn("");
+        when(rs.getString("rawmessage")).thenReturn("");
+        when(rs.getInt("stage")).thenReturn(0);
+
+        // Call the method under test
+        int result = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
+
+        // Verify the expected results
+        assertEquals(200L, alarm.getSequenceID());
+        assertFalse(alarm.isResolved());
+        assertEquals("", alarm.getComponentId());
+        assertEquals("", alarm.getAlarmedObject());
+        assertEquals("", alarm.getReportingObject());
+        assertEquals("", alarm.getEquipmentObject());
+        assertEquals("", alarm.getTid());
+        assertEquals("", alarm.getAid());
+        assertEquals("", alarm.getRawMessage());
+        assertEquals(0, alarm.getStage());
+
+        // Verify that the method completed successfully
+        assertNotEquals(-1, result);
     }
 }
 ```
 
-### Explanation:
+In this test code:
 
-1. **Test Dependencies**: We use Mockito annotations to inject mock dependencies (`@InjectMocks`, `@Mock`).
-2. **Setup**: The `@BeforeEach` setup method initializes common objects.
-3. **Test `postAlarmForEachIteration`**:
-   - **Mocking**: We mock the behavior of `jdbcTemplate.queryForRowSet` and the returned `SqlRowSet` to simulate the database interactions.
-   - **Assertions**: We assert that the fields of the `Alarm` object are correctly populated based on the mock data.
-4. **Test `addTagsToSet`**:
-   - **Reflection**: We use reflection to access the private method `addTagsToSet`.
-   - **Assertions**: We verify the output of the method.
+1. **Setup**: The `Alarm` object and `SqlRowSet` are initialized and mocked.
+2. **Mocking**: The `SqlRowSet` is programmed to return specific values when its methods are called.
+3. **Testing**: The `postAlarmForEachIteration` method is tested for various scenarios by checking if the `Alarm` object's fields are set correctly.
+4. **Assertions**: The test assertions check if the values have been correctly set in the `Alarm` object.
 
-This test case ensures that the specified fields are correctly populated and that the private method `addTagsToSet` works as expected.
+These tests aim to cover the specified blocks in the `postAlarmForEachIteration` method.

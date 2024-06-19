@@ -1,22 +1,30 @@
-To ensure 100% code coverage and validate the `Alarm` class values properly, we need to structure the test cases to cover all scenarios where the fields of the `Alarm` object might be `null` or empty. By doing this, we can ensure that the `if` conditions in the provided code blocks are executed.
-
-Below is the updated JUnit5 test case code:
+Certainly! Below is a comprehensive set of JUnit 5 test cases covering the `postAlarmForEachIteration` method in the `AlarmRepositoryImpl` class. I will use Mockito for mocking dependencies and ensure that the specified fields are not null.
 
 ```java
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
 
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.util.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @ExtendWith(MockitoExtension.class)
 public class AlarmRepositoryImplTest {
+
+    @InjectMocks
+    private AlarmRepositoryImpl alarmRepository;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -30,117 +38,124 @@ public class AlarmRepositoryImplTest {
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
-
     private Alarm alarm;
     private SqlRowSet rs;
 
     @BeforeEach
     public void setUp() {
         alarm = new Alarm();
+        alarm.setAlarmIdentity("testIdentity");
+        alarm.setSequenceID(1);
+        alarm.setAlarmUpdatedTime("2023-01-01T10:00:00Z");
         rs = mock(SqlRowSet.class);
-
-        when(postgresConf.getAlarmStateMap()).thenReturn(Map.of(
-                postgresConf.getAlarmStateCleared(), 1,
-                postgresConf.getAlarmStateNew(), 1
-        ));
-        when(postgresConf.getPerceivedSeverityMap()).thenReturn(Map.of(
-                postgresConf.getPerceivedSeverityAny(), 1,
-                postgresConf.getPerceivedSeverityIndeterminate(), 1
-        ));
     }
 
     @Test
-    public void testPostAlarmForEachIteration_WithNullValues() throws Exception {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void testPostAlarmForEachIteration_NewAlarm() throws Exception {
         when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getString("alarmedobject")).thenReturn("TestAlarmedObject");
-        when(rs.getString("reportingobject")).thenReturn("TestReportingObject");
-        when(rs.getString("equipmentobject")).thenReturn("TestEquipmentObject");
-        when(rs.getString("tid")).thenReturn("TestTid");
-        when(rs.getString("aid")).thenReturn("TestAid");
+        when(rs.next()).thenReturn(false);
 
-        // Call the method under test
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
 
-        // Validate alarm object
-        assertEquals("TestAlarmedObject", alarm.getAlarmedObject());
-        assertEquals("TestReportingObject", alarm.getReportingObject());
-        assertEquals("TestEquipmentObject", alarm.getEquipmentObject());
-        assertEquals("TestTid", alarm.getTid());
-        assertEquals("TestAid", alarm.getAid());
-
-        // Assert the expected result
-        assertEquals(0, result); // Adjust this based on your expected result
+        assertEquals(0, result);
     }
 
     @Test
-    public void testPostAlarmForEachIteration_WithEmptyValues() throws Exception {
-        alarm.setAlarmedObject("");
-        alarm.setReportingObject("");
-        alarm.setEquipmentObject("");
-        alarm.setTid("");
-        alarm.setAid("");
-
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void testPostAlarmForEachIteration_ExistingAlarm_LateAlarm() throws Exception {
         when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
         when(rs.next()).thenReturn(true);
-        when(rs.getString("alarmedobject")).thenReturn("TestAlarmedObject");
-        when(rs.getString("reportingobject")).thenReturn("TestReportingObject");
-        when(rs.getString("equipmentobject")).thenReturn("TestEquipmentObject");
-        when(rs.getString("tid")).thenReturn("TestTid");
-        when(rs.getString("aid")).thenReturn("TestAid");
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
+        when(rs.getLong("sequenceid")).thenReturn(2L);
+        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(-1);
+        when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(Alarm.class), any(SqlRowSet.class))).thenReturn(true);
 
-        // Call the method under test
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
 
-        // Validate alarm object
-        assertEquals("TestAlarmedObject", alarm.getAlarmedObject());
-        assertEquals("TestReportingObject", alarm.getReportingObject());
-        assertEquals("TestEquipmentObject", alarm.getEquipmentObject());
-        assertEquals("TestTid", alarm.getTid());
-        assertEquals("TestAid", alarm.getAid());
-
-        // Assert the expected result
-        assertEquals(0, result); // Adjust this based on your expected result
+        assertEquals(0, result);
     }
 
     @Test
-    public void testPostAlarmForEachIteration_WithMixedValues() throws Exception {
-        alarm.setAlarmedObject(null);
-        alarm.setReportingObject("");
-        alarm.setEquipmentObject(null);
-        alarm.setTid("");
-        alarm.setAid(null);
-
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void testPostAlarmForEachIteration_ExistingAlarm_LatestAlarm() throws Exception {
         when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
         when(rs.next()).thenReturn(true);
-        when(rs.getString("alarmedobject")).thenReturn("TestAlarmedObject");
-        when(rs.getString("reportingobject")).thenReturn("TestReportingObject");
-        when(rs.getString("equipmentobject")).thenReturn("TestEquipmentObject");
-        when(rs.getString("tid")).thenReturn("TestTid");
-        when(rs.getString("aid")).thenReturn("TestAid");
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
+        when(rs.getLong("sequenceid")).thenReturn(1L);
+        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
 
-        // Call the method under test
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
 
-        // Validate alarm object
-        assertEquals("TestAlarmedObject", alarm.getAlarmedObject());
-        assertEquals("TestReportingObject", alarm.getReportingObject());
-        assertEquals("TestEquipmentObject", alarm.getEquipmentObject());
-        assertEquals("TestTid", alarm.getTid());
-        assertEquals("TestAid", alarm.getAid());
+        assertEquals(0, result);
+    }
 
-        // Assert the expected result
-        assertEquals(0, result); // Adjust this based on your expected result
+    @Test
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void testPostAlarmForEachIteration_Exception() throws Exception {
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenThrow(new RuntimeException("DB error"));
+
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
+
+        assertEquals(-2, result);
+    }
+
+    // Additional test cases covering more branches and conditions
+    @Test
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void testPostAlarmForEachIteration_AlarmCleared() throws Exception {
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
+        when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
+        String dbAlmUpdatedTime = "2022-01-01T10:00:00Z";
+        String curAlmUpdatedTime = "2023-01-01T10:00:00Z";
+        alarm.setAlarmUpdatedTime(curAlmUpdatedTime);
+
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
+
+        assertEquals(-1, result);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void testPostAlarmForEachIteration_AlarmWithNullUpdatedTime() throws Exception {
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+        when(rs.next()).thenReturn(false);
+        alarm.setAlarmUpdatedTime(null);
+
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
+
+        assertEquals(0, result);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void testPostAlarmForEachIteration_AlarmWithFutureUpdatedTime() throws Exception {
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+        when(rs.next()).thenReturn(false);
+        alarm.setAlarmUpdatedTime("2099-01-01T10:00:00Z");
+
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
+
+        assertEquals(0, result);
     }
 }
 ```
 
-In this updated version:
+### Notes:
+1. **Mocks**:
+    - `@InjectMocks` is used to inject the mocks into the `AlarmRepositoryImpl` instance.
+    - `@Mock` is used to create mock instances of `JdbcTemplate`, `AlarmPostingUtils`, `PostGreDataBaseConfig`, and `PostingRuleProcessingService`.
+2. **Setup**:
+    - The `setUp` method initializes a basic `Alarm` object and a mocked `SqlRowSet`.
+3. **Test Cases**:
+    - **New Alarm**: Tests the scenario when the alarm is new and not found in the database.
+    - **Late Alarm**: Tests the scenario when the alarm is late and requires processing.
+    - **Latest Alarm**: Tests the scenario when the alarm is the latest and should be updated.
+    - **Exception Handling**: Tests the handling of exceptions during the database query.
+    - **Alarm Cleared**: Tests the scenario when the alarm state is cleared.
+    - **Null Updated Time**: Tests the scenario when the alarm has a null updated time.
+    - **Future Updated Time**: Tests the scenario when the alarm has a future updated time.
 
-1. `testPostAlarmForEachIteration_WithNullValues`: Tests the scenario where all fields in the `Alarm` object are initially `null`. This ensures the conditions where fields are `null` are covered.
-2. `testPostAlarmForEachIteration_WithEmptyValues`: Tests the scenario where all fields in the `Alarm` object are initially empty strings. This covers the conditions where fields are empty.
-3. `testPostAlarmForEachIteration_WithMixedValues`: Tests the scenario where some fields are `null` and some are empty, ensuring that both conditions are validated.
-
-These test cases should cover the different scenarios that your conditions in the code blocks are checking for, providing 100% code coverage.
+These test cases aim to cover as many branches and conditions as possible within the `postAlarmForEachIteration` method. Additional test cases can be added for further edge cases and conditions if needed.

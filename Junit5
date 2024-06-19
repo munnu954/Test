@@ -1,27 +1,30 @@
-The "expected: not <null>" error typically indicates that the method you're testing did not set a value that was expected to be not null. This could be due to a few reasons such as the `SqlRowSet` not being properly mocked, the method not being executed as expected, or the properties not being set in the method.
-
-Let's enhance the test setup to ensure that:
-1. The `SqlRowSet` mock is properly set up to return the values you expect.
-2. The method `postAlarmForEachIteration` is correctly invoked.
-3. The `Alarm` object properties are correctly set after the method invocation.
-
-Here is the revised JUnit 5 test code:
+Certainly! Below are the JUnit 5 test cases for covering the specified blocks in the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class. The test cases use Reflection APIs to access the `addTagsToSet` and `mergeArrayMethod` methods.
 
 ```java
-import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.SqlRowSet;
+import org.springframework.jdbc.support.rowset.SqlRowSet;
 
+import java.lang.reflect.Method;
 import java.sql.Timestamp;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
 
+@ExtendWith(MockitoExtension.class)
 public class AlarmRepositoryImplTest {
+
+    @InjectMocks
+    private AlarmRepositoryImpl alarmRepositoryImpl;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -35,140 +38,142 @@ public class AlarmRepositoryImplTest {
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
+    @Mock
+    private SqlRowSet rs;
 
     private Alarm alarm;
-    private SqlRowSet rs;
-    private static final String ALARM_IDENTITY = "testAlarmIdentity";
 
     @BeforeEach
     public void setUp() {
-        MockitoAnnotations.openMocks(this);
         alarm = new Alarm();
-        alarm.setAlarmIdentity(ALARM_IDENTITY);
-        rs = mock(SqlRowSet.class);
+        alarm.setAlarmIdentity("testIdentity");
+    }
 
-        // Common mock setup for rs.next()
+    @Test
+    public void testPostAlarmForEachIteration_TagMerge() throws Exception {
         when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
+        when(rs.getLong("sequenceid")).thenReturn(123L);
+        when(rs.getObject("tag")).thenReturn(new String[]{"tag1", "tag2"});
+        when(utils.compareTime(anyString(), anyString(), eq(alarm))).thenReturn(1);
 
-        // Common mock setup for jdbcTemplate
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+        Method mergeArrayMethod = alarmRepositoryImpl.getClass().getDeclaredMethod("mergeArrayMethod", Object.class, Alarm.class);
+        mergeArrayMethod.setAccessible(true);
+
+        Method addTagsToSet = alarmRepositoryImpl.getClass().getDeclaredMethod("addTagsToSet", String[].class);
+        addTagsToSet.setAccessible(true);
+
+        mergeArrayMethod.invoke(alarmRepositoryImpl, new String[]{"tag1", "tag2"}, alarm);
+
+        Set<String> joinedTagSet = (Set<String>) mergeArrayMethod.invoke(alarmRepositoryImpl, new String[]{"tag1", "tag2"}, alarm);
+        assertTrue(joinedTagSet.contains("tag1"));
+        assertTrue(joinedTagSet.contains("tag2"));
+
+        String[] resultantArray = new String[joinedTagSet.size()];
+        joinedTagSet.toArray(resultantArray);
+        alarm.setTag(resultantArray);
+
+        assertEquals(2, alarm.getTag().length);
+        assertEquals("tag1", alarm.getTag()[0]);
+        assertEquals("tag2", alarm.getTag()[1]);
     }
 
     @Test
-    public void testPostAlarmForEachIteration_SetReportingTime() throws Exception {
-        Timestamp expectedTimestamp = new Timestamp(System.currentTimeMillis());
-        when(rs.getTimestamp("alarmreportingtime")).thenReturn(expectedTimestamp);
+    public void testPostAlarmForEachIteration_ComponentId() throws Exception {
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
+        when(rs.getLong("sequenceid")).thenReturn(123L);
+        when(rs.getString("componentid")).thenReturn("testComponentId");
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        assertNotNull(alarm.getAlarmReportingTime(), "Alarm reporting time should not be null");
-        assertEquals(expectedTimestamp, alarm.getAlarmReportingTime());
+        assertEquals("testComponentId", alarm.getComponentId());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_SetComponentId() throws Exception {
-        String expectedComponentId = "compId";
-        when(rs.getString("componentid")).thenReturn(expectedComponentId);
+    public void testPostAlarmForEachIteration_AlarmedObject() throws Exception {
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
+        when(rs.getLong("sequenceid")).thenReturn(123L);
+        when(rs.getString("alarmedobject")).thenReturn("testAlarmedObject");
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        assertNotNull(alarm.getComponentId(), "Component ID should not be null");
-        assertEquals(expectedComponentId, alarm.getComponentId());
+        assertEquals("testAlarmedObject", alarm.getAlarmedObject());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_SetAlarmedObject() throws Exception {
-        String expectedAlarmedObject = "alarmedObject";
-        when(rs.getString("alarmedobject")).thenReturn(expectedAlarmedObject);
+    public void testPostAlarmForEachIteration_ReportingObject() throws Exception {
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
+        when(rs.getLong("sequenceid")).thenReturn(123L);
+        when(rs.getString("reportingobject")).thenReturn("testReportingObject");
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        assertNotNull(alarm.getAlarmedObject(), "Alarmed object should not be null");
-        assertEquals(expectedAlarmedObject, alarm.getAlarmedObject());
+        assertEquals("testReportingObject", alarm.getReportingObject());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_SetReportingObject() throws Exception {
-        String expectedReportingObject = "reportingObject";
-        when(rs.getString("reportingobject")).thenReturn(expectedReportingObject);
+    public void testPostAlarmForEachIteration_EquipmentObject() throws Exception {
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
+        when(rs.getLong("sequenceid")).thenReturn(123L);
+        when(rs.getString("equipmentobject")).thenReturn("testEquipmentObject");
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        assertNotNull(alarm.getReportingObject(), "Reporting object should not be null");
-        assertEquals(expectedReportingObject, alarm.getReportingObject());
+        assertEquals("testEquipmentObject", alarm.getEquipmentObject());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_SetEquipmentObject() throws Exception {
-        String expectedEquipmentObject = "equipmentObject";
-        when(rs.getString("equipmentobject")).thenReturn(expectedEquipmentObject);
+    public void testPostAlarmForEachIteration_Tid() throws Exception {
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
+        when(rs.getLong("sequenceid")).thenReturn(123L);
+        when(rs.getString("tid")).thenReturn("testTid");
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        assertNotNull(alarm.getEquipmentObject(), "Equipment object should not be null");
-        assertEquals(expectedEquipmentObject, alarm.getEquipmentObject());
+        assertEquals("testTid", alarm.getTid());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_SetTid() throws Exception {
-        String expectedTid = "tid";
-        when(rs.getString("tid")).thenReturn(expectedTid);
+    public void testPostAlarmForEachIteration_Aid() throws Exception {
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
+        when(rs.getLong("sequenceid")).thenReturn(123L);
+        when(rs.getString("aid")).thenReturn("testAid");
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        assertNotNull(alarm.getTid(), "TID should not be null");
-        assertEquals(expectedTid, alarm.getTid());
+        assertEquals("testAid", alarm.getAid());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_SetAid() throws Exception {
-        String expectedAid = "aid";
-        when(rs.getString("aid")).thenReturn(expectedAid);
+    public void testPostAlarmForEachIteration_RawMessage() throws Exception {
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
+        when(rs.getLong("sequenceid")).thenReturn(123L);
+        when(rs.getString("rawmessage")).thenReturn("testRawMessage");
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        assertNotNull(alarm.getAid(), "AID should not be null");
-        assertEquals(expectedAid, alarm.getAid());
+        assertEquals("testRawMessage", alarm.getRawMessage());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_SetRawMessage() throws Exception {
-        String expectedRawMessage = "rawMessage";
-        when(rs.getString("rawmessage")).thenReturn(expectedRawMessage);
+    public void testPostAlarmForEachIteration_Stage() throws Exception {
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
+        when(rs.getLong("sequenceid")).thenReturn(123L);
+        when(rs.getInt("stage")).thenReturn(5);
 
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        assertNotNull(alarm.getRawMessage(), "Raw message should not be null");
-        assertEquals(expectedRawMessage, alarm.getRawMessage());
-    }
-
-    @Test
-    public void testPostAlarmForEachIteration_SetStage() throws Exception {
-        int expectedStage = 1;
-        when(rs.getInt("stage")).thenReturn(expectedStage);
-
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals(expectedStage, alarm.getStage(), "Stage should match the expected value");
-    }
-
-    @Test
-    public void testPostAlarmForEachIteration_SetResolved() throws Exception {
-        boolean expectedResolved = true;
-        when(rs.getBoolean("resolved")).thenReturn(expectedResolved);
-
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertTrue(alarm.isResolved(), "Resolved status should be true");
+        assertEquals(5, alarm.getStage());
     }
 }
 ```
 
-This version of the test code ensures that:
-1. Each test method sets up the `SqlRowSet` to return the expected values for the respective column.
-2. An assertion is added to check that the value is not null, along with a custom message for clarity.
-3. The `alarmRepository.postAlarmForEachIteration` method is invoked with the appropriate parameters.
-
-If the error persists, consider checking the actual implementation of the `postAlarmForEachIteration` method to ensure that it correctly sets the properties on the `Alarm` object.
+These test cases cover the specified blocks within the `postAlarmForEachIteration` method. The `Mockito` framework is used to mock dependencies, and `Reflection` APIs are utilized to access private methods. Ensure you have the necessary dependencies for `JUnit 5`, `Mockito`, and `Jackson` in your `build.gradle` or `pom.xml` file to run these tests successfully.

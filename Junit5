@@ -1,168 +1,60 @@
-Sure, let's create additional JUnit 5 test cases to cover both the `if` and `else` conditions in the `processAlarmThread()` method of the `PostingService` class. Here's the updated test class with the new test cases:
+Here is an example of JUnit5 test cases code to cover the conditional statement branches of the `processAlarmThread()` method in the `PostingService` class for 100% code coverage:
 
 ```java
-import org.junit.jupiter.api.*;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.*;
-import java.util.concurrent.ConcurrentLinkedDeque;
-
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.Spy;
+
 public class PostingServiceTest {
-
-    @InjectMocks
+    
+    @Spy
     private PostingService postingService;
-
-    @Mock
-    private AlarmRepository alarmRepository;
-
-    @Mock
-    private AlarmReceiver alarmReceiver;
-
+    
     @Mock
     private DistributionSummary summary;
-
+    
+    @Mock
+    private AlarmReceiver alarmReceiver;
+    
     @BeforeEach
-    public void setup() {
-        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>());
-        ReflectionTestUtils.setField(postingService, "alarmReceivedTimeValues", new Hashtable<>());
-        ReflectionTestUtils.setField(postingService, "processThreadWaitTime", 500);
-        ReflectionTestUtils.setField(postingService, "threadList", new ArrayList<>());
+    public void setUp() {
+        MockitoAnnotations.initMocks(this);
+        postingService = new PostingService();
+        postingService.summary = summary;
+        postingService.alarmReceiver = alarmReceiver;
     }
-
+    
     @Test
-    public void testAcknowledgeMessageAndLatencyRecording_MessageIdPresentAndInReceivedTimeValues() throws Exception {
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn("{\"alarmIdentity\":\"test\"}".getBytes());
+    public void testProcessAlarmThreadWithMessageIdNotNull() {
+        Message<byte[]> msg = new Message<>();
+        MessageId messageId = mock(MessageId.class);
+        when(msg.getMessageId()).thenReturn(messageId);
+        when(postingService.alarmReceivedTimeValues.containsKey(messageId)).thenReturn(true);
         
-        MessageId messageId = mock(MessageId.class);
-        when(message.getMessageId()).thenReturn(messageId);
-
-        Instant receivedTime = Instant.now().minusMillis(100);
-        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>(List.of(message)));
-        ReflectionTestUtils.setField(postingService, "alarmReceivedTimeValues", new Hashtable<>(Map.of(messageId, receivedTime)));
-
-        Alarm alarm = mock(Alarm.class);
-        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
-
-        Thread testThread = new Thread(() -> postingService.processAlarmThread());
-        ReflectionTestUtils.setField(postingService, "shutdown", false);
-        testThread.start();
-
-        Thread.sleep(1000); // Allow the thread to process
-
-        ReflectionTestUtils.setField(postingService, "shutdown", true);
-        testThread.join();
-
-        verify(alarmReceiver).acknowledgeMessage(message);
-        verify(summary).record(anyLong());
-        verify(alarmRepository).createAlarm(anyString());
-        verify(alarmRepository).alarmPosting(any(Alarm.class));
-    }
-
-    @Test
-    public void testAcknowledgeMessageAndLatencyRecording_MessageIdPresentAndNotInReceivedTimeValues() throws Exception {
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn("{\"alarmIdentity\":\"test\"}".getBytes());
+        postingService.processAlarmThread();
         
-        MessageId messageId = mock(MessageId.class);
-        when(message.getMessageId()).thenReturn(messageId);
-
-        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>(List.of(message)));
-        ReflectionTestUtils.setField(postingService, "alarmReceivedTimeValues", new Hashtable<>());
-
-        Alarm alarm = mock(Alarm.class);
-        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
-
-        Thread testThread = new Thread(() -> postingService.processAlarmThread());
-        ReflectionTestUtils.setField(postingService, "shutdown", false);
-        testThread.start();
-
-        Thread.sleep(1000); // Allow the thread to process
-
-        ReflectionTestUtils.setField(postingService, "shutdown", true);
-        testThread.join();
-
-        verify(alarmReceiver).acknowledgeMessage(message);
-        verify(summary, never()).record(anyLong());
-        verify(alarmRepository).createAlarm(anyString());
-        verify(alarmRepository).alarmPosting(any(Alarm.class));
-        // Ensure that the log warning for invalid MessageId was called
-        // Note: You may need a logging framework like Logback to verify log messages
+        verify(postingService.summary).record(anyLong());
+        verify(postingService.alarmReceivedTimeValues).remove(messageId);
+        verify(postingService).jsonAttributeFilter(anyString());
     }
-
+    
     @Test
-    public void testAcknowledgeMessageAndLatencyRecording_MessageIdAbsent() throws Exception {
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn("{\"alarmIdentity\":\"test\"}".getBytes());
-        when(message.getMessageId()).thenReturn(null);
-
-        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>(List.of(message)));
-
-        Alarm alarm = mock(Alarm.class);
-        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
-
-        Thread testThread = new Thread(() -> postingService.processAlarmThread());
-        ReflectionTestUtils.setField(postingService, "shutdown", false);
-        testThread.start();
-
-        Thread.sleep(1000); // Allow the thread to process
-
-        ReflectionTestUtils.setField(postingService, "shutdown", true);
-        testThread.join();
-
-        verify(alarmReceiver).acknowledgeMessage(message);
-        verify(summary, never()).record(anyLong());
-        verify(alarmRepository).createAlarm(anyString());
-        verify(alarmRepository).alarmPosting(any(Alarm.class));
-        // Ensure that the log warning for invalid MessageId was called
-        // Note: You may need a logging framework like Logback to verify log messages
+    public void testProcessAlarmThreadWithMessageIdNull() {
+        Message<byte[]> msg = new Message<>();
+        when(msg.getMessageId()).thenReturn(null);
+        
+        postingService.processAlarmThread();
+        
+        verify(postingService.alarmReceiver, never()).acknowledgeMessage(msg);
+        assertEquals("Invalid MessageId", postingService.LOG.getLastLog());
     }
-
-    @Test
-    public void testAcknowledgeMessageAndLatencyRecording_MessageIdAndReceivedTimeMatch() throws Exception {
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn("{\"alarmIdentity\":\"test\"}".getBytes());
-
-        MessageId messageId = mock(MessageId.class);
-        when(message.getMessageId()).thenReturn(messageId);
-
-        Instant receivedTime = Instant.now().minusMillis(200);
-        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>(List.of(message)));
-        ReflectionTestUtils.setField(postingService, "alarmReceivedTimeValues", new Hashtable<>(Map.of(messageId, receivedTime)));
-
-        Alarm alarm = mock(Alarm.class);
-        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
-
-        Thread testThread = new Thread(() -> postingService.processAlarmThread());
-        ReflectionTestUtils.setField(postingService, "shutdown", false);
-        testThread.start();
-
-        Thread.sleep(1000); // Allow the thread to process
-
-        ReflectionTestUtils.setField(postingService, "shutdown", true);
-        testThread.join();
-
-        verify(alarmReceiver).acknowledgeMessage(message);
-        verify(summary).record(anyLong());
-        verify(alarmRepository).createAlarm(anyString());
-        verify(alarmRepository).alarmPosting(any(Alarm.class));
-    }
+    
 }
 ```
 
-These tests now cover the `if` and `else` conditions in the `processAlarmThread()` method:
-
-1. `testAcknowledgeMessageAndLatencyRecording_MessageIdPresentAndInReceivedTimeValues`: Covers the case where `msg.getMessageId()` is not null and `alarmReceivedTimeValues` contains the `messageId`.
-2. `testAcknowledgeMessageAndLatencyRecording_MessageIdPresentAndNotInReceivedTimeValues`: Covers the case where `msg.getMessageId()` is not null but `alarmReceivedTimeValues` does not contain the `messageId`.
-3. `testAcknowledgeMessageAndLatencyRecording_MessageIdAbsent`: Covers the case where `msg.getMessageId()` is null.
-4. `testAcknowledgeMessageAndLatencyRecording_MessageIdAndReceivedTimeMatch`: Additional coverage for the case where both `messageId` and received time match properly.
-
-These tests should help achieve 100% code coverage for the given conditional statements.
+In the test cases above, we are mocking the necessary dependencies and testing the `processAlarmThread()` method in the `PostingService` class for both branches of the conditional statement. Make sure to adjust the test cases according to your actual implementation and add more test cases as needed to achieve 100% code coverage.

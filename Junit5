@@ -1,9 +1,63 @@
-Certainly! Here are the additional test cases to ensure 100% branch coverage for the `postAlarmForEachIteration` method:
+Sure! Here are more comprehensive JUnit 5 test cases to help achieve 100% code coverage for the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class:
 
 ```java
 @Test
 @Transactional(propagation = Propagation.REQUIRES_NEW)
-public void testPostAlarmForEachIteration_AlarmNotClearedAndNoLateProcessing() throws Exception {
+public void testPostAlarmForEachIteration_NoResultInDatabase() throws Exception {
+    when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    when(rs.next()).thenReturn(false);
+
+    int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
+
+    assertEquals(0, result);
+}
+
+@Test
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public void testPostAlarmForEachIteration_ResultInDatabase_AlarmCleared() throws Exception {
+    when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    when(rs.next()).thenReturn(true);
+    when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
+    when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
+    when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(-1);
+
+    int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
+
+    assertEquals(0, result);
+}
+
+@Test
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public void testPostAlarmForEachIteration_ResultInDatabase_AlarmNotCleared_CompareTimeEqual() throws Exception {
+    when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    when(rs.next()).thenReturn(true);
+    when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
+    when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNotCleared()));
+    when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(0);
+
+    int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
+
+    assertEquals(0, result);
+}
+
+@Test
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public void testPostAlarmForEachIteration_LateProcessingEligible() throws Exception {
+    when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    when(rs.next()).thenReturn(true);
+    when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
+    when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNotCleared()));
+    when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(-1);
+    when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(Alarm.class), any(SqlRowSet.class))).thenReturn(true);
+
+    int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
+
+    assertEquals(1, result);
+}
+
+@Test
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public void testPostAlarmForEachIteration_LateProcessingNotEligible() throws Exception {
     when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
     when(rs.next()).thenReturn(true);
     when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
@@ -18,26 +72,11 @@ public void testPostAlarmForEachIteration_AlarmNotClearedAndNoLateProcessing() t
 
 @Test
 @Transactional(propagation = Propagation.REQUIRES_NEW)
-public void testPostAlarmForEachIteration_AlarmClearedAndLateProcessing() throws Exception {
+public void testPostAlarmForEachIteration_CompareTimeGreaterThanZero() throws Exception {
     when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
     when(rs.next()).thenReturn(true);
     when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
-    when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
-    when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(-1);
-    when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(Alarm.class), any(SqlRowSet.class))).thenReturn(true);
-
-    int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-
-    assertEquals(-1, result);
-}
-
-@Test
-@Transactional(propagation = Propagation.REQUIRES_NEW)
-public void testPostAlarmForEachIteration_DbAlarmUpdatedTimeLaterThanCurrentAlarm() throws Exception {
-    when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-    when(rs.next()).thenReturn(true);
-    when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2024-01-01T10:00:00Z")));
-    when(rs.getLong("sequenceid")).thenReturn(1L);
+    when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNotCleared()));
     when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
 
     int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
@@ -47,32 +86,41 @@ public void testPostAlarmForEachIteration_DbAlarmUpdatedTimeLaterThanCurrentAlar
 
 @Test
 @Transactional(propagation = Propagation.REQUIRES_NEW)
-public void testPostAlarmForEachIteration_ExceptionDuringLateProcessing() throws Exception {
+public void testPostAlarmForEachIteration_DbSequenceIdGreaterThanCurrentSequenceId() throws Exception {
     when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
     when(rs.next()).thenReturn(true);
     when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
-    when(rs.getLong("sequenceid")).thenReturn(2L);
+    when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNotCleared()));
+    when(rs.getLong("sequenceid")).thenReturn(alarm.getSequenceId() + 1);
     when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(-1);
-    when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(Alarm.class), any(SqlRowSet.class))).thenThrow(new RuntimeException("Processing error"));
 
     int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
 
-    assertEquals(-2, result);
+    assertEquals(0, result);
 }
 ```
 
 ### Additional Branches Covered:
 
-1. **Alarm Not Cleared and No Late Processing**:
-    - Tests the scenario where the alarm is not cleared, and it's also not eligible for late processing.
+1. **No Result in Database**:
+    - Tests the scenario where the SQL query returns no result.
 
-2. **Alarm Cleared and Late Processing**:
-    - Tests the scenario where the alarm is cleared, but it is eligible for late processing.
+2. **Result in Database with Alarm Cleared**:
+    - Tests the scenario where the alarm in the database is cleared.
 
-3. **DB Alarm Updated Time Later Than Current Alarm**:
-    - Tests the scenario where the alarm in the database has an updated time that is later than the current alarm.
+3. **Result in Database with Alarm Not Cleared and Compare Time Equal**:
+    - Tests the scenario where the alarm is not cleared, and the compare time function returns zero (equal).
 
-4. **Exception During Late Processing**:
-    - Tests the scenario where an exception occurs during the check for late processing eligibility.
+4. **Late Processing Eligible**:
+    - Tests the scenario where the alarm is eligible for late processing.
+
+5. **Late Processing Not Eligible**:
+    - Tests the scenario where the alarm is not eligible for late processing.
+
+6. **Compare Time Greater Than Zero**:
+    - Tests the scenario where the compare time function returns a value greater than zero.
+
+7. **Database Sequence ID Greater Than Current Sequence ID**:
+    - Tests the scenario where the sequence ID in the database is greater than the current alarm's sequence ID.
 
 These additional test cases should help in achieving 100% branch coverage for the `postAlarmForEachIteration` method.

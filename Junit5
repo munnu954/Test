@@ -1,23 +1,18 @@
-Certainly! Below are the JUnit 5 test cases for covering the specified blocks in the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class. The test cases use Reflection APIs to access the `addTagsToSet` and `mergeArrayMethod` methods.
-
-```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.RowMapperResultSetExtractor;
+import org.springframework.jdbc.support.RowMapperResultSetExtractor.RowMapper;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
 
 import java.lang.reflect.Method;
-import java.sql.Timestamp;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.HashSet;
 import java.util.Set;
 
 @ExtendWith(MockitoExtension.class)
@@ -30,150 +25,74 @@ public class AlarmRepositoryImplTest {
     private JdbcTemplate jdbcTemplate;
 
     @Mock
-    private AlarmPostingUtils utils;
-
-    @Mock
     private PostGreDataBaseConfig postgresConf;
 
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
-    @Mock
-    private SqlRowSet rs;
-
     private Alarm alarm;
 
     @BeforeEach
-    public void setUp() {
+    void setup() {
         alarm = new Alarm();
-        alarm.setAlarmIdentity("testIdentity");
+        alarm.setAlarmIdentity("123");
+        alarm.setAlarmUpdatedTime("2023-04-21T10:00:00Z");
+        alarm.setSequenceID(1);
     }
 
     @Test
-    public void testPostAlarmForEachIteration_TagMerge() throws Exception {
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
-        when(rs.getLong("sequenceid")).thenReturn(123L);
-        when(rs.getObject("tag")).thenReturn(new String[]{"tag1", "tag2"});
-        when(utils.compareTime(anyString(), anyString(), eq(alarm))).thenReturn(1);
-
-        Method mergeArrayMethod = alarmRepositoryImpl.getClass().getDeclaredMethod("mergeArrayMethod", Object.class, Alarm.class);
+    void testMergeArrayMethod() throws Exception {
+        Object tagFromDb = new String[] {"tag1", "tag2"};
+        Method mergeArrayMethod = AlarmRepositoryImpl.class.getDeclaredMethod("mergeArrayMethod", Object.class, Alarm.class);
         mergeArrayMethod.setAccessible(true);
+        Set<String> joinedTagSet = (Set<String>) mergeArrayMethod.invoke(alarmRepositoryImpl, tagFromDb, alarm);
+        Assertions.assertEquals(2, joinedTagSet.size());
+        Assertions.assertTrue(joinedTagSet.contains("tag1"));
+        Assertions.assertTrue(joinedTagSet.contains("tag2"));
+    }
 
-        Method addTagsToSet = alarmRepositoryImpl.getClass().getDeclaredMethod("addTagsToSet", String[].class);
+    @Test
+    void testAddTagsToSet() throws Exception {
+        String[] tagArray = new String[] {"tag1", "tag2"};
+        Method addTagsToSet = AlarmRepositoryImpl.class.getDeclaredMethod("addTagsToSet", String[].class);
         addTagsToSet.setAccessible(true);
-
-        mergeArrayMethod.invoke(alarmRepositoryImpl, new String[]{"tag1", "tag2"}, alarm);
-
-        Set<String> joinedTagSet = (Set<String>) mergeArrayMethod.invoke(alarmRepositoryImpl, new String[]{"tag1", "tag2"}, alarm);
-        assertTrue(joinedTagSet.contains("tag1"));
-        assertTrue(joinedTagSet.contains("tag2"));
-
-        String[] resultantArray = new String[joinedTagSet.size()];
-        joinedTagSet.toArray(resultantArray);
-        alarm.setTag(resultantArray);
-
-        assertEquals(2, alarm.getTag().length);
-        assertEquals("tag1", alarm.getTag()[0]);
-        assertEquals("tag2", alarm.getTag()[1]);
+        Set<String> joinedSet = (Set<String>) addTagsToSet.invoke(alarmRepositoryImpl, (Object) tagArray);
+        Assertions.assertEquals(2, joinedSet.size());
+        Assertions.assertTrue(joinedSet.contains("tag1"));
+        Assertions.assertTrue(joinedSet.contains("tag2"));
     }
 
     @Test
-    public void testPostAlarmForEachIteration_ComponentId() throws Exception {
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
-        when(rs.getLong("sequenceid")).thenReturn(123L);
-        when(rs.getString("componentid")).thenReturn("testComponentId");
+    void testPostAlarmForEachIteration_LatestAlarmScenario() {
+        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
+        Mockito.when(rs.next()).thenReturn(true);
+        Mockito.when(rs.getTimestamp("alarmupdatedtime")).thenReturn(java.sql.Timestamp.valueOf("2023-04-21 10:00:00"));
+        Mockito.when(rs.getLong("sequenceid")).thenReturn(2L);
+        Mockito.when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
+        Mockito.when(rs.getInt("perceivedseverity")).thenReturn(3);
+        Mockito.when(rs.getString("alarmdetails")).thenReturn("{\"key\":\"value\"}");
+        Mockito.when(jdbcTemplate.queryForRowSet(Mockito.anyString(), Mockito.any())).thenReturn(rs);
+        Mockito.when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(Mockito.any(), Mockito.any())).thenReturn(true);
 
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals("testComponentId", alarm.getComponentId());
+        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
+        Assertions.assertEquals(0, rowsAffected);
+        Assertions.assertEquals(3, alarm.getPerceivedSeverity());
+        Assertions.assertEquals(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew()), alarm.getState());
+        Assertions.assertNotNull(alarm.getAlarmDetails());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_AlarmedObject() throws Exception {
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
-        when(rs.getLong("sequenceid")).thenReturn(123L);
-        when(rs.getString("alarmedobject")).thenReturn("testAlarmedObject");
+    void testPostAlarmForEachIteration_NewAlarmScenario() {
+        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
+        Mockito.when(rs.next()).thenReturn(false);
+        Mockito.when(jdbcTemplate.queryForRowSet(Mockito.anyString(), Mockito.any())).thenReturn(rs);
+        Mockito.when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(Mockito.any(), Mockito.any())).thenReturn(true);
 
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals("testAlarmedObject", alarm.getAlarmedObject());
-    }
-
-    @Test
-    public void testPostAlarmForEachIteration_ReportingObject() throws Exception {
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
-        when(rs.getLong("sequenceid")).thenReturn(123L);
-        when(rs.getString("reportingobject")).thenReturn("testReportingObject");
-
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals("testReportingObject", alarm.getReportingObject());
-    }
-
-    @Test
-    public void testPostAlarmForEachIteration_EquipmentObject() throws Exception {
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
-        when(rs.getLong("sequenceid")).thenReturn(123L);
-        when(rs.getString("equipmentobject")).thenReturn("testEquipmentObject");
-
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals("testEquipmentObject", alarm.getEquipmentObject());
-    }
-
-    @Test
-    public void testPostAlarmForEachIteration_Tid() throws Exception {
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
-        when(rs.getLong("sequenceid")).thenReturn(123L);
-        when(rs.getString("tid")).thenReturn("testTid");
-
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals("testTid", alarm.getTid());
-    }
-
-    @Test
-    public void testPostAlarmForEachIteration_Aid() throws Exception {
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
-        when(rs.getLong("sequenceid")).thenReturn(123L);
-        when(rs.getString("aid")).thenReturn("testAid");
-
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals("testAid", alarm.getAid());
-    }
-
-    @Test
-    public void testPostAlarmForEachIteration_RawMessage() throws Exception {
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
-        when(rs.getLong("sequenceid")).thenReturn(123L);
-        when(rs.getString("rawmessage")).thenReturn("testRawMessage");
-
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals("testRawMessage", alarm.getRawMessage());
-    }
-
-    @Test
-    public void testPostAlarmForEachIteration_Stage() throws Exception {
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-09-01 10:10:10.0"));
-        when(rs.getLong("sequenceid")).thenReturn(123L);
-        when(rs.getInt("stage")).thenReturn(5);
-
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals(5, alarm.getStage());
+        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
+        Assertions.assertEquals(0, rowsAffected);
+        Assertions.assertNull(alarm.getClearTime());
+        Assertions.assertEquals(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew()), alarm.getState());
+        Assertions.assertEquals(1, alarm.getCount());
+        Assertions.assertEquals(1, alarm.getCountResetFlag());
     }
 }
-```
-
-These test cases cover the specified blocks within the `postAlarmForEachIteration` method. The `Mockito` framework is used to mock dependencies, and `Reflection` APIs are utilized to access private methods. Ensure you have the necessary dependencies for `JUnit 5`, `Mockito`, and `Jackson` in your `build.gradle` or `pom.xml` file to run these tests successfully.

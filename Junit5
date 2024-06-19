@@ -1,196 +1,78 @@
-Certainly! To achieve 100% code coverage, we need to ensure that all branches of the `postAlarmForEachIteration` method are tested. Here are additional test cases that cover more branches and conditions within the method:
+Certainly! Here are the additional test cases to ensure 100% branch coverage for the `postAlarmForEachIteration` method:
 
 ```java
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.*;
+@Test
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public void testPostAlarmForEachIteration_AlarmNotClearedAndNoLateProcessing() throws Exception {
+    when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    when(rs.next()).thenReturn(true);
+    when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
+    when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNotCleared()));
+    when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(-1);
+    when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(Alarm.class), any(SqlRowSet.class))).thenReturn(false);
 
-import java.sql.Timestamp;
-import java.time.Instant;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.rowset.SqlRowSet;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+    int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
 
-@ExtendWith(MockitoExtension.class)
-public class AlarmRepositoryImplTest {
+    assertEquals(0, result);
+}
 
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
+@Test
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public void testPostAlarmForEachIteration_AlarmClearedAndLateProcessing() throws Exception {
+    when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    when(rs.next()).thenReturn(true);
+    when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
+    when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
+    when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(-1);
+    when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(Alarm.class), any(SqlRowSet.class))).thenReturn(true);
 
-    @Mock
-    private JdbcTemplate jdbcTemplate;
+    int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
 
-    @Mock
-    private AlarmPostingUtils utils;
+    assertEquals(-1, result);
+}
 
-    @Mock
-    private PostGreDataBaseConfig postgresConf;
+@Test
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public void testPostAlarmForEachIteration_DbAlarmUpdatedTimeLaterThanCurrentAlarm() throws Exception {
+    when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    when(rs.next()).thenReturn(true);
+    when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2024-01-01T10:00:00Z")));
+    when(rs.getLong("sequenceid")).thenReturn(1L);
+    when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
 
-    @Mock
-    private PostingRuleProcessingService postingRuleProcessingService;
+    int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
 
-    private Alarm alarm;
-    private SqlRowSet rs;
+    assertEquals(0, result);
+}
 
-    @BeforeEach
-    public void setUp() {
-        alarm = new Alarm();
-        alarm.setAlarmIdentity("testIdentity");
-        alarm.setSequenceID(1);
-        alarm.setAlarmUpdatedTime("2023-01-01T10:00:00Z");
-        rs = mock(SqlRowSet.class);
-    }
+@Test
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public void testPostAlarmForEachIteration_ExceptionDuringLateProcessing() throws Exception {
+    when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
+    when(rs.next()).thenReturn(true);
+    when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
+    when(rs.getLong("sequenceid")).thenReturn(2L);
+    when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(-1);
+    when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(Alarm.class), any(SqlRowSet.class))).thenThrow(new RuntimeException("Processing error"));
 
-    @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_NewAlarm() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(false);
+    int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-
-        assertEquals(0, result);
-    }
-
-    @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_ExistingAlarm_LateAlarm() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
-        when(rs.getLong("sequenceid")).thenReturn(2L);
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(-1);
-        when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(Alarm.class), any(SqlRowSet.class))).thenReturn(true);
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-
-        assertEquals(0, result);
-    }
-
-    @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_ExistingAlarm_LatestAlarm() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-
-        assertEquals(0, result);
-    }
-
-    @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_Exception() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenThrow(new RuntimeException("DB error"));
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-
-        assertEquals(-2, result);
-    }
-
-    @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_AlarmCleared() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
-        when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
-        String dbAlmUpdatedTime = "2022-01-01T10:00:00Z";
-        String curAlmUpdatedTime = "2023-01-01T10:00:00Z";
-        alarm.setAlarmUpdatedTime(curAlmUpdatedTime);
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-
-        assertEquals(-1, result);
-    }
-
-    @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_AlarmWithNullUpdatedTime() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(false);
-        alarm.setAlarmUpdatedTime(null);
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-
-        assertEquals(0, result);
-    }
-
-    @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_AlarmWithFutureUpdatedTime() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(false);
-        alarm.setAlarmUpdatedTime("2099-01-01T10:00:00Z");
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-
-        assertEquals(0, result);
-    }
-
-    // Additional test cases to cover more branches
-    @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_AlarmWithSameUpdatedTimeAndSequenceId() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2023-01-01T10:00:00Z")));
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(0);
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-
-        assertEquals(0, result);
-    }
-
-    @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_AlarmWithDifferentSequenceId() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(0);
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-
-        assertEquals(0, result);
-    }
-
-    @Test
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void testPostAlarmForEachIteration_AlarmNotEligibleForLateProcessing() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2022-01-01T10:00:00Z")));
-        when(rs.getLong("sequenceid")).thenReturn(2L);
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(-1);
-        when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(Alarm.class), any(SqlRowSet.class))).thenReturn(false);
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "testCompId");
-
-        assertEquals(0, result);
-    }
+    assertEquals(-2, result);
 }
 ```
 
-### Newly Added Test Cases:
+### Additional Branches Covered:
 
-1. **Alarm With Same Updated Time and Sequence ID**:
-    - Tests the scenario when the alarm in the database has the same updated time and sequence ID as the current alarm.
+1. **Alarm Not Cleared and No Late Processing**:
+    - Tests the scenario where the alarm is not cleared, and it's also not eligible for late processing.
 
-2. **Alarm With Different Sequence ID**:
-    - Tests the scenario when the alarm in the database has a different sequence ID but the same updated time.
+2. **Alarm Cleared and Late Processing**:
+    - Tests the scenario where the alarm is cleared, but it is eligible for late processing.
 
-3. **Alarm Not Eligible for Late Processing**:
-    - Tests the scenario when the alarm is not eligible for late processing according to the `postingRuleProcessingService`.
+3. **DB Alarm Updated Time Later Than Current Alarm**:
+    - Tests the scenario where the alarm in the database has an updated time that is later than the current alarm.
 
-These additional test cases should help in achieving 100% code coverage by covering all the branches and conditions in the `postAlarmForEachIteration` method.
+4. **Exception During Late Processing**:
+    - Tests the scenario where an exception occurs during the check for late processing eligibility.
+
+These additional test cases should help in achieving 100% branch coverage for the `postAlarmForEachIteration` method.

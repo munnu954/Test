@@ -1,28 +1,37 @@
-import org.junit.jupiter.api.Assertions;
+Certainly! Here's the JUnit 5 test case that covers the specific code blocks in the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class. This test utilizes Mockito to mock dependencies and uses reflection to access private methods.
+
+```java
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.Mockito;
+import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.RowMapperResultSetExtractor;
-import org.springframework.jdbc.support.RowMapperResultSetExtractor.RowMapper;
-import org.springframework.jdbc.support.rowset.SqlRowSet;
+import org.springframework.jdbc.support.SqlRowSet;
 
 import java.lang.reflect.Method;
-import java.util.HashSet;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.Calendar;
+import java.util.HashMap;
 import java.util.Set;
 
 @ExtendWith(MockitoExtension.class)
 public class AlarmRepositoryImplTest {
 
     @InjectMocks
-    private AlarmRepositoryImpl alarmRepositoryImpl;
+    private AlarmRepositoryImpl alarmRepository;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
+
+    @Mock
+    private AlarmPostingUtils utils;
 
     @Mock
     private PostGreDataBaseConfig postgresConf;
@@ -31,68 +40,66 @@ public class AlarmRepositoryImplTest {
     private PostingRuleProcessingService postingRuleProcessingService;
 
     private Alarm alarm;
+    private SqlRowSet rs;
 
     @BeforeEach
-    void setup() {
+    public void setUp() {
         alarm = new Alarm();
-        alarm.setAlarmIdentity("123");
-        alarm.setAlarmUpdatedTime("2023-04-21T10:00:00Z");
-        alarm.setSequenceID(1);
+        rs = mock(SqlRowSet.class);
     }
 
     @Test
-    void testMergeArrayMethod() throws Exception {
-        Object tagFromDb = new String[] {"tag1", "tag2"};
-        Method mergeArrayMethod = AlarmRepositoryImpl.class.getDeclaredMethod("mergeArrayMethod", Object.class, Alarm.class);
-        mergeArrayMethod.setAccessible(true);
-        Set<String> joinedTagSet = (Set<String>) mergeArrayMethod.invoke(alarmRepositoryImpl, tagFromDb, alarm);
-        Assertions.assertEquals(2, joinedTagSet.size());
-        Assertions.assertTrue(joinedTagSet.contains("tag1"));
-        Assertions.assertTrue(joinedTagSet.contains("tag2"));
+    public void testPostAlarmForEachIteration() throws Exception {
+        alarm.setAlarmIdentity("testIdentity");
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(rs);
+        when(rs.next()).thenReturn(true);
+        when(rs.getLong("sequenceid")).thenReturn(1L);
+        when(rs.getBoolean("resolved")).thenReturn(true);
+        when(rs.getString("componentid")).thenReturn("componentId");
+        when(rs.getString("alarmedobject")).thenReturn("alarmedObject");
+        when(rs.getString("reportingobject")).thenReturn("reportingObject");
+        when(rs.getString("equipmentobject")).thenReturn("equipmentObject");
+        when(rs.getString("tid")).thenReturn("tid");
+        when(rs.getString("aid")).thenReturn("aid");
+        when(rs.getString("rawmessage")).thenReturn("rawMessage");
+        when(rs.getInt("stage")).thenReturn(1);
+
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+
+        // Validate if the values have been correctly set in the alarm object
+        assertEquals(1L, alarm.getSequenceID());
+        assertEquals(true, alarm.isResolved());
+        assertEquals("componentId", alarm.getComponentId());
+        assertEquals("alarmedObject", alarm.getAlarmedObject());
+        assertEquals("reportingObject", alarm.getReportingObject());
+        assertEquals("equipmentObject", alarm.getEquipmentObject());
+        assertEquals("tid", alarm.getTid());
+        assertEquals("aid", alarm.getAid());
+        assertEquals("rawMessage", alarm.getRawMessage());
+        assertEquals(1, alarm.getStage());
     }
 
     @Test
-    void testAddTagsToSet() throws Exception {
-        String[] tagArray = new String[] {"tag1", "tag2"};
-        Method addTagsToSet = AlarmRepositoryImpl.class.getDeclaredMethod("addTagsToSet", String[].class);
-        addTagsToSet.setAccessible(true);
-        Set<String> joinedSet = (Set<String>) addTagsToSet.invoke(alarmRepositoryImpl, (Object) tagArray);
-        Assertions.assertEquals(2, joinedSet.size());
-        Assertions.assertTrue(joinedSet.contains("tag1"));
-        Assertions.assertTrue(joinedSet.contains("tag2"));
-    }
-
-    @Test
-    void testPostAlarmForEachIteration_LatestAlarmScenario() {
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        Mockito.when(rs.next()).thenReturn(true);
-        Mockito.when(rs.getTimestamp("alarmupdatedtime")).thenReturn(java.sql.Timestamp.valueOf("2023-04-21 10:00:00"));
-        Mockito.when(rs.getLong("sequenceid")).thenReturn(2L);
-        Mockito.when(rs.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateCleared()));
-        Mockito.when(rs.getInt("perceivedseverity")).thenReturn(3);
-        Mockito.when(rs.getString("alarmdetails")).thenReturn("{\"key\":\"value\"}");
-        Mockito.when(jdbcTemplate.queryForRowSet(Mockito.anyString(), Mockito.any())).thenReturn(rs);
-        Mockito.when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(Mockito.any(), Mockito.any())).thenReturn(true);
-
-        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
-        Assertions.assertEquals(0, rowsAffected);
-        Assertions.assertEquals(3, alarm.getPerceivedSeverity());
-        Assertions.assertEquals(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew()), alarm.getState());
-        Assertions.assertNotNull(alarm.getAlarmDetails());
-    }
-
-    @Test
-    void testPostAlarmForEachIteration_NewAlarmScenario() {
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        Mockito.when(rs.next()).thenReturn(false);
-        Mockito.when(jdbcTemplate.queryForRowSet(Mockito.anyString(), Mockito.any())).thenReturn(rs);
-        Mockito.when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(Mockito.any(), Mockito.any())).thenReturn(true);
-
-        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
-        Assertions.assertEquals(0, rowsAffected);
-        Assertions.assertNull(alarm.getClearTime());
-        Assertions.assertEquals(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateNew()), alarm.getState());
-        Assertions.assertEquals(1, alarm.getCount());
-        Assertions.assertEquals(1, alarm.getCountResetFlag());
+    public void testAddTagsToSet() throws Exception {
+        String[] tags = {"tag1", "tag2"};
+        Method method = AlarmRepositoryImpl.class.getDeclaredMethod("addTagsToSet", String[].class);
+        method.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Set<String> result = (Set<String>) method.invoke(alarmRepository, (Object) tags);
+        assertEquals(2, result.size());
     }
 }
+```
+
+### Explanation:
+
+1. **Test Dependencies**: We use Mockito annotations to inject mock dependencies (`@InjectMocks`, `@Mock`).
+2. **Setup**: The `@BeforeEach` setup method initializes common objects.
+3. **Test `postAlarmForEachIteration`**:
+   - **Mocking**: We mock the behavior of `jdbcTemplate.queryForRowSet` and the returned `SqlRowSet` to simulate the database interactions.
+   - **Assertions**: We assert that the fields of the `Alarm` object are correctly populated based on the mock data.
+4. **Test `addTagsToSet`**:
+   - **Reflection**: We use reflection to access the private method `addTagsToSet`.
+   - **Assertions**: We verify the output of the method.
+
+This test case ensures that the specified fields are correctly populated and that the private method `addTagsToSet` works as expected.

@@ -1,131 +1,85 @@
-Certainly! Below are JUnit 5 test cases for covering the blocks of the `postAlarmForEachIteration` method related to `topologyDetails` in the `AlarmRepositoryImpl` class. The method makes use of a private method `addTagsToSet`, which will also be accessed using reflection.
-
-```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import java.lang.reflect.Method;
-import java.sql.Timestamp;
-import java.text.SimpleDateFormat;
-import java.time.Instant;
-import java.util.*;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
+import com.newwaylabs.alarm.config.PostGreDataBaseConfig;
+import com.newwaylabs.alarm.constants.AlarmConstants;
+import com.newwaylabs.alarm.model.Alarm;
+import com.newwaylabs.alarm.repository.impl.AlarmRepositoryImpl;
+import com.newwaylabs.alarm.service.PostingRuleProcessingService;
+import com.newwaylabs.alarm.utils.AlarmPostingUtils;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
+import org.mockito.ArgumentMatchers;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
-import org.springframework.test.util.ReflectionTestUtils;
+
+import java.sql.Timestamp;
+import java.time.Instant;
 
 @ExtendWith(MockitoExtension.class)
-public class AlarmRepositoryImplTest {
+class AlarmRepositoryImplTest {
 
     @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
+    private AlarmRepositoryImpl alarmRepositoryImpl;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
 
     @Mock
-    private AlarmPostingUtils utils;
+    private AlarmPostingUtils alarmPostingUtils;
 
     @Mock
-    private PostGreDataBaseConfig postgresConf;
+    private PostGreDataBaseConfig postGreDataBaseConfig;
 
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
     private Alarm alarm;
-    private SqlRowSet rs;
 
     @BeforeEach
-    public void setup() {
+    void setUp() {
         alarm = new Alarm();
-        rs = mock(SqlRowSet.class);
+        alarm.setAlarmIdentity("test-alarm-id");
+        alarm.setAlarmUpdatedTime("2023-05-01T12:00:00Z");
+        alarm.setSequenceID(1L);
     }
 
     @Test
-    public void testPostAlarmForEachIteration_TopologyDetailsNotNull() throws Exception {
-        alarm.setTopologyDetails("{\"key\":\"value\"}");
-        when(rs.next()).thenReturn(true);
-        when(rs.getString("topologydetails")).thenReturn("{\"dbKey\":\"dbValue\"}");
+    void testPostAlarmForEachIteration_WithSequenceID0() {
+        // Arrange
+        SqlRowSet sqlRowSet = Mockito.mock(SqlRowSet.class);
+        Mockito.when(sqlRowSet.next()).thenReturn(true);
+        Mockito.when(sqlRowSet.getLong("sequenceid")).thenReturn(0L);
+        Mockito.when(sqlRowSet.getBoolean("resolved")).thenReturn(true);
+        Mockito.when(sqlRowSet.getString("componentid")).thenReturn("component-id");
+        Mockito.when(sqlRowSet.getString("alarmedobject")).thenReturn("alarmed-object");
+        Mockito.when(sqlRowSet.getString("reportingobject")).thenReturn("reporting-object");
+        Mockito.when(sqlRowSet.getString("equipmentobject")).thenReturn("equipment-object");
+        Mockito.when(sqlRowSet.getString("tid")).thenReturn("tid");
+        Mockito.when(sqlRowSet.getString("aid")).thenReturn("aid");
+        Mockito.when(sqlRowSet.getString("rawmessage")).thenReturn("raw-message");
+        Mockito.when(sqlRowSet.getInt("stage")).thenReturn(1);
+        Mockito.when(jdbcTemplate.queryForRowSet(ArgumentMatchers.eq(AlarmConstants.CHECK_ALARM_IDENTITY), ArgumentMatchers.any())).thenReturn(sqlRowSet);
 
-        ObjectMapper objectMapper = AlarmPostingConstants.getObjectMapper();
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        alarmMap.put("key", "value");
-        HashMap<String, Object> dbMap = new HashMap<>();
-        dbMap.put("dbKey", "dbValue");
+        // Act
+        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "component-id");
 
-        Method mergeForAlarmsNested = AlarmRepositoryImpl.class.getDeclaredMethod("mergeForAlarmsNested", HashMap.class, HashMap.class);
-        mergeForAlarmsNested.setAccessible(true);
-        HashMap<String, Object> resultMap = (HashMap<String, Object>) mergeForAlarmsNested.invoke(alarmRepository, dbMap, alarmMap);
-
-        assertEquals(resultMap, objectMapper.readValue(alarm.getTopologyDetails(), HashMap.class));
-
-        int rowsAffected = alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        verify(rs, times(1)).getString("topologydetails");
-        assertEquals(objectMapper.writeValueAsString(resultMap), alarm.getTopologyDetails());
+        // Assert
+        Assertions.assertEquals(0, rowsAffected);
+        Assertions.assertEquals(1L, alarm.getSequenceID());
+        Assertions.assertTrue(alarm.isResolved());
+        Assertions.assertEquals("component-id", alarm.getComponentId());
+        Assertions.assertEquals("alarmed-object", alarm.getAlarmedObject());
+        Assertions.assertEquals("reporting-object", alarm.getReportingObject());
+        Assertions.assertEquals("equipment-object", alarm.getEquipmentObject());
+        Assertions.assertEquals("tid", alarm.getTid());
+        Assertions.assertEquals("aid", alarm.getAid());
+        Assertions.assertEquals("raw-message", alarm.getRawMessage());
+        Assertions.assertEquals(1, alarm.getStage());
     }
 
-    @Test
-    public void testPostAlarmForEachIteration_TopologyDetailsDbNotNull() throws Exception {
-        when(rs.next()).thenReturn(true);
-        when(rs.getString("topologydetails")).thenReturn("{\"dbKey\":\"dbValue\"}");
-
-        int rowsAffected = alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        verify(rs, times(1)).getString("topologydetails");
-        assertEquals("{\"dbKey\":\"dbValue\"}", alarm.getTopologyDetails());
-    }
-
-    @Test
-    public void testAddTagsToSet() throws Exception {
-        Method addTagsToSetMethod = AlarmRepositoryImpl.class.getDeclaredMethod("addTagsToSet", String[].class);
-        addTagsToSetMethod.setAccessible(true);
-
-        String[] tags = {"tag1", "tag2"};
-        Set<String> result = (Set<String>) addTagsToSetMethod.invoke(alarmRepository, (Object) tags);
-
-        assertNotNull(result);
-        assertTrue(result.contains("tag1"));
-        assertTrue(result.contains("tag2"));
-    }
-
-    private static class AlarmPostingConstants {
-        public static ObjectMapper getObjectMapper() {
-            return new ObjectMapper();
-        }
-    }
-
-    private HashMap<String, Object> mergeForAlarmsNested(HashMap<String, Object> dbMap, HashMap<String, Object> alarmMap) {
-        // Dummy implementation for test
-        dbMap.putAll(alarmMap);
-        return dbMap;
-    }
+    // Add more test cases for other scenarios
 }
-```
-
-### Explanation:
-1. **Setup and Mocks:**
-   - **Mockito** is used to mock dependencies like `JdbcTemplate`, `AlarmPostingUtils`, `PostGreDataBaseConfig`, and `PostingRuleProcessingService`.
-   - The `Alarm` object and `SqlRowSet` are initialized before each test.
-
-2. **Test Cases:**
-   - **testPostAlarmForEachIteration_TopologyDetailsNotNull():** Tests the scenario where `alarm.getTopologyDetails()` is not null. It verifies that the `topologyDetails` from the database and the `alarm` are merged correctly.
-   - **testPostAlarmForEachIteration_TopologyDetailsDbNotNull():** Tests the scenario where `rs.getString("topologydetails")` is not null. It verifies that the `topologyDetails` from the database are set correctly in the `alarm`.
-   - **testAddTagsToSet():** This test uses reflection to access and test the private `addTagsToSet` method.
-
-3. **Helper Methods:**
-   - **AlarmPostingConstants:** A dummy class to mimic the behavior of `AlarmPostingConstants.getObjectMapper()`.
-
-4. **Reflection:**
-   - Reflection is used to access private methods and fields to ensure full code coverage.
-
-These test cases should help ensure that the specified blocks of the `postAlarmForEachIteration` method are fully covered.

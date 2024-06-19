@@ -1,72 +1,56 @@
-To write a JUnit 5 test case covering the catch block of the `shutdown` method in the `PostingService` class, you can use reflection to manipulate the private `threadList` field to ensure it contains threads that will throw an `InterruptedException` when joined. Here is a sample test case that achieves this:
-
-```java
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-import javax.annotation.PreDestroy;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
+import org.mockito.Mockito;
+import org.apache.logging.log4j.Logger;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 
-/**
- * Test class for PostingService.
- */
-@ExtendWith(MockitoExtension.class)
+import static org.mockito.Mockito.*;
+
 public class PostingServiceTest {
-    private static final Logger LOG = LogManager.getLogger(PostingService.class);
 
     private PostingService postingService;
-    private ArrayList<Thread> mockThreadList;
+    private Logger mockLogger;
 
     @BeforeEach
-    public void setUp() throws Exception {
+    public void setUp() {
         postingService = new PostingService();
-        mockThreadList = new ArrayList<>();
-        Field threadListField = PostingService.class.getDeclaredField("threadList");
-        threadListField.setAccessible(true);
-        threadListField.set(postingService, mockThreadList);
+        mockLogger = mock(Logger.class);
+        setLogger(postingService, mockLogger);
+    }
+
+    @AfterEach
+    public void tearDown() {
+        postingService = null;
     }
 
     @Test
     public void testShutdownWithInterruptedException() throws Exception {
-        Thread mockThread = createInterruptedThread();
-        mockThreadList.add(mockThread);
+        // Mock a Thread that will throw InterruptedException when join() is called
+        Thread mockThread = mock(Thread.class);
+        doThrow(InterruptedException.class).when(mockThread).join();
 
+        // Add the mockThread to the threadList of the postingService
+        Field threadListField = postingService.getClass().getDeclaredField("threadList");
+        threadListField.setAccessible(true);
+        ArrayList<Thread> threadList = (ArrayList<Thread>) threadListField.get(postingService);
+        threadList.add(mockThread);
+
+        // Call the shutdown method
         postingService.shutdown();
 
-        // Verify that the log happens
-        org.mockito.Mockito.verify(LOG).error(org.mockito.Mockito.contains("Interruped Exception occured"));
+        // Verify that the logger was called with the expected message
+        Mockito.verify(mockLogger).error("Interruped Exception occured: ", any(InterruptedException.class));
     }
 
-    /**
-     * This method creates a thread that throws InterruptedException when get joined.
-     * @return the interrupted thread
-     */
-    private Thread createInterruptedThread() {
-        Thread thread = new Thread(() -> {
-            try {
-                Thread.sleep(Long.MAX_VALUE);
-            } catch (InterruptedException e) {
-                // Swallow the exception for this test, as it will be propagated when joining the thread.
-            }
-        });
-        thread.start();
-        thread.interrupt();
-        return thread;
+    private void setLogger(PostingService instance, Logger logger) {
+        try {
+            Field field = instance.getClass().getDeclaredField("LOG");
+            field.setAccessible(true);
+            field.set(null, logger);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            e.printStackTrace();
+        }
     }
 }
-```
-
-This test case:
-1. Uses reflection to set the `threadList` field in the `PostingService` instance.
-2. Adds a thread to `threadList` that is designed to be interrupted.
-3. Calls the `shutdown` method on the `PostingService` instance, triggering the catch block when the interrupted thread's `join` method is invoked.
-4. Uses logging verification to ensure that the log message was printed when the `InterruptedException` is caught.
-
-Ensure that your `PostingService` class is adjusted to use constructor injection for the `Logger` instance to facilitate mocking in unit tests, or use a logging framework that supports mock verification.
-Additionally, you need to include dependencies for Mockito and Log4j in your test classpath for mocking and verifying the log statements.

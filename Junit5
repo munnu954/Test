@@ -1,75 +1,159 @@
-import org.junit.jupiter.api.Test;
-import org.mockito.MockedConstruction;
-import org.mockito.Mockito;
+To write JUnit 5 test cases for the `processAlarmThread` method of the `PostingService` class, we need to cover all branches and scenarios. This includes testing normal execution, handling exceptions, and edge cases like empty queues and invalid messages. We will use reflection to access private fields and methods.
 
-import java.lang.reflect.Field;
+Here's the JUnit 5 test class:
+
+```java
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.time.Instant;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.*;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
+@ExtendWith(MockitoExtension.class)
 public class PostingServiceTest {
 
-    @Test
-    public void testProcessAlarmThread() throws Exception {
-        // Mocking dependencies
-        AlarmRepository alarmRepository = mock(AlarmRepository.class);
-        AlarmReceiver alarmReceiver = mock(AlarmReceiver.class);
-        DistributionSummary summary = mock(DistributionSummary.class);
+    @InjectMocks
+    private PostingService postingService;
 
-        // Create PostingService instance
-        PostingService postingService = new PostingService();
-        Field alarmRepositoryField = PostingService.class.getDeclaredField("alarmRepository");
-        alarmRepositoryField.setAccessible(true);
-        alarmRepositoryField.set(postingService, alarmRepository);
+    @Mock
+    private AlarmRepository alarmRepository;
 
-        Field alarmReceiverField = PostingService.class.getDeclaredField("alarmReceiver");
-        alarmReceiverField.setAccessible(true);
-        alarmReceiverField.set(postingService, alarmReceiver);
+    @Mock
+    private AlarmReceiver alarmReceiver;
 
-        Field summaryField = PostingService.class.getDeclaredField("summary");
-        summaryField.setAccessible(true);
-        summaryField.set(postingService, summary);
+    @Mock
+    private DistributionSummary summary;
 
-        Field alarmsField = PostingService.class.getDeclaredField("alarms");
-        alarmsField.setAccessible(true);
-        ConcurrentLinkedDeque<Message<byte[]>> alarmsQueue = new ConcurrentLinkedDeque<>();
-        alarmsField.set(postingService, alarmsQueue);
-
-        try (MockedConstruction<Thread> mocked = Mockito.mockConstruction(Thread.class)) {
-            // Invoke processAlarmThread() method
-            Thread threadMock = mocked.constructors().next();
-            postingService.processAlarmThread();
-
-            // Validate the logic inside processAlarmThread
-
-            // Add code here to verify if the logic inside processAlarmThread is working as expected
-        }
-
-        // Add assertions here to verify the behavior/results of the method
+    @BeforeEach
+    public void setup() {
+        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>());
+        ReflectionTestUtils.setField(postingService, "alarmReceivedTimeValues", new Hashtable<>());
+        ReflectionTestUtils.setField(postingService, "processThreadWaitTime", 500);
+        ReflectionTestUtils.setField(postingService, "threadList", new ArrayList<>());
     }
 
     @Test
-    public void testJsonAttributeFilter() throws Exception {
-        // Create PostingService instance
-        PostingService postingService = new PostingService();
+    public void testProcessAlarmThread_NormalExecution() throws Exception {
+        Message<byte[]> message = mock(Message.class);
+        when(message.getData()).thenReturn("testMessage".getBytes());
+        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>(List.of(message)));
 
-        // Use Reflection to access private method jsonAttributeFilter
-        String result = postingService.jsonAttributeFilter("{\"key1\":null, \"key2\":\"value2\", \"key3\":{\"nested_key\":null}}");
+        Alarm alarm = mock(Alarm.class);
+        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
 
-        // Add assertions here to verify the behavior/results of the jsonAttributeFilter method
+        Thread testThread = new Thread(() -> postingService.processAlarmThread());
+        ReflectionTestUtils.setField(postingService, "shutdown", false);
+        testThread.start();
+
+        Thread.sleep(1000); // Allow the thread to process
+
+        ReflectionTestUtils.setField(postingService, "shutdown", true);
+        testThread.join();
+
+        verify(alarmRepository).createAlarm(anyString());
+        verify(alarmReceiver).acknowledgeMessage(message);
+        verify(summary, never()).record(anyLong());
     }
 
     @Test
-    public void testCheckIfNull() throws Exception {
-        // Create PostingService instance
-        PostingService postingService = new PostingService();
+    public void testProcessAlarmThread_EmptyQueue() throws Exception {
+        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>());
 
-        // Use Reflection to access private method checkIfNull
-        String result = postingService.checkIfNull("{\"key1\":null, \"key2\":\"value2\", \"key3\":{\"nested_key\":null}}");
+        Thread testThread = new Thread(() -> postingService.processAlarmThread());
+        ReflectionTestUtils.setField(postingService, "shutdown", false);
+        testThread.start();
 
-        // Add assertions here to verify the behavior/results of the checkIfNull method
+        Thread.sleep(1000); // Allow the thread to process
+
+        ReflectionTestUtils.setField(postingService, "shutdown", true);
+        testThread.join();
+
+        verify(alarmRepository, never()).createAlarm(anyString());
+    }
+
+    @Test
+    public void testProcessAlarmThread_InvalidMessage() throws Exception {
+        Message<byte[]> message = mock(Message.class);
+        when(message.getData()).thenReturn("".getBytes());
+        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>(List.of(message)));
+
+        Thread testThread = new Thread(() -> postingService.processAlarmThread());
+        ReflectionTestUtils.setField(postingService, "shutdown", false);
+        testThread.start();
+
+        Thread.sleep(1000); // Allow the thread to process
+
+        ReflectionTestUtils.setField(postingService, "shutdown", true);
+        testThread.join();
+
+        verify(alarmRepository, never()).createAlarm(anyString());
+    }
+
+    @Test
+    public void testProcessAlarmThread_ExceptionHandling() throws Exception {
+        Message<byte[]> message = mock(Message.class);
+        when(message.getData()).thenReturn("testMessage".getBytes());
+        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>(List.of(message)));
+
+        when(alarmRepository.createAlarm(anyString())).thenThrow(new RuntimeException("Test Exception"));
+
+        Thread testThread = new Thread(() -> postingService.processAlarmThread());
+        ReflectionTestUtils.setField(postingService, "shutdown", false);
+        testThread.start();
+
+        Thread.sleep(1000); // Allow the thread to process
+
+        ReflectionTestUtils.setField(postingService, "shutdown", true);
+        testThread.join();
+
+        verify(alarmRepository).createAlarm(anyString());
+    }
+
+    @Test
+    public void testProcessAlarmThread_OutOfMemoryError() {
+        Message<byte[]> message = mock(Message.class);
+        when(message.getData()).thenReturn("testMessage".getBytes());
+        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>(List.of(message)));
+
+        when(alarmRepository.createAlarm(anyString())).thenThrow(new OutOfMemoryError("Test OutOfMemoryError"));
+
+        assertThrows(OutOfMemoryError.class, () -> {
+            Thread testThread = new Thread(() -> postingService.processAlarmThread());
+            ReflectionTestUtils.setField(postingService, "shutdown", false);
+            testThread.start();
+
+            Thread.sleep(1000); // Allow the thread to process
+
+            testThread.join();
+        });
+    }
+
+    @Test
+    public void testProcessAlarmThread_PostingRetryException() throws Exception {
+        Message<byte[]> message = mock(Message.class);
+        when(message.getData()).thenReturn("testMessage".getBytes());
+        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>(List.of(message)));
+
+        when(alarmRepository.createAlarm(anyString())).thenThrow(new PostingRetryException("Test PostingRetryException"));
+
+        Thread testThread = new Thread(() -> postingService.processAlarmThread());
+        ReflectionTestUtils.setField(postingService, "shutdown", false);
+        testThread.start();
+
+        Thread.sleep(1000); // Allow the thread to process
+
+        ReflectionTestUtils.setField(postingService, "shutdown", true);
+        testThread.join();
+
+        verify(alarmRepository).createAlarm(anyString());
     }
 }
+```
+
+This test class covers all branches of the `processAlarmThread` method, including normal execution, handling empty queues, invalid messages, exceptions, and specific error conditions.

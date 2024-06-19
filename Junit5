@@ -1,10 +1,14 @@
-Certainly! Below is the JUnit5 test case code that covers the specified blocks of the `postAlarmForEachIteration` method in the `AlarmRepositoryImpl` class. This test case will focus on the different scenarios to ensure each block is adequately tested.
-
+Certainly! Here is a set of JUnit 5 test cases designed to cover the specified blocks in the `postAlarmForEachIteration` method of the `AlarmRepositoryImpl` class. These test cases focus on ensuring the correct setting of various `Alarm` properties based on the `ResultSet` data.
 
 ```java
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
 
+import java.sql.Timestamp;
+import java.util.HashMap;
+import java.util.Set;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,17 +16,14 @@ import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
-
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @ExtendWith(MockitoExtension.class)
 public class AlarmRepositoryImplTest {
 
     @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
+    private AlarmRepositoryImpl alarmRepositoryImpl;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -36,162 +37,156 @@ public class AlarmRepositoryImplTest {
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
-    @Mock
-    private SqlRowSet rs;
+    @Captor
+    private ArgumentCaptor<String> stringCaptor;
+
+    @Captor
+    private ArgumentCaptor<Object[]> objectArrayCaptor;
 
     private Alarm alarm;
+    private SqlRowSet sqlRowSet;
 
     @BeforeEach
-    public void setUp() {
+    void setUp() {
         alarm = new Alarm();
-        alarm.setAlarmIdentity("test_alarm");
+        sqlRowSet = mock(SqlRowSet.class);
     }
 
     @Test
-    public void testPostAlarmForEachIteration_AlarmReportingTime() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmreportingtime")).thenReturn(Timestamp.from(Instant.now()));
-        when(rs.getObject("tag")).thenReturn(null);
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(rs.getBoolean("resolved")).thenReturn(true);
-        when(rs.getString("componentid")).thenReturn("componentId");
-        when(rs.getString("alarmedobject")).thenReturn("alarmedObject");
-        when(rs.getString("reportingobject")).thenReturn("reportingObject");
-        when(rs.getString("equipmentobject")).thenReturn("equipmentObject");
-        when(rs.getString("tid")).thenReturn("tid");
-        when(rs.getString("aid")).thenReturn("aid");
-        when(rs.getString("rawmessage")).thenReturn("rawMessage");
-        when(rs.getInt("stage")).thenReturn(1);
+    void testPostAlarmForEachIteration_SetAlarmReportingTime() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getTimestamp("alarmreportingtime")).thenReturn(Timestamp.valueOf("2023-01-01 10:00:00"));
 
-        Map<String, Integer> alarmStateMap = new HashMap<>();
-        alarmStateMap.put("Cleared", 1);
-        alarmStateMap.put("New", 2);
-        when(postgresConf.getAlarmStateMap()).thenReturn(alarmStateMap);
-        when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(), any())).thenReturn(true);
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        verify(rs, times(1)).getTimestamp("alarmreportingtime");
-        assertNotNull(alarm.getAlarmReportingTime());
-        assertTrue(alarm.isResolved());
-        assertEquals("componentId", alarm.getComponentId());
-        assertEquals("alarmedObject", alarm.getAlarmedObject());
-        assertEquals("reportingObject", alarm.getReportingObject());
-        assertEquals("equipmentObject", alarm.getEquipmentObject());
-        assertEquals("tid", alarm.getTid());
-        assertEquals("aid", alarm.getAid());
-        assertEquals("rawMessage", alarm.getRawMessage());
-        assertEquals(1, alarm.getStage());
-        assertEquals(1L, alarm.getSequenceID());
+        Assertions.assertEquals("2023-01-01T10:00:00Z", alarm.getAlarmReportingTime());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_AlarmTags() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getObject("tag")).thenReturn(new String[]{"tag1", "tag2"});
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(rs.getBoolean("resolved")).thenReturn(true);
-        when(rs.getString("componentid")).thenReturn("componentId");
-        when(rs.getString("alarmedobject")).thenReturn("alarmedObject");
-        when(rs.getString("reportingobject")).thenReturn("reportingObject");
-        when(rs.getString("equipmentobject")).thenReturn("equipmentObject");
-        when(rs.getString("tid")).thenReturn("tid");
-        when(rs.getString("aid")).thenReturn("aid");
-        when(rs.getString("rawmessage")).thenReturn("rawMessage");
-        when(rs.getInt("stage")).thenReturn(1);
+    void testPostAlarmForEachIteration_SetTag() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getObject("tag")).thenReturn(new String[]{"tag1", "tag2"});
 
-        Map<String, Integer> alarmStateMap = new HashMap<>();
-        alarmStateMap.put("Cleared", 1);
-        alarmStateMap.put("New", 2);
-        when(postgresConf.getAlarmStateMap()).thenReturn(alarmStateMap);
-        when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(), any())).thenReturn(true);
+        Set<String> mockSet = Set.of("tag1", "tag2");
+        when(utils.mergeArrayMethod(any(), any())).thenReturn(mockSet);
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        assertNotNull(alarm.getTag());
-        assertEquals(2, alarm.getTag().length);
-        assertEquals("tag1", alarm.getTag()[0]);
-        assertEquals("tag2", alarm.getTag()[1]);
+        Assertions.assertArrayEquals(new String[]{"tag1", "tag2"}, alarm.getTag());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_AlarmSequenceID() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(rs.getBoolean("resolved")).thenReturn(true);
-        when(rs.getString("componentid")).thenReturn("componentId");
-        when(rs.getString("alarmedobject")).thenReturn("alarmedObject");
-        when(rs.getString("reportingobject")).thenReturn("reportingObject");
-        when(rs.getString("equipmentobject")).thenReturn("equipmentObject");
-        when(rs.getString("tid")).thenReturn("tid");
-        when(rs.getString("aid")).thenReturn("aid");
-        when(rs.getString("rawmessage")).thenReturn("rawMessage");
-        when(rs.getInt("stage")).thenReturn(1);
+    void testPostAlarmForEachIteration_SetSequenceID() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getLong("sequenceid")).thenReturn(123L);
 
-        Map<String, Integer> alarmStateMap = new HashMap<>();
-        alarmStateMap.put("Cleared", 1);
-        alarmStateMap.put("New", 2);
-        when(postgresConf.getAlarmStateMap()).thenReturn(alarmStateMap);
-        when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(), any())).thenReturn(true);
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        alarm.setSequenceID(0);
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertEquals(1L, alarm.getSequenceID());
+        Assertions.assertEquals(123L, alarm.getSequenceID());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_AlarmResolved() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(rs.getBoolean("resolved")).thenReturn(true);
-        when(rs.getString("componentid")).thenReturn("componentId");
-        when(rs.getString("alarmedobject")).thenReturn("alarmedObject");
-        when(rs.getString("reportingobject")).thenReturn("reportingObject");
-        when(rs.getString("equipmentobject")).thenReturn("equipmentObject");
-        when(rs.getString("tid")).thenReturn("tid");
-        when(rs.getString("aid")).thenReturn("aid");
-        when(rs.getString("rawmessage")).thenReturn("rawMessage");
-        when(rs.getInt("stage")).thenReturn(1);
+    void testPostAlarmForEachIteration_SetResolved() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getBoolean("resolved")).thenReturn(true);
 
-        Map<String, Integer> alarmStateMap = new HashMap<>();
-        alarmStateMap.put("Cleared", 1);
-        alarmStateMap.put("New", 2);
-        when(postgresConf.getAlarmStateMap()).thenReturn(alarmStateMap);
-        when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(), any())).thenReturn(true);
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        assertTrue(alarm.isResolved());
+        Assertions.assertTrue(alarm.isResolved());
     }
-    
+
     @Test
-    public void testPostAlarmForEachIteration_AlarmComponentId() throws Exception {
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(rs.getBoolean("resolved")).thenReturn(true);
-        when(rs.getString("componentid")).thenReturn("componentId");
-        when(rs.getString("alarmedobject")).thenReturn("alarmedObject");
-        when(rs.getString("reportingobject")).thenReturn("reportingObject");
-        when(rs.getString("equipmentobject")).thenReturn("equipmentObject");
-        when(rs.getString("tid")).thenReturn("tid");
-        when(rs.getString("aid")).thenReturn("aid");
-        when(rs.getString("rawmessage")).thenReturn("rawMessage");
-        when(rs.getInt("stage")).thenReturn(1);
+    void testPostAlarmForEachIteration_SetComponentId() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getString("componentid")).thenReturn("componentId");
 
-        Map<String, Integer> alarmStateMap = new HashMap<>();
-        alarmStateMap.put("Cleared", 1);
-        alarmStateMap.put("New", 2);
-        when(postgresConf.getAlarmStateMap()).thenReturn(alarmStateMap);
-        when(postingRuleProcessingService.isLateAlarmEligibleForRuleProcessing(any(), any())).thenReturn(true);
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
 
-        alarm.setComponentId(null);
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        Assertions.assertEquals("componentId", alarm.getComponentId());
+    }
 
-        assertEquals("componentId", alarm.getComponentId());
-   }
+    @Test
+    void testPostAlarmForEachIteration_SetAlarmedObject() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getString("alarmedobject")).thenReturn("alarmedObject");
+
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
+
+        Assertions.assertEquals("alarmedObject", alarm.getAlarmedObject());
+    }
+
+    @Test
+    void testPostAlarmForEachIteration_SetReportingObject() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getString("reportingobject")).thenReturn("reportingObject");
+
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
+
+        Assertions.assertEquals("reportingObject", alarm.getReportingObject());
+    }
+
+    @Test
+    void testPostAlarmForEachIteration_SetEquipmentObject() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getString("equipmentobject")).thenReturn("equipmentObject");
+
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
+
+        Assertions.assertEquals("equipmentObject", alarm.getEquipmentObject());
+    }
+
+    @Test
+    void testPostAlarmForEachIteration_SetTid() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getString("tid")).thenReturn("tid");
+
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
+
+        Assertions.assertEquals("tid", alarm.getTid());
+    }
+
+    @Test
+    void testPostAlarmForEachIteration_SetAid() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getString("aid")).thenReturn("aid");
+
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
+
+        Assertions.assertEquals("aid", alarm.getAid());
+    }
+
+    @Test
+    void testPostAlarmForEachIteration_SetRawMessage() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getString("rawmessage")).thenReturn("rawMessage");
+
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
+
+        Assertions.assertEquals("rawMessage", alarm.getRawMessage());
+    }
+
+    @Test
+    void testPostAlarmForEachIteration_SetStage() throws Exception {
+        when(jdbcTemplate.queryForRowSet(any(String.class), any(Object[].class))).thenReturn(sqlRowSet);
+        when(sqlRowSet.next()).thenReturn(true);
+        when(sqlRowSet.getInt("stage")).thenReturn(1);
+
+        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "compId");
+
+        Assertions.assertEquals(1, alarm.getStage());
+    }
+}
+```
+
+These test cases cover the specified blocks of the `postAlarmForEachIteration` method. Each test case mocks the `SqlRowSet` to simulate the retrieval of data from the database and verifies that the `Alarm` object's properties are correctly set based on the retrieved data.

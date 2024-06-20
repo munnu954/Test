@@ -1,75 +1,117 @@
-To achieve 100% code coverage for the `checkIfNull` method, including the `else` and `catch` blocks, you can write JUnit 5 test cases that handle both scenarios. Specifically, you need to:
-
-1. Test the `else` block where `resultMsg.put(mapSet.getKey(), updatedMsg)` is executed.
-2. Test the `catch` block by causing an exception within the try block.
-
-Here’s an example of how you can write these test cases:
+Sure, here's how you can write JUnit 5 test cases to cover the mentioned blocks of the `run()` method in the `AlarmReceiver` class for 100% code coverage:
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.actuate.health.Health;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
-public class PostingServiceTest {
+import static org.mockito.Mockito.*;
 
-    private PostingService postingService;
+@ExtendWith(MockitoExtension.class)
+public class AlarmReceiverTest {
+
+    @Mock
+    private PostingService alarmPointLookupService;
+
+    @Mock
+    private AlarmPostGreService alarmPostGreService;
+
+    @Mock
+    private VMBParams params;
+
+    @Mock
+    private Consumer<byte[]> consumer;
+
+    @Mock
+    private Message<byte[]> message;
+
+    @Mock
+    private PulsarClientException pulsarClientException;
+
+    private AlarmReceiver alarmReceiver;
 
     @BeforeEach
-    void setUp() {
-        postingService = new PostingService();
+    public void setUp() {
+        alarmReceiver = new AlarmReceiver(params, alarmPostGreService, alarmPointLookupService);
+        alarmReceiver.set_consumer(consumer);
     }
 
     @Test
-    void testCheckIfNull_CatchBlock() {
-        // Create an invalid JSON string to trigger an exception
-        String invalidJson = "{invalidJson}";
-
-        // Call the method with the invalid JSON
-        String result = postingService.checkIfNull(invalidJson);
-
-        // Assert that the result is null since the exception was caught
-        assertNull(result);
-    }
-
-    @Test
-    void testCheckIfNull_ElseBlock() {
-        String validJson = "{\"key1\":\"value1\", \"key2\":{\"nested_key\":\"nested_value\"}}";
+    public void testRun_ReceiveMessages_Success() throws Exception {
+        when(alarmPointLookupService.getQueueSize()).thenReturn(0);
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenReturn(message);
         
-        // Mock the ObjectMapper to ensure the else block is executed
-        ObjectMapper mockMapper = mock(ObjectMapper.class);
-        AlarmPostingConstants.setObjectMapper(mockMapper);
+        alarmReceiver.run();
+        
+        verify(alarmPointLookupService, times(1)).addMsgToQueue(message, any(Instant.class));
+    }
 
-        try {
-            // Set up the mock to return a nested map
-            Map<String, Object> nestedMap = new HashMap<>();
-            nestedMap.put("nested_key", "nested_value");
-            when(mockMapper.readValue(anyString(), eq(Map.class))).thenReturn(nestedMap);
-            when(mockMapper.writeValueAsString(any())).thenReturn("{\"nested_key\":\"nested_value\"}");
+    @Test
+    public void testRun_ReceiveMessages_WithThrottling() throws Exception {
+        int queueSizeToStartThrotlingMsg = 2000;
+        int throtlingIntervalInMillis = 500;
 
-            // Call the method with the valid JSON
-            String result = postingService.checkIfNull(validJson);
+        when(alarmPointLookupService.getQueueSize()).thenReturn(queueSizeToStartThrotlingMsg + 1);
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenReturn(message);
+        
+        alarmReceiver.run();
+        
+        verify(alarmPointLookupService, times(1)).addMsgToQueue(message, any(Instant.class));
+        verify(Thread.class, times(1)).sleep(throtlingIntervalInMillis);
+    }
 
-            // Assert that the result is not null and contains the nested value
-            assertNotNull(result);
-            assertTrue(result.contains("\"nested_key\":\"nested_value\""));
-        } catch (Exception e) {
-            fail("Exception thrown while testing else block: " + e.getMessage());
-        }
+    @Test
+    public void testRun_PulsarClientException() throws Exception {
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenThrow(pulsarClientException);
+        
+        alarmReceiver.run();
+        
+        verify(alarmReceiver, times(1)).syncReconnect();
+    }
+
+    @Test
+    public void testRun_Exception() throws Exception {
+        Exception exception = new Exception("Test Exception");
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenThrow(exception);
+        
+        alarmReceiver.run();
+        
+        verify(alarmReceiver, times(1)).syncReconnect();
+        verify(alarmReceiver, times(1)).health();
+        verify(alarmReceiver, times(1)).LOGGER.error("[AlarmReceiver] : exception in Receive Message" + exception.getMessage());
+    }
+
+    @Test
+    public void testRun_ExceptionInFinallyBlock() throws Exception {
+        Exception exception = new Exception("Test Exception");
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenThrow(exception);
+        doThrow(exception).when(consumer).close();
+        
+        alarmReceiver.run();
+        
+        verify(alarmReceiver, times(1)).syncReconnect();
+        verify(alarmReceiver, times(1)).health();
+        verify(alarmReceiver, times(1)).LOGGER.error("[AlarmReceiver] : exception in Receive Message" + exception.getMessage());
+        verify(alarmReceiver, times(1)).LOGGER.info("consumer closed");
     }
 }
 ```
 
-In the `testCheckIfNull_CatchBlock` method, an invalid JSON string is passed to the `checkIfNull` method to trigger an exception, ensuring the catch block is executed.
+### Explanation:
 
-In the `testCheckIfNull_ElseBlock` method, a valid JSON string is passed to the `checkIfNull` method. By mocking the `ObjectMapper`, you can control the behavior to ensure the `else` block is executed. Specifically, the mock `ObjectMapper` returns a nested map, causing the `else` block to be invoked where `resultMsg.put(mapSet.getKey(), updatedMsg)` is executed.
+1. **Mocking Dependencies:** We use Mockito to create mock objects of the dependencies `alarmPointLookupService`, `alarmPostGreService`, `params`, `consumer`, `message`, and `pulsarClientException`.
 
-These test cases should help you achieve 100% code coverage for the `checkIfNull` method, including the `else` and `catch` blocks.
+2. **Setting Up the Test Cases:** In the `setUp` method, we set up the `AlarmReceiver` instance and inject the mock dependencies.
+
+3. **Testing the ReceiveMessages Block:** We test the `receiveMessages` block of the `run` method by mocking the necessary dependencies and verifying the expected behavior.
+
+4. **Testing the ReceiveMessages Block with Throttling:** We test the scenario when the queue size exceeds the specified threshold for throttling. We mock the necessary dependencies and verify that the `Thread.sleep` method is called.
+
+5. **Testing the PulsarClientException Block:** We test the scenario when a `PulsarClient

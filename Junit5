@@ -1,94 +1,76 @@
-I apologize for the confusion. Based on the updated `VMBUtil` class, here's the updated and executable version of the JUnit 5 test cases:
+@Mock
+private Consumer<byte[]> consumer;
 
-```java
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.apache.pulsar.client.api.Consumer;
-import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.PulsarClientException;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.boot.actuate.health.Health;
+@Mock
+private Message<byte[]> message;
 
-import java.util.concurrent.TimeUnit;
+@Mock
+private PulsarClientException pulsarClientException;
 
-import static org.mockito.Mockito.*;
+@Mock
+private Exception exception;
 
-@ExtendWith(MockitoExtension.class)
-public class AlarmReceiverTest {
+@InjectMocks
+private AlarmReceiver alarmReceiver;
 
-    @Mock
-    private AlarmPostGreService alarmPostGreService;
-
-    @Mock
-    private Consumer<byte[]> consumer;
-
-    @Mock
-    private Message<byte[]> message;
-
-    @Mock
-    private PulsarClientException pulsarClientException;
-
-    private AlarmReceiver alarmReceiver;
-
-    @BeforeEach
-    public void setUp() {
-        alarmReceiver = new AlarmReceiver(alarmPostGreService);
-        alarmReceiver.set_consumer(consumer);
-    }
-
-    @Test
-    public void testRun_ReceiveMessages_Success() throws Exception {
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenReturn(message);
-
-        alarmReceiver.run();
-
-        verify(alarmPostGreService, times(1)).getAlarmTypeList();
-        verify(alarmReceiver, times(1)).receiveMessages();
-    }
-
-    @Test
-    public void testRun_PulsarClientException() throws Exception {
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS))
-                .thenThrow(pulsarClientException);
-
-        alarmReceiver.run();
-
-        verify(alarmReceiver, times(1)).syncReconnect();
-    }
-
-    @Test
-    public void testRun_Exception() throws Exception {
-        Exception exception = new Exception("Test Exception");
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS))
-                .thenThrow(exception);
-
-        alarmReceiver.run();
-
-        verify(alarmReceiver, times(1)).syncReconnect();
-        verify(alarmReceiver, times(1)).health();
-        verify(alarmReceiver, times(1)).LOGGER.error("[AlarmReceiver] : exception in Receive Message" + exception.getMessage());
-    }
-
-    @Test
-    public void testRun_ExceptionInFinallyBlock() throws Exception {
-        Exception exception = new Exception("Test Exception");
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS))
-                .thenThrow(exception);
-        doThrow(exception).when(consumer).close();
-
-        alarmReceiver.run();
-
-        verify(alarmReceiver, times(1)).syncReconnect();
-        verify(alarmReceiver, times(1)).health();
-        verify(alarmReceiver, times(1)).LOGGER.error("[AlarmReceiver] : exception in Receive Message" + exception.getMessage());
-        verify(alarmReceiver, times(1)).LOGGER.info("consumer closed");
-    }
+@BeforeEach
+void setup() {
+    MockitoAnnotations.openMocks(this);
 }
-```
 
-Note: The updated test cases assume that you have `logger` available and properly configured in your test environment. If not, you may need to make adjustments accordingly.
+@Test
+void testRunMethodWithPulsarClientException() {
+    // Arrange
+    when(VMBUtil.receiveMessageThrowsPulsarClientException(any(Consumer.class), anyInt(), any(TimeUnit.class))).thenThrow(pulsarClientException);
+    ReflectionTestUtils.setField(alarmReceiver, "_consumer", consumer);
+    ReflectionTestUtils.setField(alarmReceiver, "reconnectStage", new AtomicInteger(AlarmPostingConstants.VMB_INITIATE_RECONNECT));
+
+    // Act
+    alarmReceiver.run();
+
+    // Assert
+    verify(alarmReceiver, times(1)).syncReconnect();
+    verify(alarmReceiver, times(1)).health();
+    verify(alarmReceiver.LOGGER, times(1)).error(anyString(), eq(pulsarClientException.getLocalizedMessage()));
+}
+
+@Test
+void testRunMethodWithException() {
+    // Arrange
+    when(VMBUtil.receiveMessageThrowsPulsarClientException(any(Consumer.class), anyInt(), any(TimeUnit.class))).thenThrow(exception);
+    ReflectionTestUtils.setField(alarmReceiver, "_consumer", consumer);
+
+    // Act
+    alarmReceiver.run();
+
+    // Assert
+    verify(alarmReceiver, times(1)).health();
+    verify(alarmReceiver.LOGGER, times(1)).error(anyString(), eq(exception.getLocalizedMessage()));
+}
+
+@Test
+void testRunMethodWithException_ConsumerThreadError() {
+    // Arrange
+    doThrow(exception).when(alarmReceiver).run();
+
+    // Act
+    alarmReceiver.run();
+
+    // Assert
+    verify(alarmReceiver.LOGGER, times(1)).error(anyString(), eq(exception.getMessage()));
+}
+
+@Test
+void testRunMethodWithException_ConsumerClose() {
+    // Arrange
+    doThrow(PulsarClientException.class).when(VMBUtil).closeConsumer(any(Consumer.class));
+    ReflectionTestUtils.setField(alarmReceiver, "_run", false);
+    ReflectionTestUtils.setField(alarmReceiver, "_consumer", consumer);
+
+    // Act
+    alarmReceiver.run();
+
+    // Assert
+    verify(alarmReceiver.LOGGER, times(1)).error(anyString(), any(PulsarClientException.class));
+    verify(alarmReceiver.LOGGER, times(1)).info(anyString());
+}

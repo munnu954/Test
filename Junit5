@@ -18,13 +18,7 @@ import static org.mockito.Mockito.*;
 public class AlarmReceiverTest {
 
     @Mock
-    private PostingService alarmPointLookupService;
-
-    @Mock
     private AlarmPostGreService alarmPostGreService;
-
-    @Mock
-    private VMBParams params;
 
     @Mock
     private Consumer<byte[]> consumer;
@@ -39,32 +33,18 @@ public class AlarmReceiverTest {
 
     @BeforeEach
     public void setUp() {
-        alarmReceiver = new AlarmReceiver(params, alarmPostGreService, alarmPointLookupService);
+        alarmReceiver = new AlarmReceiver(alarmPostGreService);
         alarmReceiver.set_consumer(consumer);
     }
 
     @Test
     public void testRun_ReceiveMessages_Success() throws Exception {
-        when(alarmPointLookupService.getQueueSize()).thenReturn(0);
         when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenReturn(message);
         
         alarmReceiver.run();
         
-        verify(alarmPointLookupService, times(1)).addMsgToQueue(message, any(Instant.class));
-    }
-
-    @Test
-    public void testRun_ReceiveMessages_WithThrottling() throws Exception {
-        int queueSizeToStartThrotlingMsg = 2000;
-        int throtlingIntervalInMillis = 500;
-
-        when(alarmPointLookupService.getQueueSize()).thenReturn(queueSizeToStartThrotlingMsg + 1);
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 3, TimeUnit.SECONDS)).thenReturn(message);
-        
-        alarmReceiver.run();
-        
-        verify(alarmPointLookupService, times(1)).addMsgToQueue(message, any(Instant.class));
-        verify(Thread.class, times(1)).sleep(throtlingIntervalInMillis);
+        verify(alarmPostGreService, times(1)).getAlarmTypeList();
+        verify(alarmReceiver, times(1)).receiveMessages();
     }
 
     @Test
@@ -106,12 +86,14 @@ public class AlarmReceiverTest {
 
 ### Explanation:
 
-1. **Mocking Dependencies:** We use Mockito to create mock objects of the dependencies `alarmPointLookupService`, `alarmPostGreService`, `params`, `consumer`, `message`, and `pulsarClientException`.
+1. **Mocking Dependencies:** We use Mockito to create mock objects of the dependencies `alarmPostGreService`, `consumer`, `message`, and `pulsarClientException`.
 
 2. **Setting Up the Test Cases:** In the `setUp` method, we set up the `AlarmReceiver` instance and inject the mock dependencies.
 
 3. **Testing the ReceiveMessages Block:** We test the `receiveMessages` block of the `run` method by mocking the necessary dependencies and verifying the expected behavior.
 
-4. **Testing the ReceiveMessages Block with Throttling:** We test the scenario when the queue size exceeds the specified threshold for throttling. We mock the necessary dependencies and verify that the `Thread.sleep` method is called.
+4. **Testing the PulsarClientException Block:** We test the scenario when a `PulsarClientException` is thrown in the `receiveMessages` block. We mock the necessary dependencies and verify that the `syncReconnect` method is called.
 
-5. **Testing the PulsarClientException Block:** We test the scenario when a `PulsarClient
+5. **Testing the Exception Block:** We test the scenario when an exception other than `PulsarClientException` is thrown in the `receiveMessages` block. We mock the necessary dependencies and verify that the `syncReconnect` and `health` methods are called, and the error message is logged.
+
+6. **Testing the Exception in Finally Block:** We test the scenario when an exception is thrown in the `finally` block of the `run` method. We mock the necessary dependencies and verify that the `syncReconnect`, `health`, and `LOGGER` methods are called, and the info message is logged.

@@ -1,218 +1,53 @@
-Certainly! Below are additional JUnit5 test cases that cover the catch block of the `processAlarmThread()` method in the `PostingService` class for the `PostingRetryException`.
+@Test
+void testRetryCountExceededError() throws Exception {
+    String alarmMsg = "{\"alarmIdentity\": \"test\"}";
+    Alarm alarm = new Alarm();
+    when(mockMessage.getData()).thenReturn(alarmMsg.getBytes());
+    when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
+    when(mockMessage.getMessageId()).thenReturn(mockMessageId);
 
-```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
+    alarms.add(mockMessage);
+    alarmReceivedTimeValues.put(mockMessageId, Instant.now());
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.messaging.Message;
-import org.springframework.messaging.MessageHeaders;
+    doThrow(new PostingRetryException("Retry Count Exceeded")).when(alarmRepository).alarmPosting(any());
 
-import java.time.Instant;
-import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.Hashtable;
-import java.util.ArrayList;
+    Thread thread = new Thread(() -> postingService.processAlarmThread());
+    thread.start();
+    Thread.sleep(200);
 
-@ExtendWith(MockitoExtension.class)
-public class PostingServiceTest {
+    verify(alarmReceiver).acknowledgeMessage(mockMessage);
+    verify(summary, never()).record(anyLong());
+    verify(alarmRepository).createAlarm(anyString());
+    verify(alarmRepository).alarmPosting(any(Alarm.class));
+    assertEquals(Health.down().withDetail("Error", "Retry Count Exceeded").build(), postingService.getHealth());
+    assertTrue(threadList.isEmpty());
 
-    @InjectMocks
-    private PostingService postingService;
-
-    @Mock
-    private AlarmRepository alarmRepository;
-
-    @Mock
-    private AlarmReceiver alarmReceiver;
-
-    @Mock
-    private DistributionSummary summary;
-
-    @Mock
-    private Message<byte[]> mockMessage;
-
-    @Mock
-    private MessageId mockMessageId;
-
-    private ConcurrentLinkedDeque<Message<byte[]>> alarms;
-    private Hashtable<MessageId, Instant> alarmReceivedTimeValues;
-
-    @BeforeEach
-    void setUp() {
-        alarms = new ConcurrentLinkedDeque<>();
-        alarmReceivedTimeValues = new Hashtable<>();
-        ReflectionTestUtils.setField(postingService, "alarms", alarms);
-        ReflectionTestUtils.setField(postingService, "alarmReceivedTimeValues", alarmReceivedTimeValues);
-        ReflectionTestUtils.setField(postingService, "processThreadWaitTime", 100);
-        ReflectionTestUtils.setField(postingService, "alarmReceiver", alarmReceiver);
-        ReflectionTestUtils.setField(postingService, "alarmRepository", alarmRepository);
-        ReflectionTestUtils.setField(postingService, "summary", summary);
-    }
-
-    @Test
-    void testAcknowledgeMessageAndRecordLatency() throws Exception {
-        String alarmMsg = "{\"alarmIdentity\": \"test\"}";
-        Alarm alarm = new Alarm();
-        when(mockMessage.getData()).thenReturn(alarmMsg.getBytes());
-        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
-        when(mockMessage.getMessageId()).thenReturn(mockMessageId);
-
-        alarms.add(mockMessage);
-        alarmReceivedTimeValues.put(mockMessageId, Instant.now());
-
-        Thread thread = new Thread(() -> postingService.processAlarmThread());
-        thread.start();
-        Thread.sleep(200);
-
-        verify(alarmReceiver).acknowledgeMessage(mockMessage);
-        verify(summary).record(anyLong());
-        verify(alarmRepository).createAlarm(anyString());
-        verify(alarmRepository).alarmPosting(any(Alarm.class));
-        assertFalse(alarmReceivedTimeValues.containsKey(mockMessageId));
-
-        thread.interrupt();
-    }
-
-    @Test
-    void testInvalidMessageId() throws Exception {
-        String alarmMsg = "{\"alarmIdentity\": \"test\"}";
-        Alarm alarm = new Alarm();
-        when(mockMessage.getData()).thenReturn(alarmMsg.getBytes());
-        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
-        when(mockMessage.getMessageId()).thenReturn(null);
-
-        alarms.add(mockMessage);
-
-        Thread thread = new Thread(() -> postingService.processAlarmThread());
-        thread.start();
-        Thread.sleep(200);
-
-        verify(alarmReceiver).acknowledgeMessage(mockMessage);
-        verify(summary, never()).record(anyLong());
-        verify(alarmRepository).createAlarm(anyString());
-        verify(alarmRepository).alarmPosting(any(Alarm.class));
-
-        thread.interrupt();
-    }
-
-    @Test
-    void testMessageIdNotInReceivedTimeValues() throws Exception {
-        String alarmMsg = "{\"alarmIdentity\": \"test\"}";
-        Alarm alarm = new Alarm();
-        when(mockMessage.getData()).thenReturn(alarmMsg.getBytes());
-        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
-        when(mockMessage.getMessageId()).thenReturn(mockMessageId);
-
-        alarms.add(mockMessage);
-
-        Thread thread = new Thread(() -> postingService.processAlarmThread());
-        thread.start();
-        Thread.sleep(200);
-
-        verify(alarmReceiver).acknowledgeMessage(mockMessage);
-        verify(summary, never()).record(anyLong());
-        verify(alarmRepository).createAlarm(anyString());
-        verify(alarmRepository).alarmPosting(any(Alarm.class));
-
-        thread.interrupt();
-    }
-
-    @Test
-    void testPostingRetryException() throws Exception {
-        String alarmMsg = "{\"alarmIdentity\": \"test\"}";
-        PostingRetryException retryException = new PostingRetryException("Retry count exceeded");
-
-        when(mockMessage.getData()).thenReturn(alarmMsg.getBytes());
-        when(alarmRepository.createAlarm(anyString())).thenThrow(retryException);
-        when(mockMessage.getMessageId()).thenReturn(mockMessageId);
-
-        alarms.add(mockMessage);
-        alarmReceivedTimeValues.put(mockMessageId, Instant.now());
-
-        Thread thread = new Thread(() -> {
-            try {
-                postingService.processAlarmThread();
-            } catch (Exception e) {
-                // Handle System.exit call in tests
-            }
-        });
-        thread.start();
-        Thread.sleep(200);
-
-        verify(alarmReceiver, never()).acknowledgeMessage(mockMessage);
-        verify(summary, never()).record(anyLong());
-        verify(alarmRepository).createAlarm(anyString());
-        assertTrue(ReflectionTestUtils.getField(postingService, "health").toString().contains("DOWN"));
-
-        thread.interrupt();
-    }
-    
-    @Test
-    void testOutOfMemoryError() throws Exception {
-        String alarmMsg = "{\"alarmIdentity\": \"test\"}";
-
-        when(mockMessage.getData()).thenReturn(alarmMsg.getBytes());
-        when(alarmRepository.createAlarm(anyString())).thenThrow(new OutOfMemoryError("Out of memory"));
-        when(mockMessage.getMessageId()).thenReturn(mockMessageId);
-
-        alarms.add(mockMessage);
-        alarmReceivedTimeValues.put(mockMessageId, Instant.now());
-
-        Thread thread = new Thread(() -> {
-            try {
-                postingService.processAlarmThread();
-            } catch (Exception e) {
-                // Handle System.exit call in tests
-            }
-        });
-        thread.start();
-        Thread.sleep(200);
-
-        verify(alarmReceiver, never()).acknowledgeMessage(mockMessage);
-        verify(summary, never()).record(anyLong());
-        verify(alarmRepository).createAlarm(anyString());
-        assertTrue(ReflectionTestUtils.getField(postingService, "health").toString().contains("DOWN"));
-
-        thread.interrupt();
-    }
-
-    @Test
-    void testGeneralException() throws Exception {
-        String alarmMsg = "{\"alarmIdentity\": \"test\"}";
-
-        when(mockMessage.getData()).thenReturn(alarmMsg.getBytes());
-        when(alarmRepository.createAlarm(anyString())).thenThrow(new RuntimeException("General exception"));
-        when(mockMessage.getMessageId()).thenReturn(mockMessageId);
-
-        alarms.add(mockMessage);
-        alarmReceivedTimeValues.put(mockMessageId, Instant.now());
-
-        Thread thread = new Thread(() -> postingService.processAlarmThread());
-        thread.start();
-        Thread.sleep(200);
-
-        verify(alarmReceiver, never()).acknowledgeMessage(mockMessage);
-        verify(summary, never()).record(anyLong());
-        verify(alarmRepository).createAlarm(anyString());
-        assertTrue(ReflectionTestUtils.getField(postingService, "health").toString().contains("UP"));
-
-        thread.interrupt();
-    }
+    thread.interrupt();
 }
-```
 
-Here's a brief overview of the new test cases:
+@Test
+void testOutOfMemoryError() throws Exception {
+    String alarmMsg = "{\"alarmIdentity\": \"test\"}";
+    Alarm alarm = new Alarm();
+    when(mockMessage.getData()).thenReturn(alarmMsg.getBytes());
+    when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
+    when(mockMessage.getMessageId()).thenReturn(mockMessageId);
 
-1. **testPostingRetryException**: Simulates a `PostingRetryException` being thrown by the `alarmRepository.createAlarm` method and verifies that the appropriate actions are taken, including setting the health to `DOWN` and ensuring the message is not acknowledged.
+    alarms.add(mockMessage);
+    alarmReceivedTimeValues.put(mockMessageId, Instant.now());
 
-2. **testOutOfMemoryError**: Simulates an `OutOfMemoryError` being thrown by the `alarmRepository.createAlarm` method and verifies that the appropriate actions are taken, including setting the health to `DOWN` and ensuring the message is not acknowledged.
+    doThrow(new OutOfMemoryError()).when(alarmRepository).alarmPosting(any());
 
-3. **testGeneralException**: Simulates a general `RuntimeException` being thrown by the `alarmRepository.createAlarm` method and verifies that the health remains `UP` and the message is not acknowledged.
+    Thread thread = new Thread(() -> postingService.processAlarmThread());
+    thread.start();
+    Thread.sleep(200);
 
-These tests should comprehensively cover the catch blocks in the `processAlarmThread` method.
+    verify(alarmReceiver).acknowledgeMessage(mockMessage);
+    verify(summary, never()).record(anyLong());
+    verify(alarmRepository).createAlarm(anyString());
+    verify(alarmRepository).alarmPosting(any(Alarm.class));
+    assertEquals(Health.down().withDetail("Error", "java.lang.OutOfMemoryError").build(), postingService.getHealth());
+    assertTrue(threadList.isEmpty());
+
+    thread.interrupt();
+}

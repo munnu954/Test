@@ -1,4 +1,6 @@
-To achieve 100% code coverage for the `applyPostingRule` method, we need to cover all possible branches, including edge cases and exception handling. Below are additional test cases that aim to achieve full coverage:
+Absolutely! Given that you already have 15 test cases covering a range of scenarios, I'll provide additional test cases to help you achieve 100% coverage, focusing on edge cases and any remaining branches or exception handling.
+
+### Additional Test Cases
 
 ```java
 import org.junit.jupiter.api.BeforeEach;
@@ -30,6 +32,7 @@ public class PostingRuleProcessingServiceTest {
 
     @BeforeEach
     public void setUp() {
+        MockitoAnnotations.initMocks(this);
         ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", "%Mock:AlarmExpression%");
         ReflectionTestUtils.setField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", "%Mock:TopologyExpression%");
         ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%Mock:EligibilityValue%");
@@ -38,11 +41,35 @@ public class PostingRuleProcessingServiceTest {
     }
 
     @Test
-    public void testApplyPostingRule_validComponentIdAndTopologyData() throws Exception {
+    public void testApplyPostingRule_nullAlarm() {
+        PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+
+        Exception exception = assertThrows(NullPointerException.class, () -> {
+            postingRuleProcessingService.applyPostingRule(null, rule, alarmMap);
+        });
+
+        assertEquals("Alarm must not be null", exception.getMessage());
+    }
+
+    @Test
+    public void testApplyPostingRule_nullRule() {
+        Alarm alarm = new Alarm();
+        HashMap<String, Object> alarmMap = new HashMap<>();
+
+        Exception exception = assertThrows(NullPointerException.class, () -> {
+            postingRuleProcessingService.applyPostingRule(alarm, null, alarmMap);
+        });
+
+        assertEquals("PostingRule must not be null", exception.getMessage());
+    }
+
+    @Test
+    public void testApplyPostingRule_emptyAlarmMap() throws Exception {
         Alarm alarm = new Alarm();
         PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
         HashMap<String, Object> alarmMap = new HashMap<>();
-        
+
         ResponseEntity<String> responseEntity = ResponseEntity.ok("{\"topologyObjects\": [{\"MockKey\": \"MockValue\"}]}");
         when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
         when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("MockValue");
@@ -54,12 +81,25 @@ public class PostingRuleProcessingServiceTest {
     }
 
     @Test
-    public void testApplyPostingRule_nullComponentId() throws Exception {
+    public void testApplyPostingRule_invalidJsonInRule() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule(1, "testrule", 1, 1, "Invalid JSON");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+
+        Exception exception = assertThrows(Exception.class, () -> {
+            postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        });
+
+        assertEquals("Error parsing JSON", exception.getMessage());
+    }
+
+    @Test
+    public void testApplyPostingRule_missingComponentIDAttribute() throws Exception {
         Alarm alarm = new Alarm();
         PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
         HashMap<String, Object> alarmMap = new HashMap<>();
 
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(null);
+        ReflectionTestUtils.setField(postingRuleProcessingService, "componentIDAttributeName", null);
 
         Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
 
@@ -68,12 +108,29 @@ public class PostingRuleProcessingServiceTest {
     }
 
     @Test
-    public void testApplyPostingRule_emptyComponentId() throws Exception {
+    public void testApplyPostingRule_topologyClientException() throws Exception {
         Alarm alarm = new Alarm();
         PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
         HashMap<String, Object> alarmMap = new HashMap<>();
 
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("");
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenThrow(new RuntimeException("Topology Client Error"));
+
+        Exception exception = assertThrows(RuntimeException.class, () -> {
+            postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        });
+
+        assertEquals("Topology Client Error", exception.getMessage());
+    }
+
+    @Test
+    public void testApplyPostingRule_invalidAlarmedObjectExpression() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+
+        ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", "Invalid Expression");
+
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(ResponseEntity.ok("{\"topologyObjects\": []}"));
 
         Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
 
@@ -82,7 +139,38 @@ public class PostingRuleProcessingServiceTest {
     }
 
     @Test
-    public void testApplyPostingRule_nullResponse() throws Exception {
+    public void testApplyPostingRule_invalidTopologyDetailsAlarmedObjectExpression() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+
+        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", "Invalid Expression");
+
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(ResponseEntity.ok("{\"topologyObjects\": []}"));
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertNotNull(result);
+        assertNull(result.getAlarmedObject());
+    }
+
+    @Test
+    public void testApplyPostingRule_topologyClientTimeout() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenThrow(new RuntimeException("Topology Client Timeout"));
+
+        Exception exception = assertThrows(RuntimeException.class, () -> {
+            postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+        });
+
+        assertEquals("Topology Client Timeout", exception.getMessage());
+    }
+
+    @Test
+    public void testApplyPostingRule_nullTopologyClientResponse() throws Exception {
         Alarm alarm = new Alarm();
         PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
         HashMap<String, Object> alarmMap = new HashMap<>();
@@ -96,103 +184,26 @@ public class PostingRuleProcessingServiceTest {
     }
 
     @Test
-    public void testApplyPostingRule_missingTopologyNode() throws Exception {
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-
-        ResponseEntity<String> responseEntity = ResponseEntity.ok("{\"missingNode\": true}");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        assertNotNull(result);
-        assertNull(result.getAlarmedObject());
-    }
-
-    @Test
-    public void testApplyPostingRule_invalidTopologyNode() throws Exception {
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-
-        ResponseEntity<String> responseEntity = ResponseEntity.ok("{\"invalidNode\": {}}");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        assertNotNull(result);
-        assertNull(result.getAlarmedObject());
-    }
-
-    @Test
-    public void testApplyPostingRule_topologyDataEvaluationFailure() throws Exception {
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-
-        ResponseEntity<String> responseEntity = ResponseEntity.ok("{\"topologyObjects\": [{\"MockKey\": \"MockValue\"}]}");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-        when(utils.evaluateExpression(anyString(), anyMap())).thenThrow(new RuntimeException("Evaluation failed"));
-
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        assertNotNull(result);
-        assertNull(result.getAlarmedObject());
-    }
-
-    @Test
-    public void testApplyPostingRule_invalidTopologyObjectsArray() throws Exception {
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-
-        ResponseEntity<String> responseEntity = ResponseEntity.ok("{\"topologyObjects\": \"invalidArray\"}");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        assertNotNull(result);
-        assertNull(result.getAlarmedObject());
-    }
-
-    @Test
-    public void testApplyPostingRule_validComponentIdButNoMatchingTopologyData() throws Exception {
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-
-        ResponseEntity<String> responseEntity = ResponseEntity.ok("{\"topologyObjects\": [{\"MockKey\": \"MockValue\"}]}");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("NonMatchingValue");
-
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        assertNotNull(result);
-        assertNull(result.getAlarmedObject());
-    }
-
-    @Test
-    public void testApplyPostingRule_validComponentIdWithEmptyAlarmedObject() throws Exception {
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-
-        ResponseEntity<String> responseEntity = ResponseEntity.ok("{\"topologyObjects\": [{\"MockKey\": \"MockValue\"}]}");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
-        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("");
-
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        assertNotNull(result);
-        assertNull(result.getAlarmedObject());
-    }
-
-    @Test
-    public void testApplyPostingRule_validComponentIdWithEmptyTopologyDetails() throws Exception {
+    public void testApplyPostingRule_emptyTopologyObjects() throws Exception {
         Alarm alarm = new Alarm();
         PostingRule rule = new PostingRule(1, "testrule", 1, 1, "{\"key\": \"value\"}");
         HashMap<String, Object> alarmMap = new HashMap<>();
 
         ResponseEntity<String> responseEntity = ResponseEntity.ok("{\"topologyObjects\": []}");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(response
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(responseEntity);
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertNotNull(result);
+        assertNull(result.getAlarmedObject());
+    }
+}
+```
+
+### Explanation:
+1. **Null Alarm**: Ensure that the method throws an appropriate exception if the `alarm` parameter is null.
+2. **Null Rule**: Ensure that the method throws an appropriate exception if the `rule` parameter is null.
+3. **Empty Alarm Map**: Test with an empty `alarmMap` to ensure the method handles it correctly.
+4. **Invalid JSON in Rule**: Test with invalid JSON in the rule to ensure proper exception handling and error messages.
+5. **Missing Component ID Attribute**: Test the scenario where the `componentIDAttributeName` field is null.
+6. **Topology Client Exception**: Ensure the method correctly handles exceptions thrown

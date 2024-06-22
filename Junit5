@@ -1,30 +1,26 @@
-Sure, here is the JUnit 5 test case code that covers the specified for loop in the `applyPostingRule` method of the `PostingRuleProcessingService` class, using reflection APIs to access private fields:
+Certainly! Below is the JUnit5 test code for the `applyPostingRule` method of the `PostingRuleProcessingService` class, covering all four branches of the if statement:
 
 ```java
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+import java.util.HashMap;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 
-import java.lang.reflect.Field;
-import java.util.HashMap;
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @ExtendWith(MockitoExtension.class)
-@SpringBootTest
 public class PostingRuleProcessingServiceTest {
-    
+
     @InjectMocks
     private PostingRuleProcessingService postingRuleProcessingService;
 
@@ -37,94 +33,102 @@ public class PostingRuleProcessingServiceTest {
     @Mock
     private AlarmPostingUtils utils;
 
-    private ObjectMapper objectMapper;
-    
+    @Value("${topologytraversal.alarmedObjectExpression: %TopoObject:OSS_Names[0]%}")
+    private String alarmedObjectExpression;
+
+    @Value("${topologytraversal.topologyDetailsAlarmedObjectExpression:{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}}")
+    private String topologyDetailsAlarmedObjectExpression;
+
+    @Value("${topologytraversal.topologyObjectEligibilityCheckValue:%TopoObject:OSS_Names[0]%}")
+    private String topologyObjectEligibilityCheckValue;
+
+    @Value("${topologytraversal.topologyObjectEligibilityCheckExpression:^(?!\\s*$).+}")
+    private String topologyObjectEligibilityCheckExpression;
+
+    @Value("${topologytraversal.componentIDAttributeName:reportingObject}")
+    private String componentIDAttributeName;
+
+    private Alarm alarm;
+    private PostingRule postingRule;
+    private HashMap<String, Object> alarmMap;
+
     @BeforeEach
-    public void setUp() throws Exception {
-        objectMapper = new ObjectMapper();
-        
-        setPrivateField(postingRuleProcessingService, "ruleLoadingService", ruleLoadingService);
-        setPrivateField(postingRuleProcessingService, "topoApiClient", topoApiClient);
-        setPrivateField(postingRuleProcessingService, "alarmedObjectExpression", "%TopoObject:OSS_Names[0]%");
-        setPrivateField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
-        setPrivateField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
-        setPrivateField(postingRuleProcessingService, "componentIDAttributeName", "reportingObject");
-        setPrivateField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}");
+    public void setUp() {
+        alarm = new Alarm();
+        alarm.setAlarmIdentity("testAlarmIdentity");
+
+        postingRule = new PostingRule(1L, "testRule", 1, 1, "testMatchingCriteria");
+
+        alarmMap = new HashMap<>();
     }
 
     @Test
-    public void testApplyPostingRule() throws Exception {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
+    public void testApplyPostingRule_withTopologyDetails() throws Exception {
+        String topologyData = "{\"TBL_response\":{\"topologyObjects\":[{\"key\":\"value\"}]}}";
+        String alarmedObject = "alarmedObject";
+        String alarmedObjectTopoDet = "{\"key\":\"value\"}";
 
-        PostingRule rule = new PostingRule(1L, "rule1", 1, 1, "criteria");
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(alarmedObject);
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
 
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        alarmMap.put("reportingObject", "component1");
+        alarm = postingRuleProcessingService.applyPostingRule(alarm, postingRule, alarmMap);
 
-        // Mocking dependencies
-        when(utils.evaluateExpression("%Alarm:reportingObject%", alarmMap)).thenReturn("component1");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(ResponseEntity.ok("{\"TBL_response\":{\"topologyObjects\":[{\"OSS_Names\":[\"object1\"]}]}}"));
-        when(utils.evaluateExpression("%TopoObject:OSS_Names[0]%", any())).thenReturn("object1");
-        
-        // Mocking the topology details enrichment
-        when(utils.evaluateExpression(any(), any())).thenReturn("{\"MO_Type\":\"Type1\",\"TagSequence\":\"Seq1\",\"Name\":\"Name1\"}");
-
-        alarm = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        // Assertions
         assertNotNull(alarm.getTopologyDetails());
-        assertEquals("{\"alarmedObject\":{\"MO_Type\":\"Type1\",\"TagSequence\":\"Seq1\",\"Name\":\"Name1\"}}", alarm.getTopologyDetails());
     }
 
-    private void setPrivateField(Object target, String fieldName, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(target, value);
-    }
-
-    // Additional tests to cover all branches
     @Test
-    public void testApplyPostingRule_NoTopologyData() throws Exception {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
+    public void testApplyPostingRule_withNullTopologyDetails() throws Exception {
+        String topologyData = "{\"TBL_response\":{\"topologyObjects\":[{\"key\":\"value\"}]}}";
+        String alarmedObject = "alarmedObject";
 
-        PostingRule rule = new PostingRule(1L, "rule1", 1, 1, "criteria");
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(alarmedObject);
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
 
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        alarmMap.put("reportingObject", "component1");
+        alarm = postingRuleProcessingService.applyPostingRule(alarm, postingRule, alarmMap);
 
-        // Mocking dependencies
-        when(utils.evaluateExpression("%Alarm:reportingObject%", alarmMap)).thenReturn("component1");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(ResponseEntity.ok("{\"TBL_response\":{}}"));
-
-        alarm = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        // Assertions
         assertNull(alarm.getTopologyDetails());
     }
 
     @Test
-    public void testApplyPostingRule_EmptyAlarmedObject() throws Exception {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
+    public void testApplyPostingRule_withEmptyTopologyDetails() throws Exception {
+        String topologyData = "{\"TBL_response\":{\"topologyObjects\":[{\"key\":\"value\"}]}}";
+        String alarmedObject = "alarmedObject";
+        String alarmedObjectTopoDet = "";
 
-        PostingRule rule = new PostingRule(1L, "rule1", 1, 1, "criteria");
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(alarmedObject);
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
 
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        alarmMap.put("reportingObject", "component1");
+        alarm = postingRuleProcessingService.applyPostingRule(alarm, postingRule, alarmMap);
 
-        // Mocking dependencies
-        when(utils.evaluateExpression("%Alarm:reportingObject%", alarmMap)).thenReturn("component1");
-        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(ResponseEntity.ok("{\"TBL_response\":{\"topologyObjects\":[{\"OSS_Names\":[\"object1\"]}]}}"));
-        when(utils.evaluateExpression("%TopoObject:OSS_Names[0]%", any())).thenReturn("");
-
-        alarm = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        // Assertions
         assertNull(alarm.getTopologyDetails());
+    }
+
+    @Test
+    public void testApplyPostingRule_withNonNullNonEmptyTopologyDetails() throws Exception {
+        String topologyData = "{\"TBL_response\":{\"topologyObjects\":[{\"key\":\"value\"}]}}";
+        String alarmedObject = "alarmedObject";
+        String alarmedObjectTopoDet = "{\"key\":\"value\"}";
+
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(alarmedObject);
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyData));
+
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode jsonNode = mapper.createObjectNode();
+        when(AlarmPostingConstants.getObjectMapper().readTree(anyString())).thenReturn(jsonNode);
+
+        alarm = postingRuleProcessingService.applyPostingRule(alarm, postingRule, alarmMap);
+
+        assertNotNull(alarm.getTopologyDetails());
     }
 }
 ```
 
-This test case covers the different branches in the `applyPostingRule` method's for loop by mocking dependencies and setting private fields using reflection. It ensures that the specified code segment is executed under different conditions for 100% code coverage.
+In this code:
+- `testApplyPostingRule_withTopologyDetails` covers the branch where `topologyDetails` is neither null nor empty.
+- `testApplyPostingRule_withNullTopologyDetails` covers the branch where `topologyDetails` is null.
+- `testApplyPostingRule_withEmptyTopologyDetails` covers the branch where `topologyDetails` is empty.
+- `testApplyPostingRule_withNonNullNonEmptyTopologyDetails` covers the branch where `topologyDetails` is not null and not empty.

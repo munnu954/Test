@@ -1,16 +1,30 @@
+Certainly! Below are some JUnit 5 test cases designed to achieve 100% code coverage for the `for` loop within the `applyPostingRule` method of the `PostingRuleProcessingService` class. The test cases use reflection to set the private fields.
+
+```java
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.MockitoAnnotations;
+import org.springframework.http.ResponseEntity;
 
 import java.lang.reflect.Field;
 import java.util.HashMap;
+import java.util.Map;
 
-import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
 public class PostingRuleProcessingServiceTest {
+
+    @InjectMocks
+    private PostingRuleProcessingService postingRuleProcessingService;
 
     @Mock
     private RuleLoadingService ruleLoadingService;
@@ -21,27 +35,142 @@ public class PostingRuleProcessingServiceTest {
     @Mock
     private AlarmPostingUtils utils;
 
+    private ObjectMapper objectMapper = new ObjectMapper();
+
+    @BeforeEach
+    public void setUp() throws Exception {
+        MockitoAnnotations.openMocks(this);
+
+        setPrivateField(postingRuleProcessingService, "alarmedObjectExpression", "%TopoObject:OSS_Names[0]%");
+        setPrivateField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
+        setPrivateField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
+        setPrivateField(postingRuleProcessingService, "componentIDAttributeName", "reportingObject");
+        setPrivateField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression",
+                "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}");
+    }
+
+    private void setPrivateField(Object target, String fieldName, Object value) throws Exception {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
+
     @Test
-    public void testApplyPostingRuleForLoop() throws NoSuchFieldException, IllegalAccessException {
-        // Create instance of PostingRuleProcessingService
-        PostingRuleProcessingService processingService = new PostingRuleProcessingService();
-        
-        // Mock dependencies
-        when(ruleLoadingService.getRuleMap()).thenReturn(new HashMap<>());
-        when(utils.evaluateExpression("", new HashMap<>())).thenReturn("");
+    public void testApplyPostingRule_withValidTopologyData() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule(1, "Test Rule", 1, 1, "criteria");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("reportingObject", "component123");
 
-        // Access private fields using reflection
-        Field ruleLoadingServiceField = PostingRuleProcessingService.class.getDeclaredField("ruleLoadingService");
-        ruleLoadingServiceField.setAccessible(true);
-        ruleLoadingServiceField.set(processingService, ruleLoadingService);
+        String topoDataJson = "{\"topologyObjects\": [{\"OSS_Names\": [\"eligibleComponent\"], \"MO_Type\": \"type1\", \"INMS_Attributes\": {\"TagSequence\": \"sequence1\"}, \"Name\": \"name1\"}]}";
+        JsonNode topoDataNode = objectMapper.readTree(topoDataJson);
+        ResponseEntity<String> responseEntity = mock(ResponseEntity.class);
+        when(responseEntity.getBody()).thenReturn(topoDataJson);
 
-        Field topoApiClientField = PostingRuleProcessingService.class.getDeclaredField("topoApiClient");
-        topoApiClientField.setAccessible(true);
-        topoApiClientField.set(processingService, topoApiClient);
+        when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), any())).thenReturn(responseEntity);
+        when(utils.evaluateExpression(anyString(), any(Map.class))).thenReturn("eligibleComponent", "alarmedObject");
 
-        // Other required fields can be accessed and set similarly
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
 
-        // Test the applyPostingRule method for the for loop
-        processingService.applyPostingRule(new Alarm(), new PostingRule(), new HashMap<>());
+        assertNotNull(result);
+        assertNotNull(result.getAlarmedObject());
+        verify(utils, times(3)).evaluateExpression(anyString(), any(Map.class));
+    }
+
+    @Test
+    public void testApplyPostingRule_withIneligibleTopologyData() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule(1, "Test Rule", 1, 1, "criteria");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("reportingObject", "component123");
+
+        String topoDataJson = "{\"topologyObjects\": [{\"OSS_Names\": [\"ineligibleComponent\"], \"MO_Type\": \"type1\", \"INMS_Attributes\": {\"TagSequence\": \"sequence1\"}, \"Name\": \"name1\"}]}";
+        JsonNode topoDataNode = objectMapper.readTree(topoDataJson);
+        ResponseEntity<String> responseEntity = mock(ResponseEntity.class);
+        when(responseEntity.getBody()).thenReturn(topoDataJson);
+
+        when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), any())).thenReturn(responseEntity);
+        when(utils.evaluateExpression(anyString(), any(Map.class))).thenReturn("ineligibleComponent");
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertNotNull(result);
+        verify(utils, times(1)).evaluateExpression(anyString(), any(Map.class));
+    }
+
+    @Test
+    public void testApplyPostingRule_withEmptyTopologyData() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule(1, "Test Rule", 1, 1, "criteria");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("reportingObject", "component123");
+
+        String topoDataJson = "{\"topologyObjects\": []}";
+        JsonNode topoDataNode = objectMapper.readTree(topoDataJson);
+        ResponseEntity<String> responseEntity = mock(ResponseEntity.class);
+        when(responseEntity.getBody()).thenReturn(topoDataJson);
+
+        when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), any())).thenReturn(responseEntity);
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertNotNull(result);
+        verify(utils, times(0)).evaluateExpression(anyString(), any(Map.class));
+    }
+
+    @Test
+    public void testApplyPostingRule_withNullTopologyData() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule(1, "Test Rule", 1, 1, "criteria");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("reportingObject", "component123");
+
+        ResponseEntity<String> responseEntity = mock(ResponseEntity.class);
+        when(responseEntity.getBody()).thenReturn(null);
+
+        when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), any())).thenReturn(responseEntity);
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertNotNull(result);
+        verify(utils, times(0)).evaluateExpression(anyString(), any(Map.class));
+    }
+
+    @Test
+    public void testApplyPostingRule_withExceptionInTopologyDataProcessing() throws Exception {
+        Alarm alarm = new Alarm();
+        PostingRule rule = new PostingRule(1, "Test Rule", 1, 1, "criteria");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("reportingObject", "component123");
+
+        String topoDataJson = "{\"topologyObjects\": [{\"OSS_Names\": [\"eligibleComponent\"], \"MO_Type\": \"type1\", \"INMS_Attributes\": {\"TagSequence\": \"sequence1\"}, \"Name\": \"name1\"}]}";
+        JsonNode topoDataNode = objectMapper.readTree(topoDataJson);
+        ResponseEntity<String> responseEntity = mock(ResponseEntity.class);
+        when(responseEntity.getBody()).thenReturn(topoDataJson);
+
+        when(topoApiClient.fetchTopologyTraversalDetails(eq(alarm), eq(rule), any())).thenReturn(responseEntity);
+        when(utils.evaluateExpression(anyString(), any(Map.class))).thenThrow(new RuntimeException("Parsing error"));
+
+        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+        assertNotNull(result);
+        verify(utils, times(1)).evaluateExpression(anyString(), any(Map.class));
     }
 }
+```
+
+### Explanation:
+
+1. **Setting Up the Test Environment:**
+    - The `setUp` method uses reflection to set private fields in the `PostingRuleProcessingService` class.
+    - Mockito is used to mock dependencies such as `RuleLoadingService`, `TopologyApiClient`, and `AlarmPostingUtils`.
+
+2. **Test Cases:**
+    - Each test case provides different scenarios to ensure all branches of the `for` loop in `applyPostingRule` are covered.
+    - **testApplyPostingRule_withValidTopologyData**: Covers the case where the topology data is valid and eligible.
+    - **testApplyPostingRule_withIneligibleTopologyData**: Covers the case where the topology data is valid but not eligible.
+    - **testApplyPostingRule_withEmptyTopologyData**: Covers the case where the topology data is empty.
+    - **testApplyPostingRule_withNullTopologyData**: Covers the case where the topology data is null.
+    - **testApplyPostingRule_withExceptionInTopologyDataProcessing**: Covers the case where an exception occurs during the evaluation of an expression.
+
+These test cases should help in achieving 100% code coverage for the `for` loop in the `applyPostingRule` method.

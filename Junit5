@@ -1,149 +1,167 @@
-To achieve 100% code coverage for the for loop in the `applyPostingRule` method of the `PostingRuleProcessingService` class, we need to write additional Junit5 test cases that cover all branches of the for loop. This means we need to test scenarios where `topologyObjectsNode` is empty, contains single element, and multiple elements.
-
-Here are additional Junit5 test cases that cover all branches of the for loop for 100% code coverage:
+Sure, I can help you write the Junit5 testcases for the `applyPostingRule` method of the `PostingRuleProcessingService` class. Here's the code:
 
 ```java
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-
+import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.ResponseEntity;
+import org.springframework.test.util.ReflectionTestUtils;
+import java.io.IOException;
 import java.util.HashMap;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
+@ExtendWith(MockitoExtension.class)
 class PostingRuleProcessingServiceTest {
+
+    private static final Logger LOG = LogManager.getLogger(PostingRuleProcessingService.class);
 
     @InjectMocks
     private PostingRuleProcessingService postingRuleProcessingService;
 
     @Mock
-    private AlarmPostingUtils alarmPostingUtils;
+    private RuleLoadingService ruleLoadingService;
 
     @Mock
     private TopologyApiClient topoApiClient;
 
     @Mock
-    private RuleLoadingService ruleLoadingService;
+    private AlarmPostingUtils utils;
 
-    @Test
-    void testApplyPostingRuleForLoop_EmptyTopologyObjectsNode() {
-        // Create necessary objects
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule(1, "Rule1", 1, 1, "MatchingCriteria");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-
-        // Mock behavior of AlarmPostingUtils
-        when(alarmPostingUtils.evaluateExpression(anyString(), anyMap())).thenReturn("EvaluatedValue");
-        
-        // Call the method to be tested with empty topologyObjectsNode
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        
-        // Perform assertions based on the behavior of the for loop
-        assertEquals("", result.getTopologyDetails());
+    @BeforeEach
+    void setup() {
+        ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", "%TopoObject:OSS_Names[0]%");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "componentIDAttributeName", "reportingObject");
     }
 
     @Test
-    void testApplyPostingRuleForLoop_SingleTopologyObjectsNode() {
-        // Create necessary objects
+    void testApplyPostingRule_TopologyDataNotFound() {
         Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule(1, "Rule1", 1, 1, "MatchingCriteria");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        JsonNode jsonNodeTmp = mock(JsonNode.class);
+        alarm.setAlarmIdentity("123");
+        alarm.setReportingObject("123");
+        PostingRule rule = new PostingRule(1L, "Rule1", 1, 1, "FilterExpression");
+        rule.setRuleTraversalExpression("TBL_EXPRESSION");
 
-        // Mock behavior of AlarmPostingUtils
-        when(alarmPostingUtils.evaluateExpression(anyString(), anyMap())).thenReturn("EvaluatedValue");
+        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(alarm, rule, "123")).thenReturn(null);
 
-        // Call the method to be tested with single element in topologyObjectsNode
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        
-        // Perform assertions based on the behavior of the for loop
-        assertEquals("EvaluatedValue", result.getTopologyDetails());
+        Alarm updatedAlarm = postingRuleProcessingService.applyPostingRule(alarm, rule, new HashMap<>());
+        Assertions.assertSame(alarm, updatedAlarm);
     }
 
     @Test
-    void testApplyPostingRuleForLoop_MultipleTopologyObjectsNode() {
-        // Create necessary objects
+    void testApplyPostingRule_TopologyDataFound_NoTopologyObjects() throws IOException {
         Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule(1, "Rule1", 1, 1, "MatchingCriteria");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        JsonNode jsonNodeTmp1 = mock(JsonNode.class);
-        JsonNode jsonNodeTmp2 = mock(JsonNode.class);
-        
-        // Mock behavior of AlarmPostingUtils
-        when(alarmPostingUtils.evaluateExpression(anyString(), anyMap())).thenReturn("EvaluatedValue")
-                                                                     .thenReturn("SecondEvaluatedValue");
+        alarm.setAlarmIdentity("123");
+        alarm.setReportingObject("123");
+        PostingRule rule = new PostingRule(1L, "Rule1", 1, 1, "FilterExpression");
+        rule.setRuleTraversalExpression("TBL_EXPRESSION");
 
-        // Call the method to be tested with multiple elements in topologyObjectsNode
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        
-        // Perform assertions based on the behavior of the for loop
-        assertEquals("SecondEvaluatedValue", result.getTopologyDetails());
+        ResponseEntity<String> response = Mockito.mock(ResponseEntity.class);
+        Mockito.when(response.getBody()).thenReturn("{\"TopologyObjects\": []}");
+        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(alarm, rule, "123")).thenReturn(response);
+
+        Alarm updatedAlarm = postingRuleProcessingService.applyPostingRule(alarm, rule, new HashMap<>());
+        Assertions.assertSame(alarm, updatedAlarm);
+    }
+
+    @Test
+    void testApplyPostingRule_TopologyDataFound_TopologyObjectsNotEligible() throws IOException {
+        Alarm alarm = new Alarm();
+        alarm.setAlarmIdentity("123");
+        alarm.setReportingObject("123");
+        PostingRule rule = new PostingRule(1L, "Rule1", 1, 1, "FilterExpression");
+        rule.setRuleTraversalExpression("TBL_EXPRESSION");
+
+        ResponseEntity<String> response = Mockito.mock(ResponseEntity.class);
+        Mockito.when(response.getBody()).thenReturn("{\"TopologyObjects\": [{\"OSS_Names\": [\"non-matching-object\"]}]}");
+        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(alarm, rule, "123")).thenReturn(response);
+        Mockito.when(utils.evaluateExpression("%TopoObject:OSS_Names[0]%", new HashMap<>())).thenReturn("non-matching-object");
+        Mockito.when(utils.evaluateExpression("^(?!\\s*$).+", new HashMap<>())).thenReturn("non-matching-object");
+
+        Alarm updatedAlarm = postingRuleProcessingService.applyPostingRule(alarm, rule, new HashMap<>());
+        Assertions.assertSame(alarm, updatedAlarm);
+    }
+
+    @Test
+    void testApplyPostingRule_TopologyDataFound_TopologyObjectsEligible_AlarmedObjectEmpty() throws IOException {
+        Alarm alarm = new Alarm();
+        alarm.setAlarmIdentity("123");
+        alarm.setReportingObject("123");
+        PostingRule rule = new PostingRule(1L, "Rule1", 1, 1, "FilterExpression");
+        rule.setRuleTraversalExpression("TBL_EXPRESSION");
+
+        ResponseEntity<String> response = Mockito.mock(ResponseEntity.class);
+        Mockito.when(response.getBody()).thenReturn("{\"TopologyObjects\": [{\"OSS_Names\": [\"matching-object\"]}]}");
+        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(alarm, rule, "123")).thenReturn(response);
+        Mockito.when(utils.evaluateExpression("%TopoObject:OSS_Names[0]%", new HashMap<>())).thenReturn("matching-object");
+        Mockito.when(utils.evaluateExpression("^(?!\\s*$).+", new HashMap<>())).thenReturn("matching-object");
+        Mockito.when(utils.evaluateExpression("{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}", new HashMap<>())).thenReturn("");
+
+        Alarm updatedAlarm = postingRuleProcessingService.applyPostingRule(alarm, rule, new HashMap<>());
+        Assertions.assertSame(alarm, updatedAlarm);
+    }
+
+    @Test
+    void testApplyPostingRule_TopologyDataFound_TopologyObjectsEligible_AlarmedObjectNotEmpty() throws IOException {
+        Alarm alarm = new Alarm();
+        alarm.setAlarmIdentity("123");
+        alarm.setReportingObject("123");
+        PostingRule rule = new PostingRule(1L, "Rule1", 1, 1, "FilterExpression");
+        rule.setRuleTraversalExpression("TBL_EXPRESSION");
+
+        ResponseEntity<String> response = Mockito.mock(ResponseEntity.class);
+        Mockito.when(response.getBody()).thenReturn("{\"TopologyObjects\": [{\"OSS_Names\": [\"matching-object\"]}]}");
+        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(alarm, rule, "123")).thenReturn(response);
+        Mockito.when(utils.evaluateExpression("%TopoObject:OSS_Names[0]%", new HashMap<>())).thenReturn("matching-object");
+        Mockito.when(utils.evaluateExpression("^(?!\\s*$).+", new HashMap<>())).thenReturn("matching-object");
+        Mockito.when(utils.evaluateExpression("{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}", new HashMap<>())).thenReturn("{\"MO_Type\":\"MO_TYPE\",\"TagSequence\":\"TAG_SEQ\", \"Name\":\"NAME\"}");
+
+        Alarm updatedAlarm = postingRuleProcessingService.applyPostingRule(alarm, rule, new HashMap<>());
+        Assertions.assertEquals("matching-object", updatedAlarm.getAlarmedObject());
+        Assertions.assertEquals("{\"MO_Type\":\"MO_TYPE\",\"TagSequence\":\"TAG_SEQ\", \"Name\":\"NAME\"}", updatedAlarm.getTopologyDetails());
+    }
+
+    @Test
+    void testApplyPostingRule_Exception() throws IOException {
+        Alarm alarm = new Alarm();
+        alarm.setAlarmIdentity("123");
+        alarm.setReportingObject("123");
+        PostingRule rule = new PostingRule(1L, "Rule1", 1, 1, "FilterExpression");
+        rule.setRuleTraversalExpression("TBL_EXPRESSION");
+
+        ResponseEntity<String> response = Mockito.mock(ResponseEntity.class);
+        Mockito.when(response.getBody()).thenReturn("{\"TopologyObjects\": [{\"OSS_Names\": [\"matching-object\"]}]}");
+        Mockito.when(topoApiClient.fetchTopologyTraversalDetails(alarm, rule, "123")).thenReturn(response);
+        Mockito.when(utils.evaluateExpression("%TopoObject:OSS_Names[0]%", new HashMap<>())).thenReturn("matching-object");
+        Mockito.when(utils.evaluateExpression("^(?!\\s*$).+", new HashMap<>())).thenReturn("matching-object");
+        Mockito.when(utils.evaluateExpression("{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}", new HashMap<>())).thenThrow(new IOException("Exception"));
+
+        Alarm updatedAlarm = postingRuleProcessingService.applyPostingRule(alarm, rule, new HashMap<>());
+        Assertions.assertSame(alarm, updatedAlarm);
     }
 }
 ```
 
-In these test cases, we cover the scenarios where `topologyObjectsNode` is empty, contains a single element, and multiple elements. We mock the behavior of the dependencies appropriately for these test cases and validate the behavior of the for loop by asserting the expected output of the `getTopologyDetails` method of the `Alarm` object.
+In the above code, we're using the `ReflectionTestUtils` class to set the values of the protected fields in the `PostingRuleProcessingService` class. This allows us to test the `applyPostingRule` method without making those fields public.
 
-These additional test cases should provide 100% code coverage for the for loop in the `applyPostingRule` method.
+The test cases cover the following scenarios:
 
+1. `testApplyPostingRule_TopologyDataNotFound`: Verifies that the method returns the original alarm when the topology data is not found.
+2. `testApplyPostingRule_TopologyDataFound_NoTopologyObjects`: Verifies that the method returns the original alarm when the topology data is found, but there are no topology objects.
+3. `testApplyPostingRule_TopologyDataFound_TopologyObjectsNotEligible`: Verifies that the method returns the original alarm when the topology objects are not eligible.
+4. `testApplyPostingRule_TopologyDataFound_TopologyObjectsEligible_AlarmedObjectEmpty`: Verifies that the method returns the original alarm when the topology objects are eligible, but the alarmed object is empty.
+5. `testApplyPostingRule_TopologyDataFound_TopologyObjectsEligible_AlarmedObjectNotEmpty`: Verifies that the method updates the alarm with the alarmed object and topology details when the topology objects are eligible and the alarmed object is not empty.
+6. `testApplyPostingRule_Exception`: Verifies that the method returns the original alarm when an exception occurs during the processing.
 
-
-
-In order to write the Junit5 test cases for the mentioned for loop in the `applyPostingRule` method of `PostingRuleProcessingService` class, we can use reflection to access the private fields without making them public. Below is the Junit5 test case code to achieve 100% code coverage:
-
-```java
-import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-
-import java.util.HashMap;
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.*;
-
-class PostingRuleProcessingServiceTest {
-
-    @InjectMocks
-    private PostingRuleProcessingService postingRuleProcessingService;
-
-    @Mock
-    private AlarmPostingUtils alarmPostingUtils;
-
-    @Mock
-    private TopologyApiClient topoApiClient;
-
-    @Mock
-    private RuleLoadingService ruleLoadingService;
-
-    @Test
-    void testApplyPostingRuleForLoop() {
-        // Create necessary objects
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule(1, "Rule1", 1, 1, "MatchingCriteria");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        alarmMap.put("key1", "value1");
-        
-        // Mock response from topoApiClient
-        ResponseEntity<String> mockResponse = new ResponseEntity<>("MockTopologyData", HttpStatus.OK);
-        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString())).thenReturn(mockResponse);
-        
-        // Mock behavior of AlarmPostingUtils
-        when(alarmPostingUtils.evaluateExpression(anyString(), anyMap())).thenReturn("EvaluatedValue");
-        
-        // Call the method to be tested
-        Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-        
-        // Verifications
-        verify(alarmPostingUtils, atLeastOnce()).evaluateExpression(anyString(), anyMap());        
-
-        // Perform assertions based on the behavior of the for loop
-        assertEquals("MockTopologyData", result.getTopologyDetails());
-    }
-}
-```
-
-In this test case, we mock the behavior of the dependencies (`AlarmPostingUtils` and `TopologyApiClient`) and set up the required data for testing. We then call the method to be tested (`applyPostingRule`) and verify the interactions with the dependencies using `verify`. Finally, we perform assertions to validate the behavior of the for loop within the `applyPostingRule` method. This test case should provide coverage for the mentioned for loop and help achieve 100% code coverage.
+These test cases should provide 100% code coverage for the `for (JsonNode jsonNodeTmp : topologyObjectsNode) { ... }` loop in the `applyPostingRule` method.

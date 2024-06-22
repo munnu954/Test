@@ -1,143 +1,49 @@
-Certainly! Below is the JUnit 5 test case code that aims to cover the `for` loop inside the `applyPostingRule` method of the `PostingRuleProcessingService` class. The test uses reflection to access the private fields.
+@Test
+void testApplyPostingRule_AlarmedObjectTopoDetNotNull() throws Exception {
+    // Create mock objects
+    Alarm alarm = new Alarm();
+    PostingRule rule = new PostingRule(1L, "Rule1", 1, 1, "MatchingCriteria");
+    Map<String, Object> alarmMap = new HashMap<>();
+    alarmMap.put("key", "value");
 
-```java
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.test.util.ReflectionTestUtils;
+    ObjectMapper objectMapper = new ObjectMapper();
+    JsonNode jsonNode = objectMapper.createObjectNode();
+    ((ObjectNode) jsonNode).put("key", "value");
 
-import java.util.HashMap;
-import java.util.Map;
+    when(ruleLoadingService.getRuleMap()).thenReturn(new HashMap<>());
+    when(AlarmPostingConstants.getObjectMapper().readTree(anyString())).thenReturn(jsonNode);
+    when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("result");
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+    // Call the method
+    Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
 
-@ExtendWith(MockitoExtension.class)
-public class PostingRuleProcessingServiceTest {
-
-    @InjectMocks
-    private PostingRuleProcessingService postingRuleProcessingService;
-
-    @Mock
-    private RuleLoadingService ruleLoadingService;
-
-    @Mock
-    private TopologyApiClient topoApiClient;
-
-    @Mock
-    private AlarmPostingUtils utils;
-
-    private static final ObjectMapper objectMapper = new ObjectMapper();
-
-    @BeforeEach
-    public void setUp() {
-        ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", "%TopoObject:OSS_Names[0]%");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
-        ReflectionTestUtils.setField(postingRuleProcessingService, "componentIDAttributeName", "reportingObject");
-    }
-
-    @Test
-    public void testApplyPostingRule_withValidTopologyObjects() throws Exception {
-        // Mock data
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("1234");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        PostingRule rule = new PostingRule(1L, "Test Rule", 1, 1, "criteria");
-
-        String topologyDataJson = "[{\"OSS_Names\": [\"name1\"], \"MO_Type\": \"type1\", \"INMS_Attributes\": {\"TagSequence\": \"seq1\"}, \"Name\": \"name1\"}]";
-        JsonNode topologyObjectsNode = objectMapper.readTree(topologyDataJson);
-
-        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(new ResponseEntity<>(topologyDataJson, HttpStatus.OK));
-        when(utils.evaluateExpression(any(), any())).thenAnswer(i -> {
-            String expression = i.getArgument(0);
-            Map<String, Object> topoMap = i.getArgument(1);
-            return topoMap.getOrDefault(expression.replace("%TopoObject:", "").replace("%", ""), "").toString();
-        });
-
-        // Invoke method
-        Alarm resultAlarm = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        // Assertions
-        assertNotNull(resultAlarm);
-        assertEquals("name1", resultAlarm.getAlarmedObject());
-        assertNotNull(resultAlarm.getTopologyDetails());
-    }
-
-    @Test
-    public void testApplyPostingRule_withNoEligibleTopologyObjects() throws Exception {
-        // Mock data
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("1234");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        PostingRule rule = new PostingRule(1L, "Test Rule", 1, 1, "criteria");
-
-        String topologyDataJson = "[{\"OSS_Names\": [\"\"], \"MO_Type\": \"type1\", \"INMS_Attributes\": {\"TagSequence\": \"seq1\"}, \"Name\": \"name1\"}]";
-        JsonNode topologyObjectsNode = objectMapper.readTree(topologyDataJson);
-
-        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(new ResponseEntity<>(topologyDataJson, HttpStatus.OK));
-        when(utils.evaluateExpression(any(), any())).thenAnswer(i -> {
-            String expression = i.getArgument(0);
-            Map<String, Object> topoMap = i.getArgument(1);
-            return topoMap.getOrDefault(expression.replace("%TopoObject:", "").replace("%", ""), "").toString();
-        });
-
-        // Invoke method
-        Alarm resultAlarm = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        // Assertions
-        assertNotNull(resultAlarm);
-        assertNull(resultAlarm.getAlarmedObject());
-        assertNull(resultAlarm.getTopologyDetails());
-    }
-
-    @Test
-    public void testApplyPostingRule_withInvalidJsonNode() throws Exception {
-        // Mock data
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("1234");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        PostingRule rule = new PostingRule(1L, "Test Rule", 1, 1, "criteria");
-
-        String topologyDataJson = "[{\"OSS_Names\": \"invalid_data\"}]";
-        JsonNode topologyObjectsNode = objectMapper.readTree(topologyDataJson);
-
-        when(topoApiClient.fetchTopologyTraversalDetails(any(), any(), any())).thenReturn(new ResponseEntity<>(topologyDataJson, HttpStatus.OK));
-        when(utils.evaluateExpression(any(), any())).thenAnswer(i -> {
-            String expression = i.getArgument(0);
-            Map<String, Object> topoMap = i.getArgument(1);
-            return topoMap.getOrDefault(expression.replace("%TopoObject:", "").replace("%", ""), "").toString();
-        });
-
-        // Invoke method
-        Alarm resultAlarm = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
-
-        // Assertions
-        assertNotNull(resultAlarm);
-        assertNull(resultAlarm.getAlarmedObject());
-        assertNull(resultAlarm.getTopologyDetails());
-    }
+    // Verify the interactions
+    assertNotNull(result);
+    assertEquals("result", result.getTopologyDetails());
+    verify(LOG, times(1)).debug(anyString());
 }
-```
+  
+@Test
+void testApplyPostingRule_AlarmedObjectTopoDetNull() throws Exception {
+    // Create mock objects
+    Alarm alarm = new Alarm();
+    PostingRule rule = new PostingRule(1L, "Rule1", 1, 1, "MatchingCriteria");
+    Map<String, Object> alarmMap = new HashMap<>();
+    alarmMap.put("key", "value");
 
-### Key Points:
-1. **ReflectionTestUtils**: Used to set private fields of `PostingRuleProcessingService`.
-2. **Mockito**: Mocked dependencies like `RuleLoadingService`, `TopologyApiClient`, and `AlarmPostingUtils`.
-3. **Test Cases**:
-   - **testApplyPostingRule_withValidTopologyObjects**: Tests the scenario where valid topology objects are returned.
-   - **testApplyPostingRule_withNoEligibleTopologyObjects**: Tests the scenario where no eligible topology objects are found.
-   - **testApplyPostingRule_withInvalidJsonNode**: Tests the scenario where the JSON node structure is invalid.
+    ObjectMapper objectMapper = new ObjectMapper();
+    JsonNode jsonNode = objectMapper.createObjectNode();
+    ((ObjectNode) jsonNode).put("key", "value");
 
-These test cases should cover the `for` loop in the `applyPostingRule` method for different branches.
+    when(ruleLoadingService.getRuleMap()).thenReturn(new HashMap<>());
+    when(AlarmPostingConstants.getObjectMapper().readTree(anyString())).thenReturn(jsonNode);
+    when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("");
+
+    // Call the method
+    Alarm result = postingRuleProcessingService.applyPostingRule(alarm, rule, alarmMap);
+
+    // Verify the interactions
+    assertNotNull(result);
+    assertNull(result.getTopologyDetails());
+    verify(LOG, never()).debug(anyString());
+}

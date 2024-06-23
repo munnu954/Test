@@ -1,22 +1,29 @@
-To achieve 100% code coverage and cover all 4 branches of the if statement mentioned, you can use reflection to access the private fields in the `PostingRuleProcessingService` class. Here is an example of how you can write JUnit5 test cases for the `applyPostingRule` method:
+Sure, here is a JUnit 5 test class that covers the 4 branches of the specified if statement in the `applyPostingRule` method of the `PostingRuleProcessingService` class. We'll use reflection to set the private fields of `PostingRuleProcessingService`.
 
 ```java
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 
 import java.lang.reflect.Field;
 import java.util.HashMap;
-import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class PostingRuleProcessingServiceTest {
+
+    @InjectMocks
+    private PostingRuleProcessingService postingRuleProcessingService;
 
     @Mock
     private RuleLoadingService ruleLoadingService;
@@ -24,38 +31,136 @@ public class PostingRuleProcessingServiceTest {
     @Mock
     private TopologyApiClient topoApiClient;
 
+    @Mock
+    private AlarmPostingUtils utils;
+
+    @Value("${topologytraversal.alarmedObjectExpression: %TopoObject:OSS_Names[0]%}")
+    private String alarmedObjectExpression;
+
+    @Value("${topologytraversal.topologyDetailsAlarmedObjectExpression:{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}}")
+    private String topologyDetailsAlarmedObjectExpression;
+
+    @Value("${topologytraversal.topologyObjectEligibilityCheckValue:%TopoObject:OSS_Names[0]%}")
+    private String topologyObjectEligibilityCheckValue;
+
+    @Value("${topologytraversal.topologyObjectEligibilityCheckExpression:^(?!\\s*$).+}")
+    private String topologyObjectEligibilityCheckExpression;
+
+    @Value("${topologytraversal.componentIDAttributeName:reportingObject}")
+    private String componentIDAttributeName;
+
+    private Alarm alarm;
+    private PostingRule postingRule;
+    private HashMap<String, Object> alarmMap;
+
+    @BeforeEach
+    public void setUp() throws Exception {
+        alarm = new Alarm();
+        alarm.setAlarmIdentity("Alarm1");
+
+        postingRule = new PostingRule(1L, "TestRule", 1, 1, "criteria");
+
+        alarmMap = new HashMap<>();
+        alarmMap.put("alarmIdentity", "Alarm1");
+
+        setPrivateField(postingRuleProcessingService, "alarmedObjectExpression", alarmedObjectExpression);
+        setPrivateField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", topologyDetailsAlarmedObjectExpression);
+        setPrivateField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", topologyObjectEligibilityCheckValue);
+        setPrivateField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", topologyObjectEligibilityCheckExpression);
+        setPrivateField(postingRuleProcessingService, "componentIDAttributeName", componentIDAttributeName);
+    }
+
+    private void setPrivateField(Object target, String fieldName, Object value) throws Exception {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
+
     @Test
-    void testApplyPostingRule() throws Exception {
-        PostingRuleProcessingService service = new PostingRuleProcessingService();
-        
-        // Mock the necessary objects
-        Alarm alarm = new Alarm();
-        PostingRule rule = new PostingRule(1, "Test Rule", 1, 1, "Matching Criteria");
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        String componentIdReq = "123";
-        ResponseEntity<String> response = mock(ResponseEntity.class);
-        
-        // Set up mock responses
-        when(topoApiClient.fetchTopologyTraversalDetails(alarm, rule, componentIdReq)).thenReturn(response);
-        when(response.getBody()).thenReturn("{\"topologyObjects\": []}");
-        
-        // Use reflection to set private fields in PostingRuleProcessingService
-        Field ruleLoadingServiceField = PostingRuleProcessingService.class.getDeclaredField("ruleLoadingService");
-        ruleLoadingServiceField.setAccessible(true);
-        ruleLoadingServiceField.set(service, ruleLoadingService);
+    public void testApplyPostingRule_TopologyDetailsNotNull_NotEmpty() throws Exception {
+        // Mocking
+        String componentIdReq = "Component123";
+        String topologyDetails = "{\"details\":\"some details\"}";
+        String alarmedObject = "AlarmedObject1";
 
-        Field topoApiClientField = PostingRuleProcessingService.class.getDeclaredField("topoApiClient");
-        topoApiClientField.setAccessible(true);
-        topoApiClientField.set(service, topoApiClient);
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(componentIdReq);
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyDetails));
+        when(utils.evaluateExpression(alarmedObjectExpression, alarmMap)).thenReturn(alarmedObject);
 
-        service.applyPostingRule(alarm, rule, alarmMap);
+        // Actual call
+        Alarm resultAlarm = postingRuleProcessingService.applyPostingRule(alarm, postingRule, alarmMap);
 
-        // Assert your conditions for each branch of the if statement
-        assertEquals("", alarm.getTopologyDetails()); // branch 1: topologyDetails is empty
+        // Asserts
+        assertNotNull(resultAlarm.getTopologyDetails());
+        assertEquals(topologyDetails, resultAlarm.getTopologyDetails());
+    }
 
-        // Add more assertions for other branches
+    @Test
+    public void testApplyPostingRule_TopologyDetailsNull() throws Exception {
+        // Mocking
+        String componentIdReq = "Component123";
+        String alarmedObject = "AlarmedObject1";
+
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(componentIdReq);
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(null));
+        when(utils.evaluateExpression(alarmedObjectExpression, alarmMap)).thenReturn(alarmedObject);
+
+        // Actual call
+        Alarm resultAlarm = postingRuleProcessingService.applyPostingRule(alarm, postingRule, alarmMap);
+
+        // Asserts
+        assertNull(resultAlarm.getTopologyDetails());
+    }
+
+    @Test
+    public void testApplyPostingRule_TopologyDetailsEmpty() throws Exception {
+        // Mocking
+        String componentIdReq = "Component123";
+        String topologyDetails = "";
+        String alarmedObject = "AlarmedObject1";
+
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(componentIdReq);
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyDetails));
+        when(utils.evaluateExpression(alarmedObjectExpression, alarmMap)).thenReturn(alarmedObject);
+
+        // Actual call
+        Alarm resultAlarm = postingRuleProcessingService.applyPostingRule(alarm, postingRule, alarmMap);
+
+        // Asserts
+        assertNull(resultAlarm.getTopologyDetails());
+    }
+
+    @Test
+    public void testApplyPostingRule_TopologyDetailsNotEmptyButNullAlarmedObject() throws Exception {
+        // Mocking
+        String componentIdReq = "Component123";
+        String topologyDetails = "{\"details\":\"some details\"}";
+
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(componentIdReq);
+        when(topoApiClient.fetchTopologyTraversalDetails(any(Alarm.class), any(PostingRule.class), anyString()))
+                .thenReturn(ResponseEntity.ok(topologyDetails));
+        when(utils.evaluateExpression(alarmedObjectExpression, alarmMap)).thenReturn(null);
+
+        // Actual call
+        Alarm resultAlarm = postingRuleProcessingService.applyPostingRule(alarm, postingRule, alarmMap);
+
+        // Asserts
+        assertNull(resultAlarm.getTopologyDetails());
     }
 }
 ```
 
-In this test case, we are using reflection to set the private fields `ruleLoadingService` and `topoApiClient` in the `PostingRuleProcessingService` class. By doing this, we can cover all 4 branches of the if statement in the `applyPostingRule` method. Make sure to add assertions for each branch to ensure complete coverage.
+In this test class:
+
+1. We use Mockito to mock dependencies.
+2. We use reflection to inject values into private fields.
+3. We cover all the branches of the `if (topologyDetails != null && !(topologyDetails.isEmpty()))` statement by:
+   - Providing a non-null and non-empty `topologyDetails`.
+   - Providing a null `topologyDetails`.
+   - Providing an empty `topologyDetails`.
+   - Providing a non-null and non-empty `topologyDetails` but null `alarmedObject`.
+
+These tests will ensure that the specified if statement is fully covered.

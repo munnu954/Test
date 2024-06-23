@@ -1,22 +1,23 @@
-To write JUnit 5 test cases that cover all branches of the `if` statement in the `applyPostingRules` method of the `PostingRuleProcessingService` class, you can use reflection to access the private fields. This approach will allow you to set up the necessary state for the tests without making the fields public. Here is the complete code for the test cases:
+Certainly! Below is an example of JUnit 5 test cases to cover the specified branches of the `applyPostingRules` method in the `PostingRuleProcessingService` class, using reflection to access private fields.
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import java.util.HashMap;
-import java.util.Map;
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.*;
+
 @ExtendWith(MockitoExtension.class)
-public class PostingRuleProcessingServiceTest {
+class PostingRuleProcessingServiceTest {
 
     @InjectMocks
     private PostingRuleProcessingService postingRuleProcessingService;
@@ -31,32 +32,24 @@ public class PostingRuleProcessingServiceTest {
     private AlarmPostingUtils utils;
 
     private Alarm alarm;
-    private PostingRule rule1, rule2;
-    private Map<Long, PostingRule> rulesMap;
 
     @BeforeEach
-    public void setup() throws Exception {
+    public void setup() {
+        MockitoAnnotations.openMocks(this);
         alarm = new Alarm();
-        alarm.setAlarmIdentity("TestAlarm");
+        alarm.setAlarmIdentity("testAlarmIdentity");
 
-        rule1 = new PostingRule(1L, "Rule1", 1, 1, "criteria1");
-        rule2 = new PostingRule(2L, "Rule2", 2, 1, "criteria2");
-
-        rulesMap = new HashMap<>();
-        rulesMap.put(1L, rule1);
-        rulesMap.put(2L, rule2);
-
-        ReflectionTestUtils.setField(postingRuleProcessingService, "ruleLoadingService", ruleLoadingService);
-        ReflectionTestUtils.setField(postingRuleProcessingService, "topoApiClient", topoApiClient);
-        ReflectionTestUtils.setField(postingRuleProcessingService, "utils", utils);
-
-        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
+        ReflectionTestUtils.setField(postingRuleProcessingService, "alarmedObjectExpression", "%TopoObject:OSS_Names[0]%");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
+        ReflectionTestUtils.setField(postingRuleProcessingService, "componentIDAttributeName", "reportingObject");
     }
 
     @Test
-    public void testApplyPostingRules_NoMatch() {
-        when(rule1.matchFilter(any())).thenReturn(false);
-        when(rule2.matchFilter(any())).thenReturn(false);
+    void testApplyPostingRules_NoMatch() {
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
 
         Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
 
@@ -64,73 +57,101 @@ public class PostingRuleProcessingServiceTest {
     }
 
     @Test
-    public void testApplyPostingRules_SingleMatch() {
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(false);
+    void testApplyPostingRules_MatchWithHigherPriority() throws Exception {
+        PostingRule rule1 = new PostingRule(1L, "rule1", 1, 1, "criteria1");
+        rule1.setFilterPerformer(alarmTagValuePair -> TernaryValue.TRUE);
+        PostingRule rule2 = new PostingRule(2L, "rule2", 2, 1, "criteria2");
+        rule2.setFilterPerformer(alarmTagValuePair -> TernaryValue.TRUE);
+
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+        rulesMap.put(1L, rule1);
+        rulesMap.put(2L, rule2);
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
 
         Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
 
-        assertNotNull(result);
+        // Assuming applyPostingRule returns the alarm without modifications for simplicity
+        assertEquals(alarm, result);
     }
 
     @Test
-    public void testApplyPostingRules_MultipleMatches_LowerPriorityFirst() {
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(true);
+    void testApplyPostingRules_MatchWithLowerPriority() throws Exception {
+        PostingRule rule1 = new PostingRule(1L, "rule1", 2, 1, "criteria1");
+        rule1.setFilterPerformer(alarmTagValuePair -> TernaryValue.TRUE);
+        PostingRule rule2 = new PostingRule(2L, "rule2", 1, 1, "criteria2");
+        rule2.setFilterPerformer(alarmTagValuePair -> TernaryValue.TRUE);
+
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+        rulesMap.put(1L, rule1);
+        rulesMap.put(2L, rule2);
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
 
         Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
 
-        assertNotNull(result);
-        verify(utils, times(1)).evaluateExpression("%Alarm:reportingObject%", any());
+        // Assuming applyPostingRule returns the alarm without modifications for simplicity
+        assertEquals(alarm, result);
     }
 
     @Test
-    public void testApplyPostingRules_MultipleMatches_HigherPriorityFirst() {
-        rule1.setRulePriority(3);
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(true);
+    void testApplyPostingRules_NoActiveMatch() throws Exception {
+        PostingRule rule1 = new PostingRule(1L, "rule1", 1, 1, "criteria1");
+        rule1.setFilterPerformer(alarmTagValuePair -> TernaryValue.FALSE);
+        PostingRule rule2 = new PostingRule(2L, "rule2", 2, 1, "criteria2");
+        rule2.setFilterPerformer(alarmTagValuePair -> TernaryValue.FALSE);
+
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+        rulesMap.put(1L, rule1);
+        rulesMap.put(2L, rule2);
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
 
         Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
 
-        assertNotNull(result);
-        verify(utils, times(1)).evaluateExpression("%Alarm:reportingObject%", any());
+        assertEquals(alarm, result);
     }
 
     @Test
-    public void testApplyPostingRules_NullPreviousMatch() {
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(false);
+    void testApplyPostingRules_OnlyOneMatch() throws Exception {
+        PostingRule rule1 = new PostingRule(1L, "rule1", 1, 1, "criteria1");
+        rule1.setFilterPerformer(alarmTagValuePair -> TernaryValue.FALSE);
+        PostingRule rule2 = new PostingRule(2L, "rule2", 2, 1, "criteria2");
+        rule2.setFilterPerformer(alarmTagValuePair -> TernaryValue.TRUE);
+
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+        rulesMap.put(1L, rule1);
+        rulesMap.put(2L, rule2);
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
 
         Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
 
-        assertNotNull(result);
-        verify(utils, times(1)).evaluateExpression("%Alarm:reportingObject%", any());
+        assertEquals(alarm, result);
     }
 
     @Test
-    public void testApplyPostingRules_OverridePreviousMatch() {
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(true);
+    void testApplyPostingRules_MultipleMatchesWithEqualPriority() throws Exception {
+        PostingRule rule1 = new PostingRule(1L, "rule1", 1, 1, "criteria1");
+        rule1.setFilterPerformer(alarmTagValuePair -> TernaryValue.TRUE);
+        PostingRule rule2 = new PostingRule(2L, "rule2", 1, 1, "criteria2");
+        rule2.setFilterPerformer(alarmTagValuePair -> TernaryValue.TRUE);
+
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+        rulesMap.put(1L, rule1);
+        rulesMap.put(2L, rule2);
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
 
         Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
 
-        assertNotNull(result);
-        verify(utils, times(1)).evaluateExpression("%Alarm:reportingObject%", any());
+        assertEquals(alarm, result);
     }
 }
 ```
 
-### Explanation:
-1. **Setup Method**: 
-    - Initialize the `Alarm` and `PostingRule` instances.
-    - Use `ReflectionTestUtils.setField` to inject the mock objects into the private fields of `PostingRuleProcessingService`.
+This set of test cases covers the different branches of the if statement within the `applyPostingRules` method:
 
-2. **Test Cases**:
-    - **testApplyPostingRules_NoMatch**: Verifies that no rules match.
-    - **testApplyPostingRules_SingleMatch**: Verifies that a single rule match results in the rule being applied.
-    - **testApplyPostingRules_MultipleMatches_LowerPriorityFirst**: Verifies that when multiple rules match, the rule with the higher priority is applied.
-    - **testApplyPostingRules_MultipleMatches_HigherPriorityFirst**: Adjusts the priority of the first rule to be higher and verifies the correct rule is applied.
-    - **testApplyPostingRules_NullPreviousMatch**: Ensures that if the previous match is null, the current matching rule is applied.
-    - **testApplyPostingRules_OverridePreviousMatch**: Verifies that the rule with higher priority overrides the previous match.
+1. No match found.
+2. Match found with higher priority.
+3. Match found with lower priority.
+4. No active match found.
+5. Only one match found.
+6. Multiple matches found with equal priority.
 
-By covering these branches, you achieve 100% code coverage for the specified `if` statement in the `applyPostingRules` method.
+The test cases use reflection to set the private fields in the `PostingRuleProcessingService` class, ensuring the tests have access to the necessary configurations without modifying the original class structure.

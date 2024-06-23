@@ -1,50 +1,55 @@
-Sure, here's how you can write JUnit 5 test cases to cover all branches of the specified `if` statement in the `applyPostingRules` method of the `PostingRuleProcessingService` class using reflection APIs without making the fields public.
+Certainly! Below is the JUnit5 test case code covering all the branches of the specified if statement in the `applyPostingRules` method of the `PostingRuleProcessingService` class.
 
-First, you need to add the necessary dependencies for JUnit 5 and Mockito in your `pom.xml` if they are not already present:
+We'll use reflection to access the private fields and methods for testing. 
+
+First, you need to add the necessary dependencies in your `pom.xml` for JUnit5 and Mockito if you haven't already:
+
 ```xml
-<dependency>
-    <groupId>org.junit.jupiter</groupId>
-    <artifactId>junit-jupiter-api</artifactId>
-    <version>5.8.1</version>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.junit.jupiter</groupId>
-    <artifactId>junit-jupiter-engine</artifactId>
-    <version>5.8.1</version>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.mockito</groupId>
-    <artifactId>mockito-core</artifactId>
-    <version>3.12.4</version>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.mockito</groupId>
-    <artifactId>mockito-junit-jupiter</artifactId>
-    <version>3.12.4</version>
-    <scope>test</scope>
-</dependency>
+<dependencies>
+    <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-api</artifactId>
+        <version>5.7.1</version>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-engine</artifactId>
+        <version>5.7.1</version>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.mockito</groupId>
+        <artifactId>mockito-core</artifactId>
+        <version>3.7.7</version>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.mockito</groupId>
+        <artifactId>mockito-junit-jupiter</artifactId>
+        <version>3.7.7</version>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
 ```
 
-Now, let's write the JUnit 5 test cases:
+Now, here is the JUnit5 test class:
 
 ```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.lang.reflect.Field;
 
-// ExtendWith allows us to use Mockito with JUnit 5
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.*;
+
 @ExtendWith(MockitoExtension.class)
 public class PostingRuleProcessingServiceTest {
 
@@ -60,164 +65,145 @@ public class PostingRuleProcessingServiceTest {
     @Mock
     private AlarmPostingUtils utils;
 
-    private static final String ALARM_IDENTITY = "testAlarmId";
+    private Alarm alarm;
 
     @BeforeEach
-    public void setUp() throws Exception {
-        // Using reflection to set private fields
-        setPrivateField("alarmedObjectExpression", "%TopoObject:OSS_Names[0]%");
-        setPrivateField("topologyDetailsAlarmedObjectExpression", "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}");
-        setPrivateField("topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
-        setPrivateField("topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
-        setPrivateField("componentIDAttributeName", "reportingObject");
+    public void setup() throws Exception {
+        alarm = new Alarm();
+        alarm.setAlarmIdentity("testAlarm");
+
+        // Setting private fields using reflection
+        setPrivateField(postingRuleProcessingService, "alarmedObjectExpression", "%TopoObject:OSS_Names[0]%");
+        setPrivateField(postingRuleProcessingService, "topologyDetailsAlarmedObjectExpression", "{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}");
+        setPrivateField(postingRuleProcessingService, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
+        setPrivateField(postingRuleProcessingService, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
+        setPrivateField(postingRuleProcessingService, "componentIDAttributeName", "reportingObject");
     }
 
-    private void setPrivateField(String fieldName, Object value) throws Exception {
-        Field field = PostingRuleProcessingService.class.getDeclaredField(fieldName);
+    @Test
+    public void testApplyPostingRules_MatchFound_FirstMatch() throws Exception {
+        PostingRule rule = createPostingRule(1, 1);
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+        rulesMap.put(1L, rule);
+
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
+        when(rule.matchFilter(any())).thenReturn(true);
+
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+
+        assertEquals(alarm, result);
+        verify(ruleLoadingService, times(1)).getRuleMap();
+        verify(ruleLoadingService.getRuleMap().get(1L), times(1)).matchFilter(any());
+    }
+
+    @Test
+    public void testApplyPostingRules_MatchFound_HigherPriority() throws Exception {
+        PostingRule rule1 = createPostingRule(1, 1);
+        PostingRule rule2 = createPostingRule(2, 2);
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+        rulesMap.put(1L, rule1);
+        rulesMap.put(2L, rule2);
+
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
+        when(rule1.matchFilter(any())).thenReturn(true);
+        when(rule2.matchFilter(any())).thenReturn(true);
+
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+
+        assertEquals(alarm, result);
+        verify(ruleLoadingService, times(1)).getRuleMap();
+        verify(rule1, times(1)).matchFilter(any());
+        verify(rule2, times(1)).matchFilter(any());
+    }
+
+    @Test
+    public void testApplyPostingRules_MatchNotFound() throws Exception {
+        PostingRule rule = createPostingRule(1, 1);
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+        rulesMap.put(1L, rule);
+
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
+        when(rule.matchFilter(any())).thenReturn(false);
+
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+
+        assertEquals(alarm, result);
+        verify(ruleLoadingService, times(1)).getRuleMap();
+        verify(rule, times(1)).matchFilter(any());
+    }
+
+    @Test
+    public void testApplyPostingRules_NoRules() throws Exception {
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
+
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+
+        assertEquals(alarm, result);
+        verify(ruleLoadingService, times(1)).getRuleMap();
+    }
+
+    @Test
+    public void testApplyPostingRules_MatchFound_LowerPriority() throws Exception {
+        PostingRule rule1 = createPostingRule(1, 2);
+        PostingRule rule2 = createPostingRule(2, 1);
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+        rulesMap.put(1L, rule1);
+        rulesMap.put(2L, rule2);
+
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
+        when(rule1.matchFilter(any())).thenReturn(true);
+        when(rule2.matchFilter(any())).thenReturn(true);
+
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+
+        assertEquals(alarm, result);
+        verify(ruleLoadingService, times(1)).getRuleMap();
+        verify(rule1, times(1)).matchFilter(any());
+        verify(rule2, times(1)).matchFilter(any());
+    }
+
+    @Test
+    public void testApplyPostingRules_MatchFound_SamePriority() throws Exception {
+        PostingRule rule1 = createPostingRule(1, 1);
+        PostingRule rule2 = createPostingRule(2, 1);
+        Map<Long, PostingRule> rulesMap = new HashMap<>();
+        rulesMap.put(1L, rule1);
+        rulesMap.put(2L, rule2);
+
+        when(ruleLoadingService.getRuleMap()).thenReturn(rulesMap);
+        when(rule1.matchFilter(any())).thenReturn(true);
+        when(rule2.matchFilter(any())).thenReturn(true);
+
+        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+
+        assertEquals(alarm, result);
+        verify(ruleLoadingService, times(1)).getRuleMap();
+        verify(rule1, times(1)).matchFilter(any());
+        verify(rule2, times(1)).matchFilter(any());
+    }
+
+    private PostingRule createPostingRule(long id, int priority) throws Exception {
+        return new PostingRule(id, "rule" + id, priority, 1, "criteria");
+    }
+
+    private static void setPrivateField(Object target, String fieldName, Object value) throws Exception {
+        Field field = target.getClass().getDeclaredField(fieldName);
         field.setAccessible(true);
-        field.set(postingRuleProcessingService, value);
+        field.set(target, value);
     }
+}
+```
 
-    @Test
-    public void testApplyPostingRules_MatchResultTrue_PriorityHigher() {
-        // Create an alarm object
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity(ALARM_IDENTITY);
-        
-        // Create a map of posting rules with different priorities
-        Map<Long, PostingRule> ruleMap = new ConcurrentHashMap<>();
-        
-        PostingRule rule1 = new PostingRule(1L, "Rule1", 1, 1, "criteria1");
-        rule1.setRulePriority(1);
-        ruleMap.put(1L, rule1);
-        
-        PostingRule rule2 = new PostingRule(2L, "Rule2", 2, 1, "criteria2");
-        rule2.setRulePriority(2);
-        ruleMap.put(2L, rule2);
-        
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(true);
-        
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
-        
-        assertNotNull(result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-    }
+### Explanation:
+1. **Setup Method**: Uses reflection to set private fields in the `PostingRuleProcessingService` class.
+2. **Test Cases**:
+    - **testApplyPostingRules_MatchFound_FirstMatch**: Tests the scenario where the first rule matches.
+    - **testApplyPostingRules_MatchFound_HigherPriority**: Tests the scenario where multiple rules match, but one has a higher priority.
+    - **testApplyPostingRules_MatchNotFound**: Tests the scenario where no rules match.
+    - **testApplyPostingRules_NoRules**: Tests the scenario where there are no rules.
+    - **testApplyPostingRules_MatchFound_LowerPriority**: Tests the scenario where multiple rules match, but one has a lower priority.
+    - **testApplyPostingRules_MatchFound_SamePriority**: Tests the scenario where multiple rules match with the same priority.
 
-    @Test
-    public void testApplyPostingRules_MatchResultTrue_PriorityLower() {
-        // Create an alarm object
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity(ALARM_IDENTITY);
-        
-        // Create a map of posting rules with different priorities
-        Map<Long, PostingRule> ruleMap = new ConcurrentHashMap<>();
-        
-        PostingRule rule1 = new PostingRule(1L, "Rule1", 1, 1, "criteria1");
-        rule1.setRulePriority(2);
-        ruleMap.put(1L, rule1);
-        
-        PostingRule rule2 = new PostingRule(2L, "Rule2", 2, 1, "criteria2");
-        rule2.setRulePriority(1);
-        ruleMap.put(2L, rule2);
-        
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(true);
-        
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
-        
-        assertNotNull(result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-    }
-
-    @Test
-    public void testApplyPostingRules_MatchResultFalse() {
-        // Create an alarm object
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity(ALARM_IDENTITY);
-        
-        // Create a map of posting rules
-        Map<Long, PostingRule> ruleMap = new ConcurrentHashMap<>();
-        
-        PostingRule rule1 = new PostingRule(1L, "Rule1", 1, 1, "criteria1");
-        ruleMap.put(1L, rule1);
-        
-        PostingRule rule2 = new PostingRule(2L, "Rule2", 2, 1, "criteria2");
-        ruleMap.put(2L, rule2);
-        
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(false);
-        when(rule2.matchFilter(any())).thenReturn(false);
-        
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
-        
-        assertNotNull(result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-    }
-
-    @Test
-    public void testApplyPostingRules_MatchResultFirstTrue_SecondFalse() {
-        // Create an alarm object
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity(ALARM_IDENTITY);
-        
-        // Create a map of posting rules
-        Map<Long, PostingRule> ruleMap = new ConcurrentHashMap<>();
-        
-        PostingRule rule1 = new PostingRule(1L, "Rule1", 1, 1, "criteria1");
-        ruleMap.put(1L, rule1);
-        
-        PostingRule rule2 = new PostingRule(2L, "Rule2", 2, 1, "criteria2");
-        ruleMap.put(2L, rule2);
-        
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(false);
-        
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
-        
-        assertNotNull(result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-    }
-
-    @Test
-    public void testApplyPostingRules_MatchResultSecondTrue_FirstFalse() {
-        // Create an alarm object
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity(ALARM_IDENTITY);
-        
-        // Create a map of posting rules
-        Map<Long, PostingRule> ruleMap = new ConcurrentHashMap<>();
-        
-        PostingRule rule1 = new PostingRule(1L, "Rule1", 1, 1, "criteria1");
-        ruleMap.put(1L, rule1);
-        
-        PostingRule rule2 = new PostingRule(2L, "Rule2", 2, 1, "criteria2");
-        ruleMap.put(2L, rule2);
-        
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(false);
-        when(rule2.matchFilter(any())).thenReturn(true);
-        
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
-        
-        assertNotNull(result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-    }
-
-    @Test
-    public void testApplyPostingRules_MatchResultFirstTrue_SecondTrue_PriorityLower() {
-        // Create an alarm object
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity(ALARM_IDENTITY);
-        
-        // Create a map of posting rules with different priorities
-        Map<Long, PostingRule> ruleMap = new ConcurrentHashMap<>();
-        
-        PostingRule rule1 = new PostingRule(1L, "Rule1", 1, 1, "criteria1");
-        rule1.setRulePriority(1);
-        ruleMap.put(1L, rule1);
-        
-        PostingRule rule2 = new PostingRule(2L, "Rule2", 2, 1, "
+This should provide 100% code coverage for the specified `if` statement in the `applyPostingRules` method.

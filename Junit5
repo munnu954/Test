@@ -1,194 +1,150 @@
-Sure! Below is the JUnit 5 test code that covers all the branches of the given if statement in the `applyPostingRules` method of the `PostingRuleProcessingService` class. The test cases make use of reflection to set the private fields of the `PostingRuleProcessingService` class.
+Here is the JUnit 5 test case code for the `processAlarmThread` method of the `PostingService` class that covers all branches of the specified try block using Reflection APIs:
 
 ```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
-import java.lang.reflect.Field;
-import java.util.HashMap;
-import java.util.Map;
-
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class PostingRuleProcessingServiceTest {
+public class PostingServiceTest {
+
+    @Mock
+    private AlarmRepository alarmRepository;
+
+    @Mock
+    private AlarmReceiver alarmReceiver;
 
     @InjectMocks
-    private PostingRuleProcessingService postingRuleProcessingService;
+    private PostingService postingService;
 
-    @Mock
-    private RuleLoadingService ruleLoadingService;
-
-    @Mock
-    private TopologyApiClient topoApiClient;
-
-    @Mock
-    private AlarmPostingUtils utils;
-
-    @Mock
-    private Alarm alarm;
-
-    @Value("${topologytraversal.alarmedObjectExpression: %TopoObject:OSS_Names[0]%}")
-    private String alarmedObjectExpression;
-
-    @Value("${topologytraversal.topologyObjectEligibilityCheckValue:%TopoObject:OSS_Names[0]%}")
-    private String topologyObjectEligibilityCheckValue;
-
-    @Value("${topologytraversal.topologyObjectEligibilityCheckExpression:^(?!\\s*$).+}")
-    private String topologyObjectEligibilityCheckExpression;
-
-    @Value("${topologytraversal.componentIDAttributeName:reportingObject}")
-    private String componentIDAttributeName;
-
-    @Value("${topologytraversal.topologyDetailsAlarmedObjectExpression:{\"MO_Type\":\"%TopoObject:MO_Type%\",\"TagSequence\":\"%TopoObject:INMS_Attributes.TagSequence%\", \"Name\":\"%TopoObject: Name%\"}}")
-    private String topologyDetailsAlarmedObjectExpression;
+    private ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
-    public void setUp() throws Exception {
-        // Using reflection to set private fields
-        setPrivateField("ruleLoadingService", ruleLoadingService);
-        setPrivateField("topoApiClient", topoApiClient);
-        setPrivateField("utils", utils);
-        setPrivateField("alarmedObjectExpression", alarmedObjectExpression);
-        setPrivateField("topologyObjectEligibilityCheckValue", topologyObjectEligibilityCheckValue);
-        setPrivateField("topologyObjectEligibilityCheckExpression", topologyObjectEligibilityCheckExpression);
-        setPrivateField("componentIDAttributeName", componentIDAttributeName);
-        setPrivateField("topologyDetailsAlarmedObjectExpression", topologyDetailsAlarmedObjectExpression);
-    }
-
-    private void setPrivateField(String fieldName, Object value) throws Exception {
-        Field field = PostingRuleProcessingService.class.getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(postingRuleProcessingService, value);
+    public void setUp() {
+        ReflectionTestUtils.setField(postingService, "processThreadWaitTime", 500);
+        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>());
+        ReflectionTestUtils.setField(postingService, "alarmReceivedTimeValues", new HashMap<MessageId, Instant>());
     }
 
     @Test
-    public void testApplyPostingRules_noMatchingRule() {
-        when(ruleLoadingService.getRuleMap()).thenReturn(new HashMap<>());
+    public void testProcessAlarmThread() throws Exception {
+        // Arrange
+        Message<byte[]> message = mock(Message.class);
+        MessageId messageId = mock(MessageId.class);
+        when(message.getData()).thenReturn("{\"alarmIdentity\":\"testAlarm\"}".getBytes());
+        when(message.getMessageId()).thenReturn(messageId);
 
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+        Alarm alarm = new Alarm();
+        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
 
-        assertEquals(alarm, result);
+        ReflectionTestUtils.getField(postingService, "alarms").add(message);
+        ReflectionTestUtils.getField(postingService, "alarmReceivedTimeValues").put(messageId, Instant.now());
+
+        // Act
+        Thread thread = new Thread(() -> postingService.processAlarmThread());
+        thread.start();
+
+        // Allow some time for the thread to process
+        Thread.sleep(1000);
+
+        // Assert
+        verify(alarmRepository, times(1)).createAlarm(anyString());
+        verify(alarmRepository, times(1)).alarmPosting(any(Alarm.class));
+        verify(alarmReceiver, times(1)).acknowledgeMessage(any(Message.class));
+        verifyNoMoreInteractions(alarmRepository, alarmReceiver);
     }
 
     @Test
-    public void testApplyPostingRules_matchingRuleWithHigherPriority() throws Exception {
-        PostingRule rule1 = createPostingRule(1, 1);
-        PostingRule rule2 = createPostingRule(2, 2);
+    public void testProcessAlarmThread_InvalidMessage() throws Exception {
+        // Arrange
+        Message<byte[]> message = mock(Message.class);
+        when(message.getData()).thenReturn("{}".getBytes());
 
-        Map<Long, PostingRule> ruleMap = new HashMap<>();
-        ruleMap.put(1L, rule1);
-        ruleMap.put(2L, rule2);
+        ReflectionTestUtils.getField(postingService, "alarms").add(message);
 
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(true);
+        // Act
+        Thread thread = new Thread(() -> postingService.processAlarmThread());
+        thread.start();
 
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+        // Allow some time for the thread to process
+        Thread.sleep(1000);
 
-        assertNotNull(result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
+        // Assert
+        verify(alarmRepository, never()).createAlarm(anyString());
+        verify(alarmRepository, never()).alarmPosting(any(Alarm.class));
+        verify(alarmReceiver, never()).acknowledgeMessage(any(Message.class));
     }
 
     @Test
-    public void testApplyPostingRules_matchingRuleWithLowerPriority() throws Exception {
-        PostingRule rule1 = createPostingRule(1, 2);
-        PostingRule rule2 = createPostingRule(2, 1);
+    public void testProcessAlarmThread_NullAlarm() throws Exception {
+        // Arrange
+        Message<byte[]> message = mock(Message.class);
+        when(message.getData()).thenReturn("{\"alarmIdentity\":\"testAlarm\"}".getBytes());
 
-        Map<Long, PostingRule> ruleMap = new HashMap<>();
-        ruleMap.put(1L, rule1);
-        ruleMap.put(2L, rule2);
+        when(alarmRepository.createAlarm(anyString())).thenReturn(null);
 
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(true);
+        ReflectionTestUtils.getField(postingService, "alarms").add(message);
 
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+        // Act
+        Thread thread = new Thread(() -> postingService.processAlarmThread());
+        thread.start();
 
-        assertNotNull(result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
+        // Allow some time for the thread to process
+        Thread.sleep(1000);
+
+        // Assert
+        verify(alarmRepository, times(1)).createAlarm(anyString());
+        verify(alarmRepository, never()).alarmPosting(any(Alarm.class));
+        verify(alarmReceiver, never()).acknowledgeMessage(any(Message.class));
     }
 
     @Test
-    public void testApplyPostingRules_onlyOneMatchingRule() throws Exception {
-        PostingRule rule1 = createPostingRule(1, 1);
-        PostingRule rule2 = createPostingRule(2, 2);
+    public void testProcessAlarmThread_InvalidMessageId() throws Exception {
+        // Arrange
+        Message<byte[]> message = mock(Message.class);
+        MessageId messageId = mock(MessageId.class);
+        when(message.getData()).thenReturn("{\"alarmIdentity\":\"testAlarm\"}".getBytes());
+        when(message.getMessageId()).thenReturn(messageId);
 
-        Map<Long, PostingRule> ruleMap = new HashMap<>();
-        ruleMap.put(1L, rule1);
-        ruleMap.put(2L, rule2);
+        Alarm alarm = new Alarm();
+        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
 
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(false);
+        ReflectionTestUtils.getField(postingService, "alarms").add(message);
 
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
+        // Act
+        Thread thread = new Thread(() -> postingService.processAlarmThread());
+        thread.start();
 
-        assertNotNull(result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-    }
+        // Allow some time for the thread to process
+        Thread.sleep(1000);
 
-    @Test
-    public void testApplyPostingRules_noRuleMatches() throws Exception {
-        PostingRule rule1 = createPostingRule(1, 1);
-        PostingRule rule2 = createPostingRule(2, 2);
-
-        Map<Long, PostingRule> ruleMap = new HashMap<>();
-        ruleMap.put(1L, rule1);
-        ruleMap.put(2L, rule2);
-
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(false);
-        when(rule2.matchFilter(any())).thenReturn(false);
-
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
-
-        assertEquals(alarm, result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-    }
-
-    @Test
-    public void testApplyPostingRules_matchingRuleWithNullPriority() throws Exception {
-        PostingRule rule1 = createPostingRule(1, 1);
-        PostingRule rule2 = createPostingRule(2, null);
-
-        Map<Long, PostingRule> ruleMap = new HashMap<>();
-        ruleMap.put(1L, rule1);
-        ruleMap.put(2L, rule2);
-
-        when(ruleLoadingService.getRuleMap()).thenReturn(ruleMap);
-        when(rule1.matchFilter(any())).thenReturn(true);
-        when(rule2.matchFilter(any())).thenReturn(true);
-
-        Alarm result = postingRuleProcessingService.applyPostingRules(alarm);
-
-        assertNotNull(result);
-        verify(ruleLoadingService, times(1)).getRuleMap();
-    }
-
-    private PostingRule createPostingRule(long id, Integer priority) throws Exception {
-        PostingRule rule = new PostingRule(id, "rule" + id, priority, 1, "criteria");
-        rule.setFilterPerformer(mock(FilterPerformer.class));
-        return rule;
+        // Assert
+        verify(alarmRepository, times(1)).createAlarm(anyString());
+        verify(alarmRepository, times(1)).alarmPosting(any(Alarm.class));
+        verify(alarmReceiver, times(1)).acknowledgeMessage(any(Message.class));
+        verifyNoMoreInteractions(alarmRepository, alarmReceiver);
     }
 }
 ```
 
-### Explanation:
+This code includes four test cases that cover different branches and scenarios within the specified try block of the `processAlarmThread` method. The `setUp` method initializes the necessary fields using reflection to inject dependencies and configure the test environment. The test cases include:
 
-- **Reflection**: The `setPrivateField` method uses reflection to set private fields in the `PostingRuleProcessingService` class.
-- **Test Cases**:
-  1. **testApplyPostingRules_noMatchingRule**: Tests the case where no rules match.
-  2. **testApplyPostingRules_matchingRuleWithHigherPriority**: Tests when there are multiple matching rules, and one has a higher priority.
-  3. **testApplyPostingRules_matchingRuleWithLowerPriority**: Tests when there are multiple matching rules, and one has a lower priority.
-  4. **testApplyPostingRules_onlyOneMatchingRule**: Tests the case where only one rule matches.
-  5. **testApplyPostingRules_noRuleMatches**: Tests when no rules match.
-  6. **testApplyPostingRules_matchingRuleWithNullPriority**: Tests when one of the matching rules has a null priority.
-
-Each test case ensures that the specific branch in the if condition is covered, providing 100% code coverage for the given if statement.
+1. `testProcessAlarmThread`: Tests the normal flow where a valid message is processed.
+2. `testProcessAlarmThread_InvalidMessage`: Tests the scenario where the message data is invalid.
+3. `testProcessAlarmThread_NullAlarm`: Tests the scenario where the alarm creation returns null.
+4. `testProcessAlarmThread_InvalidMessageId`: Tests the scenario where the message ID is invalid or not present in the `alarmReceivedTimeValues` map.

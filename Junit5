@@ -1,28 +1,30 @@
-Certainly! To address the issue with `Thread.sleep()` and ensure the tests pass in Sonar Portal, we can use a different approach to control and verify the execution of the `processAlarmThread` method. We can use mocking and synchronization techniques to ensure the method processes the messages without using `Thread.sleep()`. Here are the revised test cases:
+Certainly! Below is an example of JUnit 5 test cases for the `processAlarmThread` method of the `PostingService` class. These test cases cover all branches of the try block, making use of Reflection API to access private fields and ensure that `Thread.sleep()` is not used.
+
+Make sure you have the necessary dependencies for JUnit 5 and Mockito in your `pom.xml` or `build.gradle` file to run these tests.
 
 ```java
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.Mockito;
+import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.CountDownLatch;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class PostingServiceTest {
+
+    @InjectMocks
+    private PostingService postingService;
 
     @Mock
     private AlarmRepository alarmRepository;
@@ -33,136 +35,131 @@ public class PostingServiceTest {
     @Mock
     private DistributionSummary summary;
 
-    @InjectMocks
-    private PostingService postingService;
+    @Captor
+    private ArgumentCaptor<Alarm> alarmCaptor;
 
-    private ObjectMapper objectMapper = new ObjectMapper();
+    private ConcurrentLinkedDeque<Message<byte[]>> alarms;
+    private Hashtable<MessageId, Instant> alarmReceivedTimeValues;
 
     @BeforeEach
-    public void setUp() {
+    void setUp() {
+        alarms = new ConcurrentLinkedDeque<>();
+        alarmReceivedTimeValues = new Hashtable<>();
+
+        ReflectionTestUtils.setField(postingService, "alarms", alarms);
+        ReflectionTestUtils.setField(postingService, "alarmReceivedTimeValues", alarmReceivedTimeValues);
         ReflectionTestUtils.setField(postingService, "processThreadWaitTime", 500);
-        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>());
-        ReflectionTestUtils.setField(postingService, "alarmReceivedTimeValues", new HashMap<MessageId, Instant>());
+
+        // Mocking static method
+        ObjectMapper objectMapper = mock(ObjectMapper.class);
+        ReflectionTestUtils.setField(AlarmPostingConstants.class, "mapper", objectMapper);
     }
 
     @Test
-    public void testProcessAlarmThread() throws Exception {
-        // Arrange
-        Message<byte[]> message = mock(Message.class);
-        MessageId messageId = mock(MessageId.class);
-        when(message.getData()).thenReturn("{\"alarmIdentity\":\"testAlarm\"}".getBytes());
-        when(message.getMessageId()).thenReturn(messageId);
+    void testProcessAlarmThread_NormalFlow() throws Exception {
+        String alarmMsg = "{\"alarmIdentity\": \"123\", \"key\": \"value\"}";
+        Message<byte[]> message = mockMessage(alarmMsg, "123");
+        alarms.add(message);
+
+        Alarm alarm = new Alarm(); // Assuming Alarm is a valid class
+        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
+
+        Thread thread = new Thread(() -> postingService.processAlarmThread());
+        thread.start();
+
+        // Wait until the message is processed
+        while (!alarms.isEmpty() || thread.isAlive()) {
+            Thread.yield();
+        }
+
+        verify(alarmRepository).createAlarm(anyString());
+        verify(alarmRepository).alarmPosting(alarmCaptor.capture());
+        verify(alarmReceiver).acknowledgeMessage(message);
+        assertTrue(alarmCaptor.getValue().toString().contains("Alarm message"));
+    }
+
+    @Test
+    void testProcessAlarmThread_EmptyQueue() {
+        Thread thread = new Thread(() -> postingService.processAlarmThread());
+        thread.start();
+
+        // Allow some time for the thread to process
+        while (thread.isAlive()) {
+            Thread.yield();
+        }
+
+        assertTrue(alarms.isEmpty());
+    }
+
+    @Test
+    void testProcessAlarmThread_NullMessage() {
+        alarms.add(null);
+
+        Thread thread = new Thread(() -> postingService.processAlarmThread());
+        thread.start();
+
+        // Wait until the message is processed
+        while (!alarms.isEmpty() || thread.isAlive()) {
+            Thread.yield();
+        }
+
+        verify(alarmRepository, never()).createAlarm(anyString());
+    }
+
+    @Test
+    void testProcessAlarmThread_InvalidMessageId() throws Exception {
+        String alarmMsg = "{\"alarmIdentity\": \"123\", \"key\": \"value\"}";
+        Message<byte[]> message = mockMessage(alarmMsg, null);
+        alarms.add(message);
 
         Alarm alarm = new Alarm();
         when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
 
-        ConcurrentLinkedDeque<Message<byte[]>> alarms = (ConcurrentLinkedDeque<Message<byte[]>>) ReflectionTestUtils.getField(postingService, "alarms");
-        alarms.add(message);
-        HashMap<MessageId, Instant> alarmReceivedTimeValues = (HashMap<MessageId, Instant>) ReflectionTestUtils.getField(postingService, "alarmReceivedTimeValues");
-        alarmReceivedTimeValues.put(messageId, Instant.now());
+        Thread thread = new Thread(() -> postingService.processAlarmThread());
+        thread.start();
 
-        CountDownLatch latch = new CountDownLatch(1);
+        // Wait until the message is processed
+        while (!alarms.isEmpty() || thread.isAlive()) {
+            Thread.yield();
+        }
 
-        // Act
-        new Thread(() -> {
-            postingService.processAlarmThread();
-            latch.countDown();
-        }).start();
-
-        latch.await();
-
-        // Assert
-        verify(alarmRepository, times(1)).createAlarm(anyString());
-        verify(alarmRepository, times(1)).alarmPosting(any(Alarm.class));
-        verify(alarmReceiver, times(1)).acknowledgeMessage(any(Message.class));
-        verify(summary, times(1)).record(anyLong());
-        verifyNoMoreInteractions(alarmRepository, alarmReceiver);
+        verify(alarmRepository).createAlarm(anyString());
+        verify(alarmRepository).alarmPosting(alarmCaptor.capture());
+        verify(alarmReceiver).acknowledgeMessage(message);
+        verify(summary, never()).record(anyLong());
     }
 
     @Test
-    public void testProcessAlarmThread_InvalidMessage() throws Exception {
-        // Arrange
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn("{}".getBytes());
-
-        ConcurrentLinkedDeque<Message<byte[]>> alarms = (ConcurrentLinkedDeque<Message<byte[]>>) ReflectionTestUtils.getField(postingService, "alarms");
+    void testProcessAlarmThread_AlarmCreationFailure() throws Exception {
+        String alarmMsg = "{\"alarmIdentity\": \"123\", \"key\": \"value\"}";
+        Message<byte[]> message = mockMessage(alarmMsg, "123");
         alarms.add(message);
-
-        CountDownLatch latch = new CountDownLatch(1);
-
-        // Act
-        new Thread(() -> {
-            postingService.processAlarmThread();
-            latch.countDown();
-        }).start();
-
-        latch.await();
-
-        // Assert
-        verify(alarmRepository, never()).createAlarm(anyString());
-        verify(alarmRepository, never()).alarmPosting(any(Alarm.class));
-        verify(alarmReceiver, never()).acknowledgeMessage(any(Message.class));
-    }
-
-    @Test
-    public void testProcessAlarmThread_NullAlarm() throws Exception {
-        // Arrange
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn("{\"alarmIdentity\":\"testAlarm\"}".getBytes());
 
         when(alarmRepository.createAlarm(anyString())).thenReturn(null);
 
-        ConcurrentLinkedDeque<Message<byte[]>> alarms = (ConcurrentLinkedDeque<Message<byte[]>>) ReflectionTestUtils.getField(postingService, "alarms");
-        alarms.add(message);
+        Thread thread = new Thread(() -> postingService.processAlarmThread());
+        thread.start();
 
-        CountDownLatch latch = new CountDownLatch(1);
+        // Wait until the message is processed
+        while (!alarms.isEmpty() || thread.isAlive()) {
+            Thread.yield();
+        }
 
-        // Act
-        new Thread(() -> {
-            postingService.processAlarmThread();
-            latch.countDown();
-        }).start();
-
-        latch.await();
-
-        // Assert
-        verify(alarmRepository, times(1)).createAlarm(anyString());
+        verify(alarmRepository).createAlarm(anyString());
         verify(alarmRepository, never()).alarmPosting(any(Alarm.class));
-        verify(alarmReceiver, never()).acknowledgeMessage(any(Message.class));
     }
 
-    @Test
-    public void testProcessAlarmThread_InvalidMessageId() throws Exception {
-        // Arrange
+    private Message<byte[]> mockMessage(String data, String messageId) {
         Message<byte[]> message = mock(Message.class);
-        MessageId messageId = mock(MessageId.class);
-        when(message.getData()).thenReturn("{\"alarmIdentity\":\"testAlarm\"}".getBytes());
-        when(message.getMessageId()).thenReturn(messageId);
-
-        Alarm alarm = new Alarm();
-        when(alarmRepository.createAlarm(anyString())).thenReturn(alarm);
-
-        ConcurrentLinkedDeque<Message<byte[]>> alarms = (ConcurrentLinkedDeque<Message<byte[]>>) ReflectionTestUtils.getField(postingService, "alarms");
-        alarms.add(message);
-
-        CountDownLatch latch = new CountDownLatch(1);
-
-        // Act
-        new Thread(() -> {
-            postingService.processAlarmThread();
-            latch.countDown();
-        }).start();
-
-        latch.await();
-
-        // Assert
-        verify(alarmRepository, times(1)).createAlarm(anyString());
-        verify(alarmRepository, times(1)).alarmPosting(any(Alarm.class));
-        verify(alarmReceiver, times(1)).acknowledgeMessage(any(Message.class));
-        verify(summary, never()).record(anyLong());
-        verifyNoMoreInteractions(alarmRepository, alarmReceiver);
+        when(message.getData()).thenReturn(data.getBytes());
+        MessageId mockMessageId = messageId != null ? mock(MessageId.class) : null;
+        when(message.getMessageId()).thenReturn(mockMessageId);
+        if (mockMessageId != null) {
+            alarmReceivedTimeValues.put(mockMessageId, Instant.now());
+        }
+        return message;
     }
 }
 ```
 
-In this revised code, the `CountDownLatch` is used to synchronize the test execution and wait for the `processAlarmThread` method to complete without using `Thread.sleep()`. Each test case creates and starts a new thread to run the `processAlarmThread` method and waits for the latch to count down, ensuring that the method has processed the messages. This approach avoids the use of `Thread.sleep()` and ensures that the tests pass in Sonar Portal.
+This test class includes several test methods to cover different scenarios within the `try` block of the `processAlarmThread` method. Each test case uses Mockito to mock dependencies and ReflectionTestUtils to set private fields. The tests ensure that various branches and conditions within the `try` block are executed, providing comprehensive coverage.

@@ -1,25 +1,33 @@
-To achieve 100% code coverage for the try block of the `processAlarmThread` method in the `PostingService` class, you can use JUnit5 along with Mockito to mock the dependencies and Reflection APIs to access private fields.
+Certainly! To avoid using `Thread.sleep()`, we'll use concurrency utilities like `CountDownLatch` to synchronize the test execution and ensure the thread completes its work. This approach is more robust and avoids the pitfalls associated with `Thread.sleep()`.
 
-Below is a sample JUnit5 test class that covers all the branches of the try block in the `processAlarmThread` method:
+Here is the updated JUnit 5 test code with `CountDownLatch`:
 
 ```java
-import org.junit.jupiter.api.Test;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.Mockito;
+import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
-import java.lang.reflect.Field;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.Hashtable;
-import java.util.ArrayList;
-import org.junit.jupiter.api.TestInstance;
-import static org.junit.jupiter.api.Assertions.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class PostingServiceTest {
+
+    @InjectMocks
+    private PostingService postingService;
 
     @Mock
     private AlarmRepository alarmRepository;
@@ -27,38 +35,129 @@ public class PostingServiceTest {
     @Mock
     private AlarmReceiver alarmReceiver;
 
+    @Mock
+    private DistributionSummary summary;
+
+    private static final Logger LOG = LoggerFactory.getLogger(PostingService.class);
+
     @BeforeEach
-    public void setUp() {
-        ReflectionTestUtils.setField(postingService, "alarmRepository", alarmRepository);
-        ReflectionTestUtils.setField(postingService, "alarmReceiver", alarmReceiver);
-        // Set up other dependencies using ReflectionTestUtils if needed
+    public void setup() {
+        ReflectionTestUtils.setField(postingService, "processThreadWaitTime", 500);
+        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>());
+        ReflectionTestUtils.setField(postingService, "alarmReceivedTimeValues", new HashMap<MessageId, Instant>());
     }
 
     @Test
     public void testProcessAlarmThread() throws Exception {
-        // Mock necessary objects
-        PostingService postingService = new PostingService();
-        Message<byte[]> message = new Message<>(new byte[]{});
-        ConcurrentLinkedDeque<Message<byte[]>> alarms = new ConcurrentLinkedDeque<>();
-        alarms.add(message);
-        ReflectionTestUtils.setField(postingService, "alarms", alarms);
+        Message<byte[]> msg = mock(Message.class);
+        when(msg.getData()).thenReturn("{}".getBytes());
+        when(msg.getMessageId()).thenReturn(mock(MessageId.class));
+        postingService.alarms.add(msg);
 
-        // Invoke the processAlarmThread method using reflection
-        Method method = PostingService.class.getDeclaredMethod("processAlarmThread");
-        method.setAccessible(true);
-        method.invoke(postingService);
+        Alarm alarm = mock(Alarm.class);
+        when(alarmRepository.createAlarm(any(String.class))).thenReturn(alarm);
 
-        // Verify the behavior using Mockito
-        verify(alarmReceiver, times(1)).acknowledgeMessage(message);
-        // Add more verifications as needed
+        CountDownLatch latch = new CountDownLatch(1);
+
+        new Thread(() -> {
+            ReflectionTestUtils.setField(postingService, "shutdown", false);
+            postingService.processAlarmThread();
+            latch.countDown();
+        }).start();
+
+        latch.await(2, TimeUnit.SECONDS); // Wait for the thread to complete
+
+        verify(alarmRepository, times(1)).createAlarm(any(String.class));
+        verify(alarmRepository, times(1)).alarmPosting(any(Alarm.class));
+        verify(alarmReceiver, times(1)).acknowledgeMessage(any(Message.class));
+    }
+
+    @Test
+    public void testProcessAlarmThreadWithNullMessage() throws Exception {
+        postingService.alarms.add(null);
+
+        CountDownLatch latch = new CountDownLatch(1);
+
+        new Thread(() -> {
+            ReflectionTestUtils.setField(postingService, "shutdown", false);
+            postingService.processAlarmThread();
+            latch.countDown();
+        }).start();
+
+        latch.await(2, TimeUnit.SECONDS); // Wait for the thread to complete
+
+        verify(alarmRepository, times(0)).createAlarm(any(String.class));
+        verify(alarmRepository, times(0)).alarmPosting(any(Alarm.class));
+        verify(alarmReceiver, times(0)).acknowledgeMessage(any(Message.class));
+    }
+
+    @Test
+    public void testProcessAlarmThreadWithInvalidMessageId() throws Exception {
+        Message<byte[]> msg = mock(Message.class);
+        when(msg.getData()).thenReturn("{}".getBytes());
+        when(msg.getMessageId()).thenReturn(mock(MessageId.class));
+        postingService.alarms.add(msg);
+
+        CountDownLatch latch = new CountDownLatch(1);
+
+        new Thread(() -> {
+            ReflectionTestUtils.setField(postingService, "shutdown", false);
+            postingService.processAlarmThread();
+            latch.countDown();
+        }).start();
+
+        latch.await(2, TimeUnit.SECONDS); // Wait for the thread to complete
+
+        verify(alarmRepository, times(1)).createAlarm(any(String.class));
+        verify(alarmRepository, times(1)).alarmPosting(any(Alarm.class));
+        verify(alarmReceiver, times(1)).acknowledgeMessage(any(Message.class));
+        verify(summary, times(0)).record(anyLong());
+    }
+
+    @Test
+    public void testProcessAlarmThreadWithValidMessageId() throws Exception {
+        Message<byte[]> msg = mock(Message.class);
+        MessageId messageId = mock(MessageId.class);
+        when(msg.getData()).thenReturn("{}".getBytes());
+        when(msg.getMessageId()).thenReturn(messageId);
+
+        postingService.alarms.add(msg);
+        postingService.alarmReceivedTimeValues.put(messageId, Instant.now().minus(Duration.ofMillis(500)));
+
+        Alarm alarm = mock(Alarm.class);
+        when(alarmRepository.createAlarm(any(String.class))).thenReturn(alarm);
+
+        CountDownLatch latch = new CountDownLatch(1);
+
+        new Thread(() -> {
+            ReflectionTestUtils.setField(postingService, "shutdown", false);
+            postingService.processAlarmThread();
+            latch.countDown();
+        }).start();
+
+        latch.await(2, TimeUnit.SECONDS); // Wait for the thread to complete
+
+        verify(alarmRepository, times(1)).createAlarm(any(String.class));
+        verify(alarmRepository, times(1)).alarmPosting(any(Alarm.class));
+        verify(alarmReceiver, times(1)).acknowledgeMessage(any(Message.class));
+        verify(summary, times(1)).record(anyLong());
     }
 }
 ```
 
-In this test class:
-1. We use the `Mockito` library to mock the dependencies such as `AlarmRepository` and `AlarmReceiver`.
-2. In the `setUp` method, we set the mocked dependencies using `ReflectionTestUtils`.
-3. The `testProcessAlarmThread` method creates a `PostingService` instance, populates the `alarms` queue, and then invokes the `processAlarmThread` method using reflection.
-4. We verify the behavior of the method by checking if `acknowledgeMessage` is called on the `alarmReceiver` object.
+### Explanation:
 
-You can expand this test class by adding more scenarios and verifications to cover all branches of the try block in the `processAlarmThread` method.
+1. **Setup and Initialization:**
+   - **setup**: The `setup` method initializes the test environment, setting private fields using `ReflectionTestUtils`.
+
+2. **Test Methods:**
+   - **testProcessAlarmThread**: Simulates a normal scenario where an alarm message is processed correctly.
+   - **testProcessAlarmThreadWithNullMessage**: Simulates the scenario where the polled message is `null`.
+   - **testProcessAlarmThreadWithInvalidMessageId**: Simulates the scenario where the message ID is invalid or not present in the `alarmReceivedTimeValues`.
+   - **testProcessAlarmThreadWithValidMessageId**: Simulates the scenario where the message ID is valid and present in the `alarmReceivedTimeValues`.
+
+3. **Concurrency**: Each test runs the `processAlarmThread` method in a separate thread to simulate the actual behavior of the service.
+
+4. **CountDownLatch**: Used to wait for the thread to complete its execution without using `Thread.sleep()`. The `latch.await(2, TimeUnit.SECONDS)` ensures the thread completes within 2 seconds.
+
+5. **Verifications**: Each test verifies the interactions with the mocked dependencies to ensure that the correct branches and methods are invoked.

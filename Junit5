@@ -1,6 +1,4 @@
-Certainly! To avoid using `Thread.sleep()`, we'll use concurrency utilities like `CountDownLatch` to synchronize the test execution and ensure the thread completes its work. This approach is more robust and avoids the pitfalls associated with `Thread.sleep()`.
-
-Here is the updated JUnit 5 test code with `CountDownLatch`:
+Sure! We can use Java Reflection API to access the private fields `alarms` and `alarmReceivedTimeValues` of the `PostingService` class without making them public. Here’s how you can update the test case to use reflection for accessing these fields:
 
 ```java
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.lang.reflect.Field;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
@@ -40,11 +39,20 @@ public class PostingServiceTest {
 
     private static final Logger LOG = LoggerFactory.getLogger(PostingService.class);
 
+    private Field alarmsField;
+    private Field alarmReceivedTimeValuesField;
+
     @BeforeEach
-    public void setup() {
+    public void setup() throws NoSuchFieldException, IllegalAccessException {
+        alarmsField = PostingService.class.getDeclaredField("alarms");
+        alarmsField.setAccessible(true);
+        alarmsField.set(postingService, new ConcurrentLinkedDeque<>());
+
+        alarmReceivedTimeValuesField = PostingService.class.getDeclaredField("alarmReceivedTimeValues");
+        alarmReceivedTimeValuesField.setAccessible(true);
+        alarmReceivedTimeValuesField.set(postingService, new HashMap<MessageId, Instant>());
+
         ReflectionTestUtils.setField(postingService, "processThreadWaitTime", 500);
-        ReflectionTestUtils.setField(postingService, "alarms", new ConcurrentLinkedDeque<>());
-        ReflectionTestUtils.setField(postingService, "alarmReceivedTimeValues", new HashMap<MessageId, Instant>());
     }
 
     @Test
@@ -52,7 +60,9 @@ public class PostingServiceTest {
         Message<byte[]> msg = mock(Message.class);
         when(msg.getData()).thenReturn("{}".getBytes());
         when(msg.getMessageId()).thenReturn(mock(MessageId.class));
-        postingService.alarms.add(msg);
+
+        ConcurrentLinkedDeque<Message<byte[]>> alarms = (ConcurrentLinkedDeque<Message<byte[]>>) alarmsField.get(postingService);
+        alarms.add(msg);
 
         Alarm alarm = mock(Alarm.class);
         when(alarmRepository.createAlarm(any(String.class))).thenReturn(alarm);
@@ -74,7 +84,8 @@ public class PostingServiceTest {
 
     @Test
     public void testProcessAlarmThreadWithNullMessage() throws Exception {
-        postingService.alarms.add(null);
+        ConcurrentLinkedDeque<Message<byte[]>> alarms = (ConcurrentLinkedDeque<Message<byte[]>>) alarmsField.get(postingService);
+        alarms.add(null);
 
         CountDownLatch latch = new CountDownLatch(1);
 
@@ -96,7 +107,9 @@ public class PostingServiceTest {
         Message<byte[]> msg = mock(Message.class);
         when(msg.getData()).thenReturn("{}".getBytes());
         when(msg.getMessageId()).thenReturn(mock(MessageId.class));
-        postingService.alarms.add(msg);
+
+        ConcurrentLinkedDeque<Message<byte[]>> alarms = (ConcurrentLinkedDeque<Message<byte[]>>) alarmsField.get(postingService);
+        alarms.add(msg);
 
         CountDownLatch latch = new CountDownLatch(1);
 
@@ -121,8 +134,11 @@ public class PostingServiceTest {
         when(msg.getData()).thenReturn("{}".getBytes());
         when(msg.getMessageId()).thenReturn(messageId);
 
-        postingService.alarms.add(msg);
-        postingService.alarmReceivedTimeValues.put(messageId, Instant.now().minus(Duration.ofMillis(500)));
+        ConcurrentLinkedDeque<Message<byte[]>> alarms = (ConcurrentLinkedDeque<Message<byte[]>>) alarmsField.get(postingService);
+        alarms.add(msg);
+
+        HashMap<MessageId, Instant> alarmReceivedTimeValues = (HashMap<MessageId, Instant>) alarmReceivedTimeValuesField.get(postingService);
+        alarmReceivedTimeValues.put(messageId, Instant.now().minus(Duration.ofMillis(500)));
 
         Alarm alarm = mock(Alarm.class);
         when(alarmRepository.createAlarm(any(String.class))).thenReturn(alarm);
@@ -147,17 +163,14 @@ public class PostingServiceTest {
 
 ### Explanation:
 
-1. **Setup and Initialization:**
-   - **setup**: The `setup` method initializes the test environment, setting private fields using `ReflectionTestUtils`.
+1. **Reflection Fields:**
+   - We use `Field alarmsField` and `Field alarmReceivedTimeValuesField` to store the reflection `Field` objects for the `alarms` and `alarmReceivedTimeValues` fields.
+   - In the `setup` method, we initialize these fields using `getDeclaredField()` and set them accessible using `setAccessible(true)`.
+   - We then set the required values to these fields using `set()` method.
 
-2. **Test Methods:**
-   - **testProcessAlarmThread**: Simulates a normal scenario where an alarm message is processed correctly.
-   - **testProcessAlarmThreadWithNullMessage**: Simulates the scenario where the polled message is `null`.
-   - **testProcessAlarmThreadWithInvalidMessageId**: Simulates the scenario where the message ID is invalid or not present in the `alarmReceivedTimeValues`.
-   - **testProcessAlarmThreadWithValidMessageId**: Simulates the scenario where the message ID is valid and present in the `alarmReceivedTimeValues`.
+2. **Accessing Fields in Tests:**
+   - In each test method, we retrieve the current value of the `alarms` and `alarmReceivedTimeValues` fields using `get()` method.
+   - We then manipulate these fields as needed for the test scenarios.
 
-3. **Concurrency**: Each test runs the `processAlarmThread` method in a separate thread to simulate the actual behavior of the service.
-
-4. **CountDownLatch**: Used to wait for the thread to complete its execution without using `Thread.sleep()`. The `latch.await(2, TimeUnit.SECONDS)` ensures the thread completes within 2 seconds.
-
-5. **Verifications**: Each test verifies the interactions with the mocked dependencies to ensure that the correct branches and methods are invoked.
+3. **Concurrency and Verification:**
+   - The rest of the code remains the same, including the use of `CountDownLatch` for concurrency and verifying the interactions with the mocked dependencies.

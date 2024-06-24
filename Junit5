@@ -1,141 +1,80 @@
-Here is an example of how you can write JUnit 5 test cases for the `postAlarmForEachIteration` method in the `AlarmRepositoryImpl` class, covering the specified blocks:
+Sure! Here are some JUnit 5 test cases to cover the mentioned blocks of code in the `postAlarmForEachIteration(Alarm alarm, String compId)` method of the `AlarmRepositoryImpl` class:
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.rowset.SqlRowSet;
+import org.springframework.jdbc.core.RowMapper;
 
-import java.sql.Timestamp;
-import java.util.HashMap;
-import java.util.Set;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 
-@ExtendWith(MockitoExtension.class)
-public class AlarmRepositoryImplTest {
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-    @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
+class AlarmRepositoryImplTest {
 
     @Mock
     private JdbcTemplate jdbcTemplate;
 
-    @Mock
-    private AlarmPostingUtils utils;
-
-    @Mock
-    private PostGreDataBaseConfig postgresConf;
-
-    @Mock
-    private PostingRuleProcessingService postingRuleProcessingService;
-
-    @Mock
-    private SqlRowSet rs;
-
-    private Alarm alarm;
+    private AlarmRepositoryImpl alarmRepository;
 
     @BeforeEach
-    public void setUp() {
-        alarm = new Alarm();
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        alarmRepository = new AlarmRepositoryImpl(jdbcTemplate);
     }
 
     @Test
-    public void testPostAlarmForEachIteration_mergeArrayMethod() throws Exception {
-        // Setup
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(new Timestamp(System.currentTimeMillis()));
-        when(rs.getObject("tag")).thenReturn(new String[]{"tag1", "tag2"});
+    void postAlarmForEachIteration_shouldSetSequenceIDIfZero() {
+        Alarm alarm = new Alarm();
+        alarm.setSequenceID(0);
 
-        // Mock dependencies
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
-        when(postgresConf.getAlarmStateCleared()).thenReturn("Cleared");
-
-        // Execute
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        // Verify
-        ArgumentCaptor<Alarm> alarmCaptor = ArgumentCaptor.forClass(Alarm.class);
-        verify(postingRuleProcessingService, times(1)).applyPostingRules(alarmCaptor.capture());
-        Alarm capturedAlarm = alarmCaptor.getValue();
-
-        // Assertions
-        String[] tags = capturedAlarm.getTag();
-        assertNotNull(tags);
-        assertTrue(tags.length > 0);
-    }
-
-    @Test
-    public void testPostAlarmForEachIteration_sequenceID() throws Exception {
-        // Setup
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
+        ResultSet rs = mock(ResultSet.class);
         when(rs.getLong("sequenceid")).thenReturn(123L);
 
-        // Mock dependencies
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
-        when(postgresConf.getAlarmStateCleared()).thenReturn("Cleared");
+        assertDoesNotThrow(() -> {
+            alarmRepository.postAlarmForEachIteration(alarm, "compId", rs);
+        });
 
-        // Execute
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        // Verify
         assertEquals(123L, alarm.getSequenceID());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_componentId() throws Exception {
-        // Setup
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getString("componentid")).thenReturn("component123");
+    void postAlarmForEachIteration_shouldNotSetSequenceIDIfNonZero() {
+        Alarm alarm = new Alarm();
+        alarm.setSequenceID(456L);
 
-        // Mock dependencies
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
-        when(postgresConf.getAlarmStateCleared()).thenReturn("Cleared");
+        ResultSet rs = mock(ResultSet.class);
 
-        // Execute
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        assertDoesNotThrow(() -> {
+            alarmRepository.postAlarmForEachIteration(alarm, "compId", rs);
+        });
 
-        // Verify
-        assertEquals("component123", alarm.getComponentId());
+        assertEquals(456L, alarm.getSequenceID());
     }
 
     @Test
-    public void testPostAlarmForEachIteration_details() throws Exception {
-        // Setup
-        ObjectMapper objectMapper = new ObjectMapper();
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
+    void postAlarmForEachIteration_shouldSetResolvedFromResultSet() throws SQLException {
+        Alarm alarm = new Alarm();
 
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        alarmMap.put("key", "value");
+        ResultSet rs = mock(ResultSet.class);
+        when(rs.getBoolean("resolved")).thenReturn(true);
 
-        when(rs.getString("alarmdetails")).thenReturn(objectMapper.writeValueAsString(alarmMap));
-        alarm.setAlarmDetails(objectMapper.writeValueAsString(alarmMap));
+        assertDoesNotThrow(() -> {
+            alarmRepository.postAlarmForEachIteration(alarm, "compId", rs);
+        });
 
-        // Mock dependencies
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
-        when(postgresConf.getAlarmStateMap()).thenReturn(new HashMap<>());
-        when(postgresConf.getAlarmStateCleared()).thenReturn("Cleared");
-
-        // Execute
-        alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        // Verify merged details
-        HashMap<String, Object> mergedMap = objectMapper.readValue(alarm.getAlarmDetails(), HashMap.class);
-        assertEquals(alarmMap, mergedMap);
+        assertTrue(alarm.isResolved());
     }
+
+    // Additional test cases for other blocks of code...
+
 }
 ```
 
-This code tests key parts of the `postAlarmForEachIteration` method. It uses Mockito to mock dependencies and verify interactions. Each test case focuses on a specific aspect of the method to ensure comprehensive coverage.
+Please note that these test cases assume that you have a `JdbcTemplate` instance injected into the `AlarmRepositoryImpl` class and the necessary dependencies are properly set up.
+
+Feel free to add more test cases or modify them according to your specific requirements.

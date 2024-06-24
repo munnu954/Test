@@ -1,18 +1,29 @@
-import org.junit.jupiter.api.Assertions;
+Creating JUnit 5 test cases for the specific `else if` block in the `postAlarmForEachIteration` method in the `AlarmRepositoryImpl` class involves setting up the necessary mock objects and verifying that the method behaves as expected for the given conditions. Below is an example of how you can write these test cases:
+
+```java
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+import java.sql.Timestamp;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
 
 @ExtendWith(MockitoExtension.class)
-class AlarmRepositoryImplTest {
+public class AlarmRepositoryImplTest {
 
     @Mock
     private JdbcTemplate jdbcTemplate;
+
+    @Mock
+    private AlarmPostingUtils utils;
 
     @Mock
     private PostGreDataBaseConfig postgresConf;
@@ -21,125 +32,123 @@ class AlarmRepositoryImplTest {
     private PostingRuleProcessingService postingRuleProcessingService;
 
     @InjectMocks
-    private AlarmRepositoryImpl alarmRepositoryImpl;
+    private AlarmRepositoryImpl alarmRepository;
 
-    @Test
-    void testPostAlarmForEachIteration_SetComponentId() {
-        Alarm alarm = new Alarm();
-        alarm.setComponentId("");
+    private Alarm alarm;
+    private SqlRowSet rs;
 
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        Mockito.when(jdbcTemplate.queryForRowSet(AlarmConstants.CHECK_ALARM_IDENTITY, new Object[]{alarm.getAlarmIdentity()})).thenReturn(rs);
-        Mockito.when(rs.next()).thenReturn(true);
-        Mockito.when(rs.getString("componentid")).thenReturn("testComponentId");
+    @BeforeEach
+    public void setUp() throws Exception {
+        alarm = new Alarm();
+        alarm.setAlarmIdentity("alarm1");
+        alarm.setState(1);
+        alarm.setPerceivedSeverity(-1);
 
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
-
-        Assertions.assertEquals("testComponentId", alarm.getComponentId());
+        rs = mock(SqlRowSet.class);
+        when(rs.next()).thenReturn(true);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(new Timestamp(System.currentTimeMillis()));
+        when(rs.getInt("state")).thenReturn(1);
+        when(rs.getLong("sequenceid")).thenReturn(100L);
+        when(rs.getString("externalalarmid")).thenReturn("external123");
+        when(rs.getString("sourcesystemid")).thenReturn("source123");
+        when(rs.getInt("alarmtype")).thenReturn(1);
+        when(rs.getInt("perceivedseverity")).thenReturn(2);
+        when(rs.getTimestamp("cleartime")).thenReturn(new Timestamp(System.currentTimeMillis()));
+        when(rs.getString("probablecause")).thenReturn("cause1");
+        when(rs.getString("specificproblem")).thenReturn("problem1");
+        when(rs.getBoolean("serviceaffecting")).thenReturn(true);
+        when(rs.getTimestamp("alarmraisedtime")).thenReturn(new Timestamp(System.currentTimeMillis()));
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(new Timestamp(System.currentTimeMillis()));
+        when(rs.getTimestamp("alarmreportingtime")).thenReturn(new Timestamp(System.currentTimeMillis()));
+        when(rs.getBoolean("resolved")).thenReturn(false);
+        when(rs.getString("componentid")).thenReturn("component1");
+        when(rs.getString("alarmedobject")).thenReturn("object1");
+        when(rs.getString("reportingobject")).thenReturn("report1");
+        when(rs.getString("equipmentobject")).thenReturn("equip1");
+        when(rs.getString("tid")).thenReturn("tid1");
+        when(rs.getString("aid")).thenReturn("aid1");
+        when(rs.getString("rawmessage")).thenReturn("rawmessage1");
+        when(rs.getInt("stage")).thenReturn(1);
+        when(rs.getString("exttopologydetails")).thenReturn("exttopo");
+        when(rs.getString("topologydetails")).thenReturn("topo");
     }
 
     @Test
-    void testPostAlarmForEachIteration_SetAlarmedObject() {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmedObject("");
+    public void testPostAlarmForEachIteration_StateUncorrelated() throws Exception {
+        // Set up mock behavior
+        when(postgresConf.getAlarmStateMap()).thenReturn(Map.of(
+                postgresConf.getAlarmStateCleared(), 0,
+                postgresConf.getAlarmStateNew(), 1,
+                postgresConf.getAlarmStateUnclorrelated(), 2
+        ));
+        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
+        when(utils.compareTime(anyString(), anyString(), any())).thenReturn(1);
 
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        Mockito.when(jdbcTemplate.queryForRowSet(AlarmConstants.CHECK_ALARM_IDENTITY, new Object[]{alarm.getAlarmIdentity()})).thenReturn(rs);
-        Mockito.when(rs.next()).thenReturn(true);
-        Mockito.when(rs.getString("alarmedobject")).thenReturn("testAlarmedObject");
+        // Execute the method
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
-
-        Assertions.assertEquals("testAlarmedObject", alarm.getAlarmedObject());
+        // Verify
+        assertEquals(1, alarm.getState());
+        verify(postingRuleProcessingService, times(1)).applyPostingRules(any(Alarm.class));
     }
 
     @Test
-    void testPostAlarmForEachIteration_SetReportingObject() {
-        Alarm alarm = new Alarm();
-        alarm.setReportingObject("");
+    public void testPostAlarmForEachIteration_StateRelated() throws Exception {
+        // Set up mock behavior
+        when(postgresConf.getAlarmStateMap()).thenReturn(Map.of(
+                postgresConf.getAlarmStateCleared(), 0,
+                postgresConf.getAlarmStateNew(), 1,
+                postgresConf.getAlarmStateRelated(), 3
+        ));
+        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
+        when(utils.compareTime(anyString(), anyString(), any())).thenReturn(1);
 
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        Mockito.when(jdbcTemplate.queryForRowSet(AlarmConstants.CHECK_ALARM_IDENTITY, new Object[]{alarm.getAlarmIdentity()})).thenReturn(rs);
-        Mockito.when(rs.next()).thenReturn(true);
-        Mockito.when(rs.getString("reportingobject")).thenReturn("testReportingObject");
+        // Execute the method
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
-
-        Assertions.assertEquals("testReportingObject", alarm.getReportingObject());
+        // Verify
+        assertEquals(1, alarm.getState());
+        verify(postingRuleProcessingService, times(1)).applyPostingRules(any(Alarm.class));
     }
 
     @Test
-    void testPostAlarmForEachIteration_SetEquipmentObject() {
-        Alarm alarm = new Alarm();
-        alarm.setEquipmentObject("");
+    public void testPostAlarmForEachIteration_StateRootCause() throws Exception {
+        // Set up mock behavior
+        when(postgresConf.getAlarmStateMap()).thenReturn(Map.of(
+                postgresConf.getAlarmStateCleared(), 0,
+                postgresConf.getAlarmStateNew(), 1,
+                postgresConf.getAlarmStateRootCause(), 4
+        ));
+        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
+        when(utils.compareTime(anyString(), anyString(), any())).thenReturn(1);
 
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        Mockito.when(jdbcTemplate.queryForRowSet(AlarmConstants.CHECK_ALARM_IDENTITY, new Object[]{alarm.getAlarmIdentity()})).thenReturn(rs);
-        Mockito.when(rs.next()).thenReturn(true);
-        Mockito.when(rs.getString("equipmentobject")).thenReturn("testEquipmentObject");
+        // Execute the method
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
-
-        Assertions.assertEquals("testEquipmentObject", alarm.getEquipmentObject());
+        // Verify
+        assertEquals(1, alarm.getState());
+        verify(postingRuleProcessingService, times(1)).applyPostingRules(any(Alarm.class));
     }
 
     @Test
-    void testPostAlarmForEachIteration_SetTid() {
-        Alarm alarm = new Alarm();
-        alarm.setTid("");
+    public void testPostAlarmForEachIteration_StateStandalone() throws Exception {
+        // Set up mock behavior
+        when(postgresConf.getAlarmStateMap()).thenReturn(Map.of(
+                postgresConf.getAlarmStateCleared(), 0,
+                postgresConf.getAlarmStateNew(), 1,
+                postgresConf.getAlarmStateStandalone(), 5
+        ));
+        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
+        when(utils.compareTime(anyString(), anyString(), any())).thenReturn(1);
 
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        Mockito.when(jdbcTemplate.queryForRowSet(AlarmConstants.CHECK_ALARM_IDENTITY, new Object[]{alarm.getAlarmIdentity()})).thenReturn(rs);
-        Mockito.when(rs.next()).thenReturn(true);
-        Mockito.when(rs.getString("tid")).thenReturn("testTid");
+        // Execute the method
+        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
 
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
-
-        Assertions.assertEquals("testTid", alarm.getTid());
-    }
-
-    @Test
-    void testPostAlarmForEachIteration_SetAid() {
-        Alarm alarm = new Alarm();
-        alarm.setAid("");
-
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        Mockito.when(jdbcTemplate.queryForRowSet(AlarmConstants.CHECK_ALARM_IDENTITY, new Object[]{alarm.getAlarmIdentity()})).thenReturn(rs);
-        Mockito.when(rs.next()).thenReturn(true);
-        Mockito.when(rs.getString("aid")).thenReturn("testAid");
-
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
-
-        Assertions.assertEquals("testAid", alarm.getAid());
-    }
-
-    @Test
-    void testPostAlarmForEachIteration_SetRawMessage() {
-        Alarm alarm = new Alarm();
-        alarm.setRawMessage("");
-
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        Mockito.when(jdbcTemplate.queryForRowSet(AlarmConstants.CHECK_ALARM_IDENTITY, new Object[]{alarm.getAlarmIdentity()})).thenReturn(rs);
-        Mockito.when(rs.next()).thenReturn(true);
-        Mockito.when(rs.getString("rawmessage")).thenReturn("testRawMessage");
-
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
-
-        Assertions.assertEquals("testRawMessage", alarm.getRawMessage());
-    }
-
-    @Test
-    void testPostAlarmForEachIteration_SetStage() {
-        Alarm alarm = new Alarm();
-        alarm.setStage(0);
-
-        SqlRowSet rs = Mockito.mock(SqlRowSet.class);
-        Mockito.when(jdbcTemplate.queryForRowSet(AlarmConstants.CHECK_ALARM_IDENTITY, new Object[]{alarm.getAlarmIdentity()})).thenReturn(rs);
-        Mockito.when(rs.next()).thenReturn(true);
-        Mockito.when(rs.getInt("stage")).thenReturn(10);
-
-        alarmRepositoryImpl.postAlarmForEachIteration(alarm, "testCompId");
-
-        Assertions.assertEquals(10, alarm.getStage());
+        // Verify
+        assertEquals(1, alarm.getState());
+        verify(postingRuleProcessingService, times(1)).applyPostingRules(any(Alarm.class));
     }
 }
+```
+
+In this example, we have created a JUnit 5 test class `AlarmRepositoryImplTest` with methods to test different states (`Uncorrelated`, `Related`, `RootCause`, and `Standalone`). The test cases use mock objects to simulate the dependencies and verify that the `postAlarmForEachIteration` method behaves as expected in each scenario. The `setUp` method initializes the common objects and mock behaviors needed for the tests.

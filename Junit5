@@ -1,38 +1,31 @@
-To achieve 100% code coverage for the `postAlarmForEachIteration` method in the `AlarmRepositoryImpl` class, we need to create JUnit 5 test cases that cover all the possible branches and conditions in the method. Here's how you can write the test cases:
-
-1. **Setup Mocks and Dependencies**:
-   - Mock dependencies such as `JdbcTemplate`, `AlarmPostingUtils`, `PostGreDataBaseConfig`, and `PostingRuleProcessingService`.
-
-2. **Create Test Cases**:
-   - Write test cases to cover different scenarios such as when `rs` is `null`, when `rs.next()` returns `true` or `false`, and various conditions within the `if` statements.
-
-Here is the JUnit 5 test class for 100% code coverage:
+Here's an example of how you could write JUnit 5 test cases to achieve 100% code coverage for the `postAlarmForEachIteration()` method of the `AlarmRepositoryImpl` class:
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-import java.sql.Timestamp;
-import java.text.SimpleDateFormat;
-import java.util.*;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class AlarmRepositoryImplTest {
+class AlarmRepositoryImplTest {
 
     @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
+    private AlarmRepositoryImpl alarmRepositoryImpl;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -46,107 +39,111 @@ public class AlarmRepositoryImplTest {
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
-    @Mock
-    private SqlRowSet rs;
+    private Alarm alarm;
 
     @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
+    void setUp() {
+        alarm = new Alarm();
+        alarm.setAlarmIdentity("TEST_ALARM_ID");
+        alarm.setAlarmUpdatedTime("2023-04-25T12:00:00.000Z");
+        alarm.setSequenceID(1L);
     }
 
     @Test
-    public void testPostAlarmForEachIteration_NewAlarm() throws Exception {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
-        alarm.setAlarmUpdatedTime("2023-10-01T10:00:00Z");
-        alarm.setSequenceID(1);
+    void testPostAlarmForEachIterationWithNoExistingAlarm() {
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(null);
+        when(jdbcTemplate.update(anyString(), any(Object[].class))).thenReturn(1);
 
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(false);
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "comp1");
-
-        verify(jdbcTemplate, times(1)).queryForRowSet(anyString(), any(Object[].class));
-        verify(rs, times(1)).next();
-
-        assertEquals(0, result);
+        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "COMP_ID");
+        assertEquals(1, rowsAffected);
     }
 
     @Test
-    public void testPostAlarmForEachIteration_UpdateExistingAlarm() throws Exception {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
-        alarm.setAlarmUpdatedTime("2023-10-01T10:00:00Z");
-        alarm.setSequenceID(2);
+    void testPostAlarmForEachIterationWithExistingAlarm() {
+        SqlRowSet rowSet = mock(SqlRowSet.class);
+        when(rowSet.next()).thenReturn(true);
+        when(rowSet.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.now()));
+        when(rowSet.getLong("sequenceid")).thenReturn(2L);
+        when(rowSet.getLong("usn")).thenReturn(1L);
+        when(rowSet.getInt("state")).thenReturn(postgresConf.getAlarmStateMap().get(postgresConf.getAlarmStateUnclorrelated()));
+        when(rowSet.getObject("tag")).thenReturn(new String[]{"tag1", "tag2"});
+        when(rowSet.getBoolean("resolved")).thenReturn(false);
+        when(rowSet.getString("componentid")).thenReturn("COMPONENT_ID");
+        when(rowSet.getString("alarmedobject")).thenReturn("ALARMED_OBJECT");
+        when(rowSet.getString("reportingobject")).thenReturn("REPORTING_OBJECT");
+        when(rowSet.getString("equipmentobject")).thenReturn("EQUIPMENT_OBJECT");
+        when(rowSet.getString("tid")).thenReturn("TID");
+        when(rowSet.getString("aid")).thenReturn("AID");
+        when(rowSet.getString("rawmessage")).thenReturn("RAW_MESSAGE");
+        when(rowSet.getInt("stage")).thenReturn(1);
+        when(rowSet.getString("exttopologydetails")).thenReturn("{\"key1\": \"value1\"}");
+        when(rowSet.getString("topologydetails")).thenReturn("{\"key2\": \"value2\"}");
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rowSet);
+        when(jdbcTemplate.update(anyString(), any(Object[].class))).thenReturn(1);
+        when(postingRuleProcessingService.applyPostingRules(any(Alarm.class))).thenReturn(alarm);
 
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-10-01 09:00:00"));
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(rs.getInt("state")).thenReturn(1);
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "comp1");
-
-        verify(jdbcTemplate, times(1)).queryForRowSet(anyString(), any(Object[].class));
-        verify(rs, times(1)).next();
-        verify(rs, times(1)).getTimestamp("alarmupdatedtime");
-        verify(rs, times(1)).getLong("sequenceid");
-        verify(rs, times(1)).getInt("state");
-        verify(utils, times(1)).compareTime(anyString(), anyString(), any(Alarm.class));
-
-        assertEquals(1, result);
+        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "COMP_ID");
+        assertEquals(1, rowsAffected);
     }
 
     @Test
-    public void testPostAlarmForEachIteration_Exception() throws Exception {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
+    void testPostAlarmForEachIterationWithException() {
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenThrow(new RuntimeException("Test exception"));
 
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenThrow(new RuntimeException("Database Error"));
-
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "comp1");
-
-        verify(jdbcTemplate, times(1)).queryForRowSet(anyString(), any(Object[].class));
-
-        assertEquals(-2, result);
+        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "COMP_ID");
+        assertEquals(-2, rowsAffected);
     }
 
-    // Add more test cases to cover all branches and conditions
+    @Test
+    void testPostAlarmForEachIterationWithNoUpdateSqlGenerated() {
+        SqlRowSet rowSet = mock(SqlRowSet.class);
+        when(rowSet.next()).thenReturn(true);
+        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rowSet);
+        when(alarmRepositoryImpl.getSqlAndParamsForAlarmUpdate(any(Alarm.class), any(), any(SqlRowSet.class), anyLong())).thenReturn("");
+
+        int rowsAffected = alarmRepositoryImpl.postAlarmForEachIteration(alarm, "COMP_ID");
+        assertEquals(-1, rowsAffected);
+    }
 
     @Test
-    public void testPostAlarmForEachIteration_AlarmStateProcessing() throws Exception {
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
-        alarm.setAlarmUpdatedTime("2023-10-01T10:00:00Z");
-        alarm.setSequenceID(2);
+    void testMergeArrayMethod() {
+        Object tagFromDb = new String[]{"tag1", "tag2"};
+        Set<String> joinedTagSet = alarmRepositoryImpl.mergeArrayMethod(tagFromDb, alarm);
+        assertEquals(new HashSet<>(Set.of("tag1", "tag2")), joinedTagSet);
+    }
 
-        when(jdbcTemplate.queryForRowSet(anyString(), any(Object[].class))).thenReturn(rs);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.valueOf("2023-10-01 09:00:00"));
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(rs.getInt("state")).thenReturn(1);
-        when(rs.getObject("tag")).thenReturn(null);
-        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(0);
+    @Test
+    void testMergeForAlarms() {
+        HashMap<String, Object> dbMap = new HashMap<>();
+        dbMap.put("key1", "value1");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("key2", "value2");
 
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "comp1");
+        HashMap<String, Object> mergedMap = alarmRepositoryImpl.mergeForAlarms(dbMap, alarmMap);
+        assertEquals(new HashMap<>(Map.of("key1", "value1", "key2", "value2")), mergedMap);
+    }
 
-        verify(jdbcTemplate, times(1)).queryForRowSet(anyString(), any(Object[].class));
-        verify(rs, times(1)).next();
-        verify(rs, times(1)).getTimestamp("alarmupdatedtime");
-        verify(rs, times(1)).getLong("sequenceid");
-        verify(rs, times(1)).getInt("state");
-        verify(rs, times(1)).getObject("tag");
-        verify(utils, times(1)).compareTime(anyString(), anyString(), any(Alarm.class));
+    @Test
+    void testMergeForAlarmsNested() {
+        HashMap<String, Object> dbMap = new HashMap<>();
+        dbMap.put("key1", "value1");
+        HashMap<String, Object> alarmMap = new HashMap<>();
+        alarmMap.put("key2", "value2");
 
-        assertEquals(1, result);
+        HashMap<String, Object> mergedMap = alarmRepositoryImpl.mergeForAlarmsNested(dbMap, alarmMap);
+        assertEquals(new HashMap<>(Map.of("key1", "value1", "key2", "value2")), mergedMap);
     }
 }
 ```
 
-### Notes:
-- **Mocking**: The `JdbcTemplate` and other dependencies are mocked to simulate the behavior of the database and other components.
-- **Assertions and Verifications**: We use `assertEquals` to verify the return values and `verify` to ensure that the methods are called the expected number of times with the correct arguments.
-- **Additional Test Cases**: More test cases can be added to cover other branches and conditions in the method.
+This test suite covers the following scenarios:
 
-This test class should provide comprehensive coverage for the `postAlarmForEachIteration` method.
+1. `testPostAlarmForEachIterationWithNoExistingAlarm`: Tests the case where there is no existing alarm in the database.
+2. `testPostAlarmForEachIterationWithExistingAlarm`: Tests the case where there is an existing alarm in the database and the method updates the alarm.
+3. `testPostAlarmForEachIterationWithException`: Tests the case where an exception is thrown while executing the method.
+4. `testPostAlarmForEachIterationWithNoUpdateSqlGenerated`: Tests the case where the `getSqlAndParamsForAlarmUpdate()` method returns an empty string, indicating no update is required.
+5. `testMergeArrayMethod`: Tests the `mergeArrayMethod()` helper method.
+6. `testMergeForAlarms`: Tests the `mergeForAlarms()` helper method.
+7. `testMergeForAlarmsNested`: Tests the `mergeForAlarmsNested()` helper method.
+
+These test cases should provide 100% code coverage for the `postAlarmForEachIteration()` method of the `AlarmRepositoryImpl` class.

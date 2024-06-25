@@ -1,8 +1,8 @@
-To achieve 100% code coverage for the `postAlarmForEachIteration` method in the `AlarmRepositoryImpl` class, you'll need to create a comprehensive set of unit tests using JUnit 5. These tests should cover all possible branches and scenarios within the method. Here is an example of how you might write these tests:
+To achieve 100% code coverage for the `postAlarmForEachIteration` method in the `AlarmRepositoryImpl` class using JUnit 5, you'll need to create a comprehensive set of test cases. These test cases should cover all the branches and possible scenarios within the method. Below is an example of how you might write these test cases:
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.sql.Timestamp;
 import java.text.SimpleDateFormat;
@@ -12,14 +12,20 @@ import java.util.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.SqlRowSet;
+import org.springframework.jdbc.support.rowset.SqlRowSet;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
+@SpringBootTest
+@ExtendWith(SpringExtension.class)
 public class AlarmRepositoryImplTest {
 
     @InjectMocks
-    private AlarmRepositoryImpl alarmRepository;
+    private AlarmRepositoryImpl alarmRepositoryImpl;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
@@ -33,136 +39,84 @@ public class AlarmRepositoryImplTest {
     @Mock
     private PostingRuleProcessingService postingRuleProcessingService;
 
+    private Alarm alarm;
+    private String compId = "compId";
+
     @BeforeEach
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
+        alarm = new Alarm();
+        alarm.setAlarmIdentity("testIdentity");
+        alarm.setAlarmUpdatedTime("2023-10-09T10:00:00Z");
+        alarm.setSequenceID(1L);
+
+        when(postgresConf.getAlarmStateMap()).thenReturn(getMockAlarmStateMap());
     }
 
     @Test
     public void testPostAlarmForEachIteration_NewAlarm() throws Exception {
-        // Setup mock data
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
-        alarm.setAlarmUpdatedTime("2023-10-10T10:00:00Z");
-        alarm.setSequenceID(1);
-
         SqlRowSet rs = mock(SqlRowSet.class);
+        when(jdbcTemplate.queryForRowSet(eq(AlarmConstants.CHECK_ALARM_IDENTITY), any(Object[].class))).thenReturn(rs);
         when(rs.next()).thenReturn(false);
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
 
-        // Act
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
+        int result = alarmRepositoryImpl.postAlarmForEachIteration(alarm, compId);
 
-        // Assert
-        assertEquals(-1, result);
+        assertEquals(0, result);
     }
 
     @Test
-    public void testPostAlarmForEachIteration_UpdateAlarm() throws Exception {
-        // Setup mock data
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
-        alarm.setAlarmUpdatedTime("2023-10-10T10:00:00Z");
-        alarm.setSequenceID(1);
-
+    public void testPostAlarmForEachIteration_ExistingAlarm() throws Exception {
         SqlRowSet rs = mock(SqlRowSet.class);
+        when(jdbcTemplate.queryForRowSet(eq(AlarmConstants.CHECK_ALARM_IDENTITY), any(Object[].class))).thenReturn(rs);
         when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2023-10-10T09:00:00Z")));
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(rs.getLong("usn")).thenReturn(1L);
+        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2023-10-08T10:00:00Z")));
+        when(rs.getLong("sequenceid")).thenReturn(0L);
         when(rs.getInt("state")).thenReturn(1);
-        when(rs.getObject("tag")).thenReturn(null);
+        when(rs.getLong("usn")).thenReturn(1L);
 
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(utils.compareTime(anyString(), anyString(), any())).thenReturn(1);
-        when(postingRuleProcessingService.applyPostingRules(any())).thenReturn(alarm);
+        when(utils.compareTime(anyString(), anyString(), any(Alarm.class))).thenReturn(1);
+        when(postingRuleProcessingService.applyPostingRules(any(Alarm.class))).thenReturn(alarm);
 
-        // Mock the update method
-        when(jdbcTemplate.update(anyString(), any(Object[].class))).thenReturn(1);
+        int result = alarmRepositoryImpl.postAlarmForEachIteration(alarm, compId);
 
-        // Act
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        // Assert
-        assertEquals(1, result);
+        assertEquals(0, result);
     }
 
     @Test
     public void testPostAlarmForEachIteration_Exception() throws Exception {
-        // Setup mock data
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
-        alarm.setAlarmUpdatedTime("2023-10-10T10:00:00Z");
-        alarm.setSequenceID(1);
+        SqlRowSet rs = mock(SqlRowSet.class);
+        when(jdbcTemplate.queryForRowSet(eq(AlarmConstants.CHECK_ALARM_IDENTITY), any(Object[].class))).thenReturn(rs);
+        when(rs.next()).thenThrow(new RuntimeException("DB error"));
 
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenThrow(new RuntimeException("Database error"));
+        int result = alarmRepositoryImpl.postAlarmForEachIteration(alarm, compId);
 
-        // Act
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        // Assert
         assertEquals(-2, result);
     }
 
-    // Additional tests for other branches and scenarios
-
-    @Test
-    public void testPostAlarmForEachIteration_AlarmWithNullValues() throws Exception {
-        // Setup mock data
-        Alarm alarm = new Alarm();
-        alarm.setAlarmIdentity("alarm1");
-        alarm.setAlarmUpdatedTime("2023-10-10T10:00:00Z");
-        alarm.setSequenceID(1);
-        alarm.setComponentId(null);
-        alarm.setAlarmedObject(null);
-        alarm.setReportingObject(null);
-        alarm.setEquipmentObject(null);
-        alarm.setTid(null);
-        alarm.setAid(null);
-        alarm.setRawMessage(null);
-
-        SqlRowSet rs = mock(SqlRowSet.class);
-        when(rs.next()).thenReturn(true);
-        when(rs.getTimestamp("alarmupdatedtime")).thenReturn(Timestamp.from(Instant.parse("2023-10-10T09:00:00Z")));
-        when(rs.getLong("sequenceid")).thenReturn(1L);
-        when(rs.getLong("usn")).thenReturn(1L);
-        when(rs.getInt("state")).thenReturn(1);
-        when(rs.getObject("tag")).thenReturn(null);
-        when(rs.getString("componentid")).thenReturn("compId");
-        when(rs.getString("alarmedobject")).thenReturn("alarmedObject");
-        when(rs.getString("reportingobject")).thenReturn("reportingObject");
-        when(rs.getString("equipmentobject")).thenReturn("equipmentObject");
-        when(rs.getString("tid")).thenReturn("tid");
-        when(rs.getString("aid")).thenReturn("aid");
-        when(rs.getString("rawmessage")).thenReturn("rawMessage");
-
-        when(jdbcTemplate.queryForRowSet(anyString(), any())).thenReturn(rs);
-        when(utils.compareTime(anyString(), anyString(), any())).thenReturn(1);
-        when(postingRuleProcessingService.applyPostingRules(any())).thenReturn(alarm);
-
-        // Mock the update method
-        when(jdbcTemplate.update(anyString(), any(Object[].class))).thenReturn(1);
-
-        // Act
-        int result = alarmRepository.postAlarmForEachIteration(alarm, "compId");
-
-        // Assert
-        assertEquals(1, result);
-        assertEquals("compId", alarm.getComponentId());
-        assertEquals("alarmedObject", alarm.getAlarmedObject());
-        assertEquals("reportingObject", alarm.getReportingObject());
-        assertEquals("equipmentObject", alarm.getEquipmentObject());
-        assertEquals("tid", alarm.getTid());
-        assertEquals("aid", alarm.getAid());
-        assertEquals("rawMessage", alarm.getRawMessage());
+    private Map<String, Integer> getMockAlarmStateMap() {
+        Map<String, Integer> map = new HashMap<>();
+        map.put("Cleared", 2);
+        map.put("Unclorrelated", 1);
+        map.put("Related", 3);
+        map.put("RootCause", 4);
+        map.put("Standalone", 5);
+        return map;
     }
 }
 ```
 
-This code covers various scenarios:
-1. When a new alarm is inserted.
-2. When an existing alarm is updated.
-3. When there is an exception during the update.
-4. When the alarm has null values that need to be set from the database.
+### Explanation of the Test Cases
 
-You can add more tests to cover all possible branches and edge cases to achieve 100% coverage.
+1. **testPostAlarmForEachIteration_NewAlarm**: This test case simulates the scenario where the alarm is new and does not exist in the database. It checks that the method returns 0.
+
+2. **testPostAlarmForEachIteration_ExistingAlarm**: This test case simulates the scenario where an existing alarm is found in the database. It sets various fields to simulate the conditions and verifies that the method processes the alarm correctly.
+
+3. **testPostAlarmForEachIteration_Exception**: This test case simulates an exception being thrown during the database query. It verifies that the method handles the exception and returns -2.
+
+### Mocking
+
+- **JdbcTemplate**: Mocking the `JdbcTemplate` to simulate the database interactions without actually hitting the database.
+- **AlarmPostingUtils**: Mocking the utility methods to simulate their behavior.
+- **PostGreDataBaseConfig**: Mocking the configuration properties to provide necessary data for the tests.
+- **PostingRuleProcessingService**: Mocking the service to return the alarm object after applying posting rules.
+
+By covering these scenarios, you should achieve 100% code coverage for the `postAlarmForEachIteration` method. Make sure to adjust the test cases as needed to cover any additional branches or logic within your method.

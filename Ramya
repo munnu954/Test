@@ -1,90 +1,63 @@
-import java.nio.file.*;
-import java.util.concurrent.TimeUnit;
+import java.util.*;
 
-// Existing imports
+public class Main {
+    public static String StringChallenge(String str) {
+        // Allowed HTML elements
+        Set<String> allowedElements = new HashSet<>(Arrays.asList("b", "i", "em", "div", "p"));
 
-public class SSHService {
-    // Existing class members and constructor
+        // Stack to track opening tags
+        Stack<String> stack = new Stack<>();
 
-    public boolean retrieveData(SpaceCollector sp, String dateReceived, String auditTopic) {
-        try {
-            LOGGER.info("Entered SSH service");
-            String sshUsername = sp.getUserName();
-            String sshHost = sp.getUrl();
-            String sshPassword = sp.getPassword();
-            int port = sp.getPort().intValue();
+        // Variables to track the first mismatched element
+        String firstMismatch = null;
+        boolean isNested = true;
 
-            JSch jsch = jschFactory.createJSch();
-            Session session = jsch.getSession(sshUsername, sshHost, port);
-            session.setPassword(sshPassword);
-            session.setConfig("StrictHostKeyChecking", "no");
-            session.connect();
-
-            ChannelSftp channelSftp = (ChannelSftp) session.openChannel("sftp");
-            channelSftp.connect();
-
-            String remoteDirectory = FileUtil.getDirectory(sp.getInputFilePath());
-            String localDirectory = FileUtil.getDirectory(sp.getOutputFilePath());
-            LOGGER.info("remoteDirectory: " + remoteDirectory + " localDirectory: " + localDirectory);
-
-            retrieveAndProcessDirectory(sp, dateReceived, auditTopic, remoteDirectory, localDirectory, channelSftp);
-
-            channelSftp.disconnect();
-            session.disconnect();
-
-            return true;
-        } catch (Exception e) {
-            LOGGER.error("Error in retrieveData()", e);
-            return false;
-        }
-    }
-
-    private void retrieveAndProcessDirectory(SpaceCollector sp, String dateReceived, String auditTopic,
-                                             String remoteDirectory, String localDirectory, ChannelSftp channelSftp)
-            throws Exception {
-        Vector<ChannelSftp.LsEntry> files = channelSftp.ls(remoteDirectory);
-        Map<String, String> auditStatusMap = getAuditStatusMap(files, remoteDirectory);
-
-        for (ChannelSftp.LsEntry file : files) {
-            if (!file.getAttrs().isDir()) {
-                if (wasModifiedInLast24Hours(file.getAttrs().getMTime() * 1000L)) { // Convert to milliseconds
-                    String filePath = remoteDirectory + "/" + file.getFilename();
-                    String status = auditStatusMap.get(filePath);
-                    if (status == null || "COLLECTION_FAILED".equals(status)) {
-                        String outputFile = localDirectory + "/" + file.getFilename();
-                        LOGGER.info("in filePath: " + filePath + " out filePath: " + outputFile);
-                        FileUtil.downloadFile(outputStreamCreator.create(outputFile), channelSftp.get(filePath),
-                                filePath, outputFile, sp.getOutputFilePath());
-                        processDownloadedFile(sp, dateReceived, auditTopic, outputFile, localDirectory);
+        // Parse through the string
+        for (int i = 0; i < str.length(); i++) {
+            if (str.charAt(i) == '<') {
+                // Check if it's an opening tag
+                int endIndex = str.indexOf('>', i);
+                if (endIndex != -1) {
+                    String tag = str.substring(i + 1, endIndex);
+                    if (tag.charAt(0) != '/') {
+                        // Opening tag
+                        String tagName = tag.split(" ")[0]; // Get tag name without attributes
+                        if (allowedElements.contains(tagName)) {
+                            stack.push(tagName);
+                        }
+                    } else {
+                        // Closing tag
+                        String tagName = tag.substring(1); // Remove '/'
+                        if (!stack.isEmpty() && stack.peek().equals(tagName)) {
+                            stack.pop();
+                        } else {
+                            // Found mismatch
+                            firstMismatch = tagName;
+                            isNested = false;
+                            break;
+                        }
                     }
+                    i = endIndex; // Move index to end of tag
                 }
-            } else if (!".".equals(file.getFilename()) && !"..".equals(file.getFilename())) {
-                String subRemoteDirectory = remoteDirectory + "/" + file.getFilename();
-                String subLocalDirectory = localDirectory + "/" + file.getFilename();
-                FileUtil.createDirectoryIfNotExists(subLocalDirectory);
-                retrieveAndProcessDirectory(sp, dateReceived, auditTopic, subRemoteDirectory, subLocalDirectory, channelSftp);
             }
         }
+
+        // Determine output based on nesting validity
+        if (isNested && stack.isEmpty()) {
+            return "true";
+        } else {
+            return firstMismatch;
+        }
     }
 
-    private boolean wasModifiedInLast24Hours(long modificationTime) {
-        long currentTime = System.currentTimeMillis();
-        long diff = currentTime - modificationTime;
-        return diff <= TimeUnit.HOURS.toMillis(24);
-    }
+    public static void main(String[] args) {
+        Scanner s = new Scanner(System.in);
+        String input = s.nextLine().trim(); // Read input
+        String result = StringChallenge(input); // Process input
+        String challengeToken = "uxt3ol9y5df"; // Provided ChallengeToken
 
-    private void processDownloadedFile(SpaceCollector sp, String dateReceived, String auditTopic,
-                                       String outputFile, String localDirectory) throws Exception {
-        // Existing implementation
-    }
-
-    private Map<String, String> getAuditStatusMap(Vector<ChannelSftp.LsEntry> files, String remoteDirectory) {
-        // Implementation of getAuditStatusMap
-        return new HashMap<>();
-    }
-
-    private CollectionAudit createAuditObject(SpaceCollector sp, String filePath, String status, String message) {
-        // Implementation of createAuditObject
-        return new CollectionAudit();
+        // Construct final output in reverse order separated by colon
+        String finalOutput = new StringBuilder(result).reverse().toString() + ":" + new StringBuilder(challengeToken).reverse().toString();
+        System.out.println("Final Output: " + finalOutput);
     }
 }

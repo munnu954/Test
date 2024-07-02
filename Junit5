@@ -1,27 +1,43 @@
-Sure, let's write JUnit 5 test cases for the `fetchTopologyTraversalDetails` method of the `AlarmOperationsAPI` class. Given that some fields and methods are private, we will use Java Reflection to access them.
+Here's the JUnit 5 test code for the `getTopologyTraversalObjectsList` method in the `AlarmOperationsAPI` class. The test cases cover all branches of the method. We'll use `ReflectionTestUtils` from the Spring framework to access private fields and methods.
 
-Here is the code:
+First, let's add the necessary dependencies for JUnit 5 and Spring's ReflectionTestUtils to your `pom.xml`:
+
+```xml
+<dependencies>
+    <!-- Other dependencies -->
+    <dependency>
+        <groupId>org.springframework</groupId>
+        <artifactId>spring-test</artifactId>
+        <version>5.3.10</version>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-engine</artifactId>
+        <version>5.7.0</version>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
+```
+
+Now, here's the JUnit 5 test code:
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.util.HashMap;
-
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.core.env.Environment;
-import org.springframework.http.*;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
-import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.test.util.ReflectionTestUtils;
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class AlarmOperationsAPITest {
@@ -30,135 +46,118 @@ public class AlarmOperationsAPITest {
     private AlarmOperationsAPI alarmOperationsAPI;
 
     @Mock
-    private RestTemplate restTemplate;
-
-    @Mock
-    private Environment env;
-
-    @Mock
-    private CustomHealthChecker healthChecker;
-
-    private HashMap<String, Object> alarmTagValueMap;
-    private String componentIdReq;
-    private String tbl;
-    private String tag;
-    private String limit;
+    private AlarmRelationUtils utils;
 
     @BeforeEach
     public void setUp() {
-        alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "12345");
-        componentIdReq = "component123";
-        tbl = "TBL123";
-        tag = "Tag123";
-        limit = "10";
+        ReflectionTestUtils.setField(alarmOperationsAPI, "TRAVERSAL_TOPOLOGYOBJECTS_PATH", "/TBL_response/topologyObjects");
+        ReflectionTestUtils.setField(alarmOperationsAPI, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
+        ReflectionTestUtils.setField(alarmOperationsAPI, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
+        ReflectionTestUtils.setField(alarmOperationsAPI, "topoEntityListExpression", "%TopoObject:OSS_Names%");
     }
 
     @Test
-    public void testFetchTopologyTraversalDetails_Success() throws Exception {
-        String expectedResponseBody = "response";
-        ResponseEntity<String> expectedResponse = new ResponseEntity<>(expectedResponseBody, HttpStatus.OK);
+    public void testGetTopologyTraversalObjectsList_NoTopologyObjectsNode() throws Exception {
+        String responseString = "{}";
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "alarm1");
 
-        when(env.getProperty("AUTH_APOLLO_KEY")).thenReturn("apikey");
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
-                .thenReturn(expectedResponse);
-
-        Method method = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails",
-                HashMap.class, String.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        ResponseEntity<String> response = (ResponseEntity<String>) method.invoke(alarmOperationsAPI,
-                alarmTagValueMap, componentIdReq, tbl, tag, limit);
-
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(expectedResponseBody, response.getBody());
+        List<String> resultList = ReflectionTestUtils.invokeMethod(alarmOperationsAPI, "getTopologyTraversalObjectsList", responseString, alarmTagValueMap);
+        
+        assertNotNull(resultList);
+        assertTrue(resultList.isEmpty());
     }
 
     @Test
-    public void testFetchTopologyTraversalDetails_HttpClientErrorException_404() throws Exception {
-        HttpClientErrorException exception = HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", HttpHeaders.EMPTY, null, null);
+    public void testGetTopologyTraversalObjectsList_TopologyObjectsNodeNotArray() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode responseJson = mapper.createObjectNode();
+        responseJson.put("topologyObjects", "not an array");
 
-        when(env.getProperty("AUTH_APOLLO_KEY")).thenReturn("apikey");
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
-                .thenThrow(exception);
+        String responseString = mapper.writeValueAsString(responseJson);
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "alarm1");
 
-        Method method = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails",
-                HashMap.class, String.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        ResponseEntity<String> response = (ResponseEntity<String>) method.invoke(alarmOperationsAPI,
-                alarmTagValueMap, componentIdReq, tbl, tag, limit);
-
-        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode());
+        List<String> resultList = ReflectionTestUtils.invokeMethod(alarmOperationsAPI, "getTopologyTraversalObjectsList", responseString, alarmTagValueMap);
+        
+        assertNotNull(resultList);
+        assertTrue(resultList.isEmpty());
     }
 
     @Test
-    public void testFetchTopologyTraversalDetails_HttpServerErrorException() throws Exception {
-        HttpServerErrorException exception = HttpServerErrorException.create(HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error", HttpHeaders.EMPTY, null, null);
+    public void testGetTopologyTraversalObjectsList_ValidTopologyObjects() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode topologyObject1 = mapper.createObjectNode();
+        topologyObject1.put("OSS_Names", "[\"entity1\", \"entity2\"]");
 
-        when(env.getProperty("AUTH_APOLLO_KEY")).thenReturn("apikey");
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
-                .thenThrow(exception);
+        ArrayNode topologyObjects = mapper.createArrayNode();
+        topologyObjects.add(topologyObject1);
 
-        Method method = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails",
-                HashMap.class, String.class, String.class, String.class, String.class);
-        method.setAccessible(true);
+        ObjectNode responseJson = mapper.createObjectNode();
+        responseJson.set("TBL_response/topologyObjects", topologyObjects);
 
-        // Mock healthChecker behavior
-        doNothing().when(healthChecker).health();
+        String responseString = mapper.writeValueAsString(responseJson);
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "alarm1");
 
-        ResponseEntity<String> response = (ResponseEntity<String>) method.invoke(alarmOperationsAPI,
-                alarmTagValueMap, componentIdReq, tbl, tag, limit);
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("OSS_Names[0]", "[\"entity1\", \"entity2\"]");
 
-        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
+        List<String> resultList = ReflectionTestUtils.invokeMethod(alarmOperationsAPI, "getTopologyTraversalObjectsList", responseString, alarmTagValueMap);
+
+        assertNotNull(resultList);
+        assertEquals(2, resultList.size());
+        assertTrue(resultList.contains("entity1"));
+        assertTrue(resultList.contains("entity2"));
     }
 
     @Test
-    public void testFetchTopologyTraversalDetails_ResourceAccessException() throws Exception {
-        ResourceAccessException exception = new ResourceAccessException("Resource Access Exception");
+    public void testGetTopologyTraversalObjectsList_InvalidEligibilityValue() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode topologyObject1 = mapper.createObjectNode();
+        topologyObject1.put("OSS_Names", "[\"entity1\", \"entity2\"]");
 
-        when(env.getProperty("AUTH_APOLLO_KEY")).thenReturn("apikey");
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
-                .thenThrow(exception);
+        ArrayNode topologyObjects = mapper.createArrayNode();
+        topologyObjects.add(topologyObject1);
 
-        Method method = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails",
-                HashMap.class, String.class, String.class, String.class, String.class);
-        method.setAccessible(true);
+        ObjectNode responseJson = mapper.createObjectNode();
+        responseJson.set("TBL_response/topologyObjects", topologyObjects);
 
-        // Mock healthChecker behavior
-        doNothing().when(healthChecker).health();
+        String responseString = mapper.writeValueAsString(responseJson);
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "alarm1");
 
-        ResponseEntity<String> response = (ResponseEntity<String>) method.invoke(alarmOperationsAPI,
-                alarmTagValueMap, componentIdReq, tbl, tag, limit);
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("");
 
-        assertNull(response);
+        List<String> resultList = ReflectionTestUtils.invokeMethod(alarmOperationsAPI, "getTopologyTraversalObjectsList", responseString, alarmTagValueMap);
+
+        assertNotNull(resultList);
+        assertTrue(resultList.isEmpty());
     }
 
     @Test
-    public void testFetchTopologyTraversalDetails_GeneralException() throws Exception {
-        Exception exception = new Exception("General Exception");
+    public void testGetTopologyTraversalObjectsList_EmptyTopoEntityList() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode topologyObject1 = mapper.createObjectNode();
+        topologyObject1.put("OSS_Names", "[\"entity1\", \"entity2\"]");
 
-        when(env.getProperty("AUTH_APOLLO_KEY")).thenReturn("apikey");
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
-                .thenThrow(exception);
+        ArrayNode topologyObjects = mapper.createArrayNode();
+        topologyObjects.add(topologyObject1);
 
-        Method method = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails",
-                HashMap.class, String.class, String.class, String.class, String.class);
-        method.setAccessible(true);
+        ObjectNode responseJson = mapper.createObjectNode();
+        responseJson.set("TBL_response/topologyObjects", topologyObjects);
 
-        ResponseEntity<String> response = (ResponseEntity<String>) method.invoke(alarmOperationsAPI,
-                alarmTagValueMap, componentIdReq, tbl, tag, limit);
+        String responseString = mapper.writeValueAsString(responseJson);
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "alarm1");
 
-        assertNull(response);
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("OSS_Names[0]", "   ");
+
+        List<String> resultList = ReflectionTestUtils.invokeMethod(alarmOperationsAPI, "getTopologyTraversalObjectsList", responseString, alarmTagValueMap);
+
+        assertNotNull(resultList);
+        assertTrue(resultList.isEmpty());
     }
 }
 ```
 
-This code uses JUnit 5 and Mockito to create test cases for the `fetchTopologyTraversalDetails` method. Each test case covers a different scenario:
-1. A successful response.
-2. An `HttpClientErrorException` with a 404 status.
-3. An `HttpServerErrorException`.
-4. A `ResourceAccessException`.
-5. A general exception.
-
-Reflection is used to access the private `fetchTopologyTraversalDetails` method. The `env` and `restTemplate` fields are mocked to simulate different responses and exceptions.
+This JUnit 5 test class uses Mockito to mock the `utils` dependency and covers all the branches of the `getTopologyTraversalObjectsList` method. Each test case uses `ReflectionTestUtils` to invoke the private method and checks the result accordingly.

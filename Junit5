@@ -1,35 +1,16 @@
-Certainly! Let's create additional JUnit 5 test cases to ensure we cover the missing branches of the specific block within the `getTopologyTraversalObjectsList` method. 
-
-Here's a detailed breakdown of the test cases:
-
-1. **Case with `topoEntityList` having surrounding brackets and spaces:**
-    - `topoEntityList` starts with `[` and ends with `]`.
-    - Validate that the trimming and splitting logic works correctly.
-
-2. **Case with `topoEntityList` having multiple entities without brackets:**
-    - Ensure correct splitting by commas.
-
-3. **Case with `topoEntityList` having a single entity:**
-    - Ensure it handles a single entity correctly.
-
-4. **Case with `topoEntityList` having entities with additional spaces:**
-    - Ensure spaces around entities are handled correctly.
-
-Here are the additional JUnit 5 test cases:
+Sure, here is the JUnit5 test class with test cases covering all branches of the `getTopologyTraversalObjectsList` method in the `AlarmOperationsAPI` class. This includes reflection to access the private method and cases for the missing branches.
 
 ```java
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
-import java.lang.reflect.Method;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -44,104 +25,123 @@ public class AlarmOperationsAPITest {
     @Mock
     private AlarmRelationUtils utils;
 
-    private ObjectMapper objectMapper = new ObjectMapper();
+    private ObjectMapper objectMapper;
 
     @BeforeEach
     public void setup() {
-        // Setup the object mapper to be used in the tests
-        when(utils.evaluateExpression(anyString(), anyMap())).thenAnswer(invocation -> {
-            String expression = invocation.getArgument(0);
-            Map<String, Object> map = invocation.getArgument(1);
-            return expression; // Simplified for testing
-        });
+        objectMapper = new ObjectMapper();
+        ReflectionTestUtils.setField(alarmOperationsAPI, "TRAVERSAL_TOPOLOGYOBJECTS_PATH", "/TBL_response/topologyObjects");
+        ReflectionTestUtils.setField(alarmOperationsAPI, "topologyObjectEligibilityCheckValue", "%TopoObject:OSS_Names[0]%");
+        ReflectionTestUtils.setField(alarmOperationsAPI, "topologyObjectEligibilityCheckExpression", "^(?!\\s*$).+");
+        ReflectionTestUtils.setField(alarmOperationsAPI, "topoEntityListExpression", "%TopoObject: OSS_Names%");
     }
 
-    @SuppressWarnings("unchecked")
+    @Test
+    public void testGetTopologyTraversalObjectsList_AllBranches() throws Exception {
+        String jsonResponse = "{ \"TBL_response\": { \"topologyObjects\": [ " +
+                "{ \"OSS_Names\": \"[Entity1, Entity2]\" }, " +
+                "{ \"OSS_Names\": \"[Entity3, Entity4]\" } ] } }";
+        
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "alarm1");
+
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("Entity1", "Entity2", "Entity3", "Entity4");
+
+        List<String> result = invokeGetTopologyTraversalObjectsList(jsonResponse, alarmTagValueMap);
+
+        assertEquals(4, result.size());
+        assertTrue(result.contains("Entity1"));
+        assertTrue(result.contains("Entity2"));
+        assertTrue(result.contains("Entity3"));
+        assertTrue(result.contains("Entity4"));
+    }
+
+    @Test
+    public void testGetTopologyTraversalObjectsList_EmptyEntityList() throws Exception {
+        String jsonResponse = "{ \"TBL_response\": { \"topologyObjects\": [ " +
+                "{ \"OSS_Names\": \"[]\" } ] } }";
+
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "alarm1");
+
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn("");
+
+        List<String> result = invokeGetTopologyTraversalObjectsList(jsonResponse, alarmTagValueMap);
+
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    public void testGetTopologyTraversalObjectsList_NullEntityList() throws Exception {
+        String jsonResponse = "{ \"TBL_response\": { \"topologyObjects\": [ " +
+                "{ \"OSS_Names\": null } ] } }";
+
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "alarm1");
+
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(null);
+
+        List<String> result = invokeGetTopologyTraversalObjectsList(jsonResponse, alarmTagValueMap);
+
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    public void testGetTopologyTraversalObjectsList_InvalidEligibility() throws Exception {
+        String jsonResponse = "{ \"TBL_response\": { \"topologyObjects\": [ " +
+                "{ \"OSS_Names\": \"[Entity1, Entity2]\" } ] } }";
+
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "alarm1");
+
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(" ", "Entity1");
+
+        List<String> result = invokeGetTopologyTraversalObjectsList(jsonResponse, alarmTagValueMap);
+
+        assertTrue(result.isEmpty());
+    }
+
     private List<String> invokeGetTopologyTraversalObjectsList(String responseString, HashMap<String, Object> alarmTagValueMap) throws Exception {
-        Method method = AlarmOperationsAPI.class.getDeclaredMethod("getTopologyTraversalObjectsList", String.class, HashMap.class);
-        method.setAccessible(true);
-        return (List<String>) method.invoke(alarmOperationsAPI, responseString, alarmTagValueMap);
+        return (List<String>) ReflectionTestUtils.invokeMethod(
+                alarmOperationsAPI, 
+                "getTopologyTraversalObjectsList", 
+                responseString, 
+                alarmTagValueMap
+        );
     }
 
     @Test
-    public void testGetTopologyTraversalObjectsList_WithBracketsAndSpaces() throws Exception {
-        // Create mock response string with a topologyObject having entities within brackets and spaces
-        ArrayNode topologyObjectsNode = objectMapper.createArrayNode();
-        ObjectNode topologyObject = objectMapper.createObjectNode();
-        topologyObject.put("topoEntityList", " [ entity1 , entity2 ] ");
-        topologyObjectsNode.add(topologyObject);
-        ObjectNode responseJson = objectMapper.createObjectNode();
-        responseJson.set("/TBL_response/topologyObjects", topologyObjectsNode);
+    public void testGetTopologyTraversalObjectsList_EmptyResponse() throws Exception {
+        String jsonResponse = "{ \"TBL_response\": { \"topologyObjects\": [] } }";
 
-        String responseString = responseJson.toString();
         HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "alarm1");
 
-        List<String> result = invokeGetTopologyTraversalObjectsList(responseString, alarmTagValueMap);
+        List<String> result = invokeGetTopologyTraversalObjectsList(jsonResponse, alarmTagValueMap);
 
-        assertEquals(Arrays.asList("entity1", "entity2"), result);
+        assertTrue(result.isEmpty());
     }
 
     @Test
-    public void testGetTopologyTraversalObjectsList_MultipleEntitiesWithoutBrackets() throws Exception {
-        // Create mock response string with a topologyObject having multiple entities without brackets
-        ArrayNode topologyObjectsNode = objectMapper.createArrayNode();
-        ObjectNode topologyObject = objectMapper.createObjectNode();
-        topologyObject.put("topoEntityList", "entity1, entity2,entity3");
-        topologyObjectsNode.add(topologyObject);
-        ObjectNode responseJson = objectMapper.createObjectNode();
-        responseJson.set("/TBL_response/topologyObjects", topologyObjectsNode);
+    public void testGetTopologyTraversalObjectsList_InvalidJson() {
+        String invalidJsonResponse = "{ invalid json }";
 
-        String responseString = responseJson.toString();
         HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "alarm1");
 
-        List<String> result = invokeGetTopologyTraversalObjectsList(responseString, alarmTagValueMap);
-
-        assertEquals(Arrays.asList("entity1", "entity2", "entity3"), result);
-    }
-
-    @Test
-    public void testGetTopologyTraversalObjectsList_SingleEntity() throws Exception {
-        // Create mock response string with a topologyObject having a single entity
-        ArrayNode topologyObjectsNode = objectMapper.createArrayNode();
-        ObjectNode topologyObject = objectMapper.createObjectNode();
-        topologyObject.put("topoEntityList", "entity1");
-        topologyObjectsNode.add(topologyObject);
-        ObjectNode responseJson = objectMapper.createObjectNode();
-        responseJson.set("/TBL_response/topologyObjects", topologyObjectsNode);
-
-        String responseString = responseJson.toString();
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-
-        List<String> result = invokeGetTopologyTraversalObjectsList(responseString, alarmTagValueMap);
-
-        assertEquals(Collections.singletonList("entity1"), result);
-    }
-
-    @Test
-    public void testGetTopologyTraversalObjectsList_EntitiesWithSpaces() throws Exception {
-        // Create mock response string with a topologyObject having entities with additional spaces
-        ArrayNode topologyObjectsNode = objectMapper.createArrayNode();
-        ObjectNode topologyObject = objectMapper.createObjectNode();
-        topologyObject.put("topoEntityList", " entity1 , entity2 , entity3 ");
-        topologyObjectsNode.add(topologyObject);
-        ObjectNode responseJson = objectMapper.createObjectNode();
-        responseJson.set("/TBL_response/topologyObjects", topologyObjectsNode);
-
-        String responseString = responseJson.toString();
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-
-        List<String> result = invokeGetTopologyTraversalObjectsList(responseString, alarmTagValueMap);
-
-        assertEquals(Arrays.asList("entity1", "entity2", "entity3"), result);
+        assertThrows(Exception.class, () -> {
+            invokeGetTopologyTraversalObjectsList(invalidJsonResponse, alarmTagValueMap);
+        });
     }
 }
 ```
 
-These additional tests cover:
+This test suite covers all branches of the `getTopologyTraversalObjectsList` method, including the missing branches for the `topoEntityList` checks. It uses reflection to access the private method and mock objects to simulate dependencies.
 
-1. **Entities with leading/trailing brackets and additional spaces.**
-2. **Multiple entities without brackets.**
-3. **Single entity without brackets.**
-4. **Entities with additional spaces around them.**
-
-These tests ensure that all the branches of the block within the `getTopologyTraversalObjectsList` method are covered for 100% code coverage.
+The key tests include:
+- Valid JSON with multiple entities.
+- Empty entity list.
+- Null entity list.
+- Invalid eligibility check.
+- Empty response.
+- Invalid JSON response.

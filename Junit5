@@ -1,93 +1,225 @@
-Certainly! To achieve 100% code coverage for the `fetchTopologyTraversalDetails` method in the `AlarmOperationsAPI` class, we need to cover all branches. Below are some additional JUnit5 test cases to cover different scenarios:
+Certainly! Here are the JUnit 5 test cases covering all the branches of the `fetchTopologyTraversalDetails` method in the `AlarmOperationsAPI` class. Note that this code assumes that you have necessary dependencies for JUnit 5, Mockito, and Spring Boot Test in your project.
 
 ```java
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+import java.lang.reflect.Field;
 import java.util.HashMap;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class AlarmOperationsAPITest {
-
-    @InjectMocks
-    private AlarmOperationsAPI alarmOperationsAPI;
+public class AlarmOperationsAPITest {
 
     @Mock
     private RestTemplate restTemplate;
 
-    @Test
-    void testFetchTopologyTraversalDetails() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        // Mocking the dependencies
-        ResponseEntity<String> responseEntityOK = mock(ResponseEntity.class);
-        when(responseEntityOK.getStatusCode()).thenReturn(HttpStatus.OK);
-        when(restTemplate.exchange(any(String.class), any(HttpMethod.class), any(HttpEntity.class), any(Class.class))
-                .thenReturn(responseEntityOK);
+    @Mock
+    private Environment env;
 
-        ResponseEntity<String> responseEntityNotFound = mock(ResponseEntity.class);
-        when(responseEntityNotFound.getStatusCode()).thenReturn(HttpStatus.NOT_FOUND);
-        when(restTemplate.exchange(any(String.class), any(HttpMethod.class), any(HttpEntity.class), any(Class.class))
-                .thenReturn(responseEntityNotFound);
+    @Mock
+    private CustomHealthChecker healthChecker;
 
-        // Create input parameters
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "123456");
-        String componentIdReq = "COMPONENT_ID";
-        String tbl = "OSSNAME";
-        String tag = null;
-        String limit = "100";
+    @InjectMocks
+    private AlarmOperationsAPI alarmOperationsAPI;
 
-        // Using reflection to access the private method fetchTopologyTraversalDetails
-        Method method = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails", HashMap.class, String.class, String.class, String.class, String.class);
-        method.setAccessible(true);
+    @Value("${topologytraversal.url}")
+    private String TOPOLOGYTRAVERSAL_URL;
 
-        // Test when response status is OK
-        ResponseEntity<String> resultOK = (ResponseEntity<String>) method.invoke(alarmOperationsAPI, alarmTagValueMap, componentIdReq, tbl, tag, limit);
-        assertEquals(HttpStatus.OK, resultOK.getStatusCode());
+    @BeforeEach
+    public void setUp() throws Exception {
+        // Reflection to set private fields
+        Field urlField = alarmOperationsAPI.getClass().getDeclaredField("TOPOLOGYTRAVERSAL_URL");
+        urlField.setAccessible(true);
+        urlField.set(alarmOperationsAPI, "http://mockurl.com");
 
-        // Test when response status is NOT_FOUND
-        ResponseEntity<String> resultNotFound = (ResponseEntity<String>) method.invoke(alarmOperationsAPI, alarmTagValueMap, componentIdReq, tbl, tag, limit);
-        assertEquals(HttpStatus.NOT_FOUND, resultNotFound.getStatusCode());
-
-        // Test exception thrown by RestTemplate
-        when(restTemplate.exchange(any(String.class), any(HttpMethod.class), any(HttpEntity.class), any(Class.class))
-              .thenThrow(new HttpClientErrorException(HttpStatus.GATEWAY_TIMEOUT));
-        assertThrows(HttpClientErrorException.class, () -> method.invoke(alarmOperationsAPI, alarmTagValueMap, componentIdReq, tbl, tag, limit));
+        when(env.getProperty("AUTH_APOLLO_KEY")).thenReturn("mockAuthKey");
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"OSSNAME", "NETWORK"})
-    void testFetchTopologyTraversalDetailsWithTag(String tbl) throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+    @Test
+    public void fetchTopologyTraversalDetails_success() {
+        // Arrange
         HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "123456");
-        String componentIdReq = "COMPONENT_ID";
-        String tag = "SOME_TAG";
-        String limit = "100";
+        alarmTagValueMap.put("alarmIdentity", "testAlarmIdentity");
 
-        Method method = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails", HashMap.class, String.class, String.class, String.class, String.class);
-        method.setAccessible(true);
+        TopologyTraversalRequest request = new TopologyTraversalRequest("componentId", "tbl", "tag", "limit");
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "mockAuthKey");
+        HttpEntity<Object> entity = new HttpEntity<>(request, headers);
+        ResponseEntity<String> mockResponse = ResponseEntity.ok("response");
 
-        // Call the method with different tbl values to cover the branch when tag is not null
-        ResponseEntity<String> result = (ResponseEntity<String>) method.invoke(alarmOperationsAPI, alarmTagValueMap, componentIdReq, tbl, tag, limit);
-        assertEquals(HttpStatus.OK, result.getStatusCode());
+        when(restTemplate.exchange(
+                eq("http://mockurl.com"),
+                eq(HttpMethod.POST),
+                eq(entity),
+                eq(String.class)
+        )).thenReturn(mockResponse);
+
+        // Act
+        ResponseEntity<String> response = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, "componentId", "tbl", "tag", "limit");
+
+        // Assert
+        assertNotNull(response);
+        assertEquals("response", response.getBody());
+    }
+
+    @Test
+    public void fetchTopologyTraversalDetails_noDataFound() {
+        // Arrange
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "testAlarmIdentity");
+
+        TopologyTraversalRequest request = new TopologyTraversalRequest("componentId", "tbl", "tag", "limit");
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "mockAuthKey");
+        HttpEntity<Object> entity = new HttpEntity<>(request, headers);
+
+        HttpClientErrorException exception = mock(HttpClientErrorException.class);
+        when(exception.getMessage()).thenReturn("404 No data found for the requested ComponentId and TBL");
+
+        when(restTemplate.exchange(
+                eq("http://mockurl.com"),
+                eq(HttpMethod.POST),
+                eq(entity),
+                eq(String.class)
+        )).thenThrow(exception);
+
+        // Act
+        ResponseEntity<String> response = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, "componentId", "tbl", "tag", "limit");
+
+        // Assert
+        assertNotNull(response);
+        assertEquals(404, response.getStatusCodeValue());
+    }
+
+    @Test
+    public void fetchTopologyTraversalDetails_httpServerError() {
+        // Arrange
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "testAlarmIdentity");
+
+        TopologyTraversalRequest request = new TopologyTraversalRequest("componentId", "tbl", "tag", "limit");
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "mockAuthKey");
+        HttpEntity<Object> entity = new HttpEntity<>(request, headers);
+
+        HttpServerErrorException exception = mock(HttpServerErrorException.class);
+
+        when(restTemplate.exchange(
+                eq("http://mockurl.com"),
+                eq(HttpMethod.POST),
+                eq(entity),
+                eq(String.class)
+        )).thenThrow(exception);
+
+        // Act
+        ResponseEntity<String> response = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, "componentId", "tbl", "tag", "limit");
+
+        // Assert
+        verify(healthChecker, times(1)).health();
+        assertNull(response);
+    }
+
+    @Test
+    public void fetchTopologyTraversalDetails_resourceAccessException() {
+        // Arrange
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "testAlarmIdentity");
+
+        TopologyTraversalRequest request = new TopologyTraversalRequest("componentId", "tbl", "tag", "limit");
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "mockAuthKey");
+        HttpEntity<Object> entity = new HttpEntity<>(request, headers);
+
+        ResourceAccessException exception = mock(ResourceAccessException.class);
+
+        when(restTemplate.exchange(
+                eq("http://mockurl.com"),
+                eq(HttpMethod.POST),
+                eq(entity),
+                eq(String.class)
+        )).thenThrow(exception);
+
+        // Act
+        ResponseEntity<String> response = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, "componentId", "tbl", "tag", "limit");
+
+        // Assert
+        verify(healthChecker, times(1)).health();
+        assertNull(response);
+    }
+
+    @Test
+    public void fetchTopologyTraversalDetails_otherExceptions() {
+        // Arrange
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "testAlarmIdentity");
+
+        TopologyTraversalRequest request = new TopologyTraversalRequest("componentId", "tbl", "tag", "limit");
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "mockAuthKey");
+        HttpEntity<Object> entity = new HttpEntity<>(request, headers);
+
+        RuntimeException exception = new RuntimeException("Unexpected error");
+
+        when(restTemplate.exchange(
+                eq("http://mockurl.com"),
+                eq(HttpMethod.POST),
+                eq(entity),
+                eq(String.class)
+        )).thenThrow(exception);
+
+        // Act
+        ResponseEntity<String> response = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, "componentId", "tbl", "tag", "limit");
+
+        // Assert
+        assertNull(response);
+    }
+
+    @Test
+    public void fetchTopologyTraversalDetails_defaultTag() {
+        // Arrange
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "testAlarmIdentity");
+
+        TopologyTraversalRequest request = new TopologyTraversalRequest("componentId", "tbl", "OSSNAME", "limit");
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "mockAuthKey");
+        HttpEntity<Object> entity = new HttpEntity<>(request, headers);
+        ResponseEntity<String> mockResponse = ResponseEntity.ok("response");
+
+        when(restTemplate.exchange(
+                eq("http://mockurl.com"),
+                eq(HttpMethod.POST),
+                eq(entity),
+                eq(String.class)
+        )).thenReturn(mockResponse);
+
+        // Act
+        ResponseEntity<String> response = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, "componentId", "tbl", "", "limit");
+
+        // Assert
+        assertNotNull(response);
+        assertEquals("response", response.getBody());
     }
 }
 ```
 
-These additional test cases cover different branches and scenarios of the `fetchTopologyTraversalDetails` method, ensuring thorough testing and achieving 100% code coverage.
+This code uses the Mockito framework to mock dependencies and verify interactions. The tests cover various scenarios including successful response, 404 no data found, HTTP server error, resource access exception, other exceptions, and the default tag scenario. The `@BeforeEach` setup method uses reflection to set the private fields in the `AlarmOperationsAPI` class.

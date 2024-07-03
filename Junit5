@@ -1,72 +1,131 @@
-Here is the additional Junit5 testcases code covering the missing 3 branches of the specified block:
+Sure, here's the complete JUnit5 test cases covering all the branches of the `getTopologyTraversalObjectsList(String responseString, HashMap<String, Object> alarmTagValueMap)` method in the `AlarmOperationsAPI` class:
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.HashMap;
 import java.util.List;
 
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
 @ExtendWith(MockitoExtension.class)
 class AlarmOperationsAPITest {
 
-    @Mock
+    @InjectMocks
     private AlarmOperationsAPI alarmOperationsAPI;
 
-    @Test
-    void testGetTopologyTraversalObjectsList_WithValidTopoEntityList() {
-        String responseString = "{ \"TBL_response\": { \"topologyObjects\": [\"entity1\", \"entity2\", \"entity3\"] } }";
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+    @Mock
+    private AlarmRelationUtils utils;
 
-        List<String> result = invokePrivateMethod(alarmOperationsAPI, "getTopologyTraversalObjectsList", responseString, alarmTagValueMap);
+    @Mock
+    private Logger logger;
 
-        assertEquals(3, result.size());
-        assertTrue(result.contains("entity1"));
-        assertTrue(result.contains("entity2"));
-        assertTrue(result.contains("entity3"));
+    private static final String TRAVERSAL_TOPOLOGYOBJECTS_PATH = "/TBL_response/topologyObjects";
+
+    @BeforeEach
+    void setUp() {
+        ReflectionTestUtils.setField(alarmOperationsAPI, "TRAVERSAL_TOPOLOGYOBJECTS_PATH", TRAVERSAL_TOPOLOGYOBJECTS_PATH);
+        ReflectionTestUtils.setField(alarmOperationsAPI, "logger", logger);
     }
 
     @Test
-    void testGetTopologyTraversalObjectsList_WithEmptyTopoEntityList() {
-        String responseString = "{ \"TBL_response\": { \"topologyObjects\": [] } }";
+    void testGetTopologyTraversalObjectsList_WithNullResponseString() {
         HashMap<String, Object> alarmTagValueMap = new HashMap<>();
 
-        List<String> result = invokePrivateMethod(alarmOperationsAPI, "getTopologyTraversalObjectsList", responseString, alarmTagValueMap);
+        List<String> result = alarmOperationsAPI.getTopologyTraversalObjectsList(null, alarmTagValueMap);
 
-        assertTrue(result.isEmpty());
+        Assertions.assertTrue(result.isEmpty());
     }
 
     @Test
-    void testGetTopologyTraversalObjectsList_WithNullTopoEntityList() {
-        String responseString = "{ \"TBL_response\": {} }";
+    void testGetTopologyTraversalObjectsList_WithMissingTopologyObjectsNode() throws Exception {
+        String responseString = "{\"someOtherNode\": \"value\"}";
         HashMap<String, Object> alarmTagValueMap = new HashMap<>();
 
-        List<String> result = invokePrivateMethod(alarmOperationsAPI, "getTopologyTraversalObjectsList", responseString, alarmTagValueMap);
+        List<String> result = alarmOperationsAPI.getTopologyTraversalObjectsList(responseString, alarmTagValueMap);
 
-        assertTrue(result.isEmpty());
+        Assertions.assertTrue(result.isEmpty());
     }
 
-    // Helper method to invoke private methods using reflection
-    private <T> T invokePrivateMethod(Object obj, String methodName, Object... args) {
-        try {
-            Class<?>[] parameterTypes = new Class[args.length];
-            for (int i = 0; i < args.length; i++) {
-                parameterTypes[i] = args[i].getClass();
-            }
-            java.lang.reflect.Method method = obj.getClass().getDeclaredMethod(methodName, parameterTypes);
-            method.setAccessible(true);
-            return (T) method.invoke(obj, args);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
+    @Test
+    void testGetTopologyTraversalObjectsList_WithNonArrayTopologyObjectsNode() throws Exception {
+        String responseString = "{\"" + TRAVERSAL_TOPOLOGYOBJECTS_PATH + "\": {\"someField\": \"value\"}}";
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+
+        List<String> result = alarmOperationsAPI.getTopologyTraversalObjectsList(responseString, alarmTagValueMap);
+
+        Assertions.assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetTopologyTraversalObjectsList_WithEmptyTopoEntityList() throws Exception {
+        String responseString = "{\"" + TRAVERSAL_TOPOLOGYOBJECTS_PATH + "\" : [{\"topoObjectEligibilityValue\": \"valueDoesNotMatch\"}]}";
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+
+        List<String> result = alarmOperationsAPI.getTopologyTraversalObjectsList(responseString, alarmTagValueMap);
+
+        Assertions.assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void testGetTopologyTraversalObjectsList_WithValidTopoEntityList() throws Exception {
+        String responseString = "{\"" + TRAVERSAL_TOPOLOGYOBJECTS_PATH + "\" : [{\"topoObjectEligibilityValue\": \"valueMatches\", \"topoEntityList\": \"entity1, entity2\"}]}";
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+
+        Mockito.when(utils.evaluateExpression(Mockito.anyString(), Mockito.anyMap())).thenReturn("valueMatches");
+
+        List<String> result = alarmOperationsAPI.getTopologyTraversalObjectsList(responseString, alarmTagValueMap);
+
+        Assertions.assertEquals(2, result.size());
+        Assertions.assertTrue(result.contains("entity1"));
+        Assertions.assertTrue(result.contains("entity2"));
+    }
+
+    @Test
+    void testGetTopologyTraversalObjectsList_WithTopoEntityListInBrackets() throws Exception {
+        String responseString = "{\"" + TRAVERSAL_TOPOLOGYOBJECTS_PATH + "\" : [{\"topoObjectEligibilityValue\": \"valueMatches\", \"topoEntityList\": \"[entity1, entity2]\"}]}";
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+
+        Mockito.when(utils.evaluateExpression(Mockito.anyString(), Mockito.anyMap())).thenReturn("valueMatches");
+
+        List<String> result = alarmOperationsAPI.getTopologyTraversalObjectsList(responseString, alarmTagValueMap);
+
+        Assertions.assertEquals(2, result.size());
+        Assertions.assertTrue(result.contains("entity1"));
+        Assertions.assertTrue(result.contains("entity2"));
+    }
+
+    @Test
+    void testGetTopologyTraversalObjectsList_WithExceptionHandling() throws Exception {
+        String responseString = "{\"" + TRAVERSAL_TOPOLOGYOBJECTS_PATH + "\" : [{\"topoObjectEligibilityValue\": \"valueMatches\", \"topoEntityList\": \"[entity1, entity2]\"}]}";
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "123");
+
+        Mockito.when(utils.evaluateExpression(Mockito.anyString(), Mockito.anyMap())).thenThrow(new Exception("Exception occurred"));
+
+        List<String> result = alarmOperationsAPI.getTopologyTraversalObjectsList(responseString, alarmTagValueMap);
+
+        Assertions.assertTrue(result.isEmpty());
+        Mockito.verify(logger).error(Mockito.contains("Alarm Identity <123>"));
     }
 }
 ```
 
-By using the `invokePrivateMethod` helper method, you can check the coverage for the additional branches of the `getTopologyTraversalObjectsList` method in the `AlarmOperationsAPI` class.
+This test suite covers all the branches of the `getTopologyTraversalObjectsList(String responseString, HashMap<String, Object> alarmTagValueMap)` method, including:
+
+1. `if (topologyObjectsNode == null)` branch - tested in `testGetTopologyTraversalObjectsList_WithNullResponseString()`.
+2. `if (topologyObjectsNode.isMissingNode() || !(topologyObjectsNode.isArray()))` branch - tested in `testGetTopologyTraversalObjectsList_WithMissingTopologyObjectsNode()` and `testGetTopologyTraversalObjectsList_WithNonArrayTopologyObjectsNode()`.
+3. `if (topoEntityList != null && !(topoEntityList.trim().isEmpty()))` branch - tested in `testGetTopologyTraversalObjectsList_WithEmptyTopoEntityList()`, `testGetTopologyTraversalObjectsList_WithValidTopoEntityList()`, and `testGetTopologyTraversalObjectsList_WithTopoEntityListInBrackets()`.
+4. Exception handling - tested in `testGetTopologyTraversalObjectsList_WithExceptionHandling()`.
+
+The test cases use Mockito to mock the necessary dependencies and Reflection APIs to set the `TRAVERSAL_TOPOLOGYOBJECTS_PATH` and `logger` fields in the `AlarmOperationsAPI` class.

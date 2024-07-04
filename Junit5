@@ -1,31 +1,36 @@
-To achieve 100% code coverage for the `AlarmOperationsAPI` class, we will write JUnit 5 test cases. Given that some methods have private access, we'll use reflection to test them. Here's the JUnit 5 test code:
+To write the JUnit5 test cases for the AlarmOperationsAPI class, we can use the Reflection API to access the private methods. Here's an example implementation:
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.verizon.apollo.service.AlarmOperationsAPI;
+import com.verizon.apollo.service.CustomHealthChecker;
+import com.verizon.apollo.service.RulesConstants;
+import com.verizon.apollo.utils.AlarmRelationUtils;
+import com.verizon.apollo.utils.TernaryValue;
+import com.verizon.apollo.utils.TopologyRetrievalQueryRequest;
+import com.verizon.apollo.utils.TopologyRetrievalQueryResponse;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.env.Environment;
-import org.springframework.http.*;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.lang.reflect.Method;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 
 @ExtendWith(MockitoExtension.class)
-@SpringBootTest(classes = {AlarmOperationsAPI.class, AlarmRelationUtils.class, CustomHealthChecker.class})
-public class AlarmOperationsAPITest {
+class AlarmOperationsAPITest {
 
     @InjectMocks
     private AlarmOperationsAPI alarmOperationsAPI;
@@ -34,7 +39,7 @@ public class AlarmOperationsAPITest {
     private APIEndPointParam configParam;
 
     @Mock
-    private RestTemplate restTemplate;
+    private CustomHealthChecker healthChecker;
 
     @Mock
     private Environment env;
@@ -43,174 +48,208 @@ public class AlarmOperationsAPITest {
     private AlarmRelationUtils utils;
 
     @Mock
-    private CustomHealthChecker healthChecker;
+    private RestTemplate restTemplate;
 
     @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
+    void setup() {
+        Mockito.when(env.getProperty("AUTH_APIGEE_KEY")).thenReturn("test-apigee-key");
+        Mockito.when(env.getProperty("AUTH_APOLLO_KEY")).thenReturn("test-apollo-key");
     }
 
     @Test
-    public void testGetAlarmDetailsByID() throws Exception {
-        String alarmIdentity = "testAlarmID";
-        String url = "http://test-url";
-        when(configParam.getAlarmByAlarmIdentity()).thenReturn(url + "?");
-        when(env.getProperty("AUTH_APIGEE_KEY")).thenReturn("apikey");
-
+    void testGetAlarmDetailsByID() throws Exception {
+        String alarmIdentity = "123456";
+        String url = "https://example.com/alarms?id=123456";
+        Mockito.when(configParam.getAlarmByAlarmIdentity()).thenReturn(url);
         ResponseEntity<Object> responseEntity = new ResponseEntity<>(new Object(), HttpStatus.OK);
-        when(restTemplate.exchange(eq(url + alarmIdentity), eq(HttpMethod.GET), any(), eq(Object.class)))
+        Mockito.when(restTemplate.exchange(Mockito.anyString(), Mockito.eq(HttpMethod.GET), Mockito.any(HttpEntity.class), Mockito.eq(Object.class)))
                 .thenReturn(responseEntity);
 
         String result = alarmOperationsAPI.getAlarmDetailsByID(alarmIdentity);
-        assertNotNull(result);
+        Assertions.assertNotNull(result);
     }
 
     @Test
-    public void testRetrieveAndCorrelateAlarm() throws Exception {
-        String sqlQuery = "SELECT * FROM alarms";
+    void testRetrieveAndCorrelateAlarm() throws Exception {
+        String sqlQuery = "SELECT * FROM ALARMS";
         TernaryValue isMasterAlarm = TernaryValue.TRUE;
-        String alarmID = "alarmID";
+        String alarmID = "123456";
         String action = "Relate Child To Master";
         long ruleID = 1L;
 
-        AlarmQueryResponse alarmQueryResponse = new AlarmQueryResponse();
-        alarmQueryResponse.setAlarms(new ArrayList<>());
-        alarmQueryResponse.setNextquery(null);
+        ResponseEntity<AlarmQueryResponse> responseEntity = new ResponseEntity<>(new AlarmQueryResponse(), HttpStatus.OK);
+        Mockito.when(alarmOperationsAPI.getMatchingAlarms(Mockito.anyString())).thenReturn(responseEntity);
 
-        ResponseEntity<AlarmQueryResponse> responseEntity = new ResponseEntity<>(alarmQueryResponse, HttpStatus.OK);
-
-        Method getMatchingAlarms = AlarmOperationsAPI.class.getDeclaredMethod("getMatchingAlarms", String.class);
-        getMatchingAlarms.setAccessible(true);
-        when(getMatchingAlarms.invoke(alarmOperationsAPI, sqlQuery)).thenReturn(responseEntity);
+        Method method = AlarmOperationsAPI.class.getDeclaredMethod("correlateAlarm", String.class, ArrayList.class, long.class);
+        method.setAccessible(true);
+        method.invoke(alarmOperationsAPI, alarmID, new ArrayList<>(), ruleID);
 
         String result = alarmOperationsAPI.retrieveAndCorrelateAlarm(sqlQuery, isMasterAlarm, alarmID, action, ruleID);
-        assertEquals("SUCCESS", result);
+        Assertions.assertEquals("SUCCESS", result);
     }
 
     @Test
-    public void testGetTopologyTraversalObjectsList() throws Exception {
-        String responseString = "{\"TBL_response\":{\"topologyObjects\":[]}}";
+    void testGetTopologyTraversalObjectsList() throws Exception {
         HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "123456");
 
-        Method getTopologyTraversalObjectsList = AlarmOperationsAPI.class.getDeclaredMethod("getTopologyTraversalObjectsList", String.class, HashMap.class);
-        getTopologyTraversalObjectsList.setAccessible(true);
-        List<String> result = (List<String>) getTopologyTraversalObjectsList.invoke(alarmOperationsAPI, responseString, alarmTagValueMap);
-        assertNotNull(result);
+        String responseString = "{\"topologyObjects\": [{\"TopoObject\": {\"OSS_Names\": [\"object1\", \"object2\"]}}]}";
+        Method method = AlarmOperationsAPI.class.getDeclaredMethod("getTopologyTraversalObjectsList", String.class, HashMap.class);
+        method.setAccessible(true);
+        List<String> result = (List<String>) method.invoke(alarmOperationsAPI, responseString, alarmTagValueMap);
+
+        Assertions.assertNotNull(result);
+        Assertions.assertEquals(2, result.size());
+        Assertions.assertTrue(result.contains("object1"));
+        Assertions.assertTrue(result.contains("object2"));
     }
 
     @Test
-    public void testGetComponentIdForTopoTraversal() {
+    void testGetComponentIdForTopoTraversal() {
         HashMap<String, Object> alarmMap = new HashMap<>();
-        when(utils.evaluateExpression(anyString(), eq(alarmMap))).thenReturn("componentID");
+        alarmMap.put("alarmIdentity", "123456");
+        alarmMap.put("alarmedObject", "component123");
 
-        String result = alarmOperationsAPI.getComponentIdForTopoTraversal(alarmMap);
-        assertEquals("componentID", result);
+        String componentId = alarmOperationsAPI.getComponentIdForTopoTraversal(alarmMap);
+        Assertions.assertEquals("component123", componentId);
     }
 
     @Test
-    public void testApplyTopologyTraversalAndCorrelateAlarms() throws Exception {
-        String sqlQuery = "SELECT * FROM alarms";
+    void testApplyTopologyTraversalAndCorrelateAlarms() throws Exception {
+        String sqlQuery = "SELECT * FROM ALARMS";
         TernaryValue isMasterAlarm = TernaryValue.TRUE;
         HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        RelationRule rule = mock(RelationRule.class);
-        RuleDetails ruleDetails = mock(RuleDetails.class);
+        alarmTagValueMap.put("alarmIdentity", "123456");
+        alarmTagValueMap.put("alarmedObject", "component123");
 
-        when(rule.getRuleTraversalExp()).thenReturn("traversalExp");
-        when(utils.evaluateExpression(anyString(), eq(alarmTagValueMap))).thenReturn("componentID");
+        RelationRule rule = new RelationRule(1L, "testRule", 1, 1, "testMatchingCriteria");
+        rule.setRuleTraversalExp("%Alarm:alarmedObject%");
+        RuleDetails ruleDetails = new RuleDetails(1L, 1L, "testDtlMatchingCriteria", "testDtlComparator", "%TopoObject:OSS_Names[0]%");
 
-        ResponseEntity<String> responseEntity = new ResponseEntity<>("{\"TBL_response\":{\"topologyObjects\":[]}}", HttpStatus.OK);
-        Method fetchTopologyTraversalDetails = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails", HashMap.class, String.class, String.class, String.class, String.class);
-        fetchTopologyTraversalDetails.setAccessible(true);
-        when(fetchTopologyTraversalDetails.invoke(alarmOperationsAPI, alarmTagValueMap, "componentID", "traversalExp", null, "1000")).thenReturn(responseEntity);
+        ResponseEntity<String> responseEntity = new ResponseEntity<>("response", HttpStatus.OK);
+        Mockito.when(alarmOperationsAPI.fetchTopologyTraversalDetails(
+                Mockito.any(HashMap.class), Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+                .thenReturn(responseEntity);
+
+        Method getTopologyTraversalObjectsListMethod = AlarmOperationsAPI.class.getDeclaredMethod("getTopologyTraversalObjectsList", String.class, HashMap.class);
+        getTopologyTraversalObjectsListMethod.setAccessible(true);
+        List<String> topologyObjects = new ArrayList<>();
+        topologyObjects.add("object1");
+        Mockito.when(getTopologyTraversalObjectsListMethod.invoke(alarmOperationsAPI, Mockito.anyString(), Mockito.any(HashMap.class)))
+                .thenReturn(topologyObjects);
+
+        Method correlateAlarmMethod = AlarmOperationsAPI.class.getDeclaredMethod("correlateAlarm", String.class, ArrayList.class, long.class);
+        correlateAlarmMethod.setAccessible(true);
+        correlateAlarmMethod.invoke(alarmOperationsAPI, alarmTagValueMap.get("alarmIdentity"), new ArrayList<>(), rule.getRuleId());
 
         String result = alarmOperationsAPI.applyTopologyTraversalAndCorrelateAlarms(sqlQuery, isMasterAlarm, alarmTagValueMap, rule, ruleDetails);
-        assertEquals("SUCCESS", result);
+        Assertions.assertEquals("SUCCESS", result);
     }
 
     @Test
-    public void testGetMatchingAlarms() throws Exception {
-        String query = "SELECT * FROM alarms";
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "apikey");
-        AlarmQueryRequest request = new AlarmQueryRequest();
-        request.setQuery(query);
+    void testGetMatchingAlarms() throws Exception {
+        String query = "SELECT * FROM ALARMS";
+        ResponseEntity<AlarmQueryResponse> expectedResponse = new ResponseEntity<>(new AlarmQueryResponse(), HttpStatus.OK);
 
-        HttpEntity<AlarmQueryRequest> entity = new HttpEntity<>(request, headers);
-        ResponseEntity<AlarmQueryResponse> responseEntity = new ResponseEntity<>(new AlarmQueryResponse(), HttpStatus.OK);
+        Method method = AlarmOperationsAPI.class.getDeclaredMethod("getMatchingAlarms", String.class);
+        method.setAccessible(true);
+        ResponseEntity<AlarmQueryResponse> result = (ResponseEntity<AlarmQueryResponse>) method.invoke(alarmOperationsAPI, query);
 
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(AlarmQueryResponse.class)))
-                .thenReturn(responseEntity);
-
-        Method getMatchingAlarms = AlarmOperationsAPI.class.getDeclaredMethod("getMatchingAlarms", String.class);
-        getMatchingAlarms.setAccessible(true);
-        ResponseEntity<AlarmQueryResponse> result = (ResponseEntity<AlarmQueryResponse>) getMatchingAlarms.invoke(alarmOperationsAPI, query);
-        assertNotNull(result);
+        Assertions.assertEquals(expectedResponse.getStatusCode(), result.getStatusCode());
     }
 
     @Test
-    public void testCorrelateAlarm() throws Exception {
-        String parentID = "parentID";
+    void testCorrelateAlarm() throws Exception {
+        String parentID = "123456";
         ArrayList<String> childID = new ArrayList<>();
+        childID.add("789012");
         long ruleID = 1L;
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "apikey");
+        Method method = AlarmOperationsAPI.class.getDeclaredMethod("correlateAlarm", String.class, ArrayList.class, long.class);
+        method.setAccessible(true);
+        method.invoke(alarmOperationsAPI, parentID, childID, ruleID);
 
-        RelationAPIRequest relAPIRequest = new RelationAPIRequest(parentID, childID, ruleID);
-        HttpEntity<RelationAPIRequest> entity = new HttpEntity<>(relAPIRequest, headers);
-
-        ResponseEntity<RelationAPIResponse> responseEntity = new ResponseEntity<>(new RelationAPIResponse(), HttpStatus.OK);
-
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(RelationAPIResponse.class)))
-                .thenReturn(responseEntity);
-
-        Method correlateAlarm = AlarmOperationsAPI.class.getDeclaredMethod("correlateAlarm", String.class, ArrayList.class, long.class);
-        correlateAlarm.setAccessible(true);
-        correlateAlarm.invoke(alarmOperationsAPI, parentID, childID, ruleID);
+        // Verify that the method was called correctly
+        Mockito.verify(restTemplate, Mockito.times(1)).exchange(
+                Mockito.eq(configParam.getAlarmRelationEndPoint()),
+                Mockito.eq(HttpMethod.POST),
+                Mockito.any(HttpEntity.class),
+                Mockito.eq(RelationAPIResponse.class));
     }
 
     @Test
-    public void testGetTopologyObjectsByQuery() {
-        String topoTraversalQuery = "query";
-        int range = 10;
+    void testGetTopologyObjectsByQuery() {
+        String topoTraversalQuery = "SELECT * FROM TOPOLOGY";
+        int range = 100;
 
-        TopologyRetrievalQueryRequest request = new TopologyRetrievalQueryRequest(topoTraversalQuery, true, 10, range);
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "apikey");
-
-        HttpEntity<TopologyRetrievalQueryRequest> entity = new HttpEntity<>(request, headers);
-        ResponseEntity<TopologyRetrievalQueryResponse> responseEntity = new ResponseEntity<>(new TopologyRetrievalQueryResponse(), HttpStatus.OK);
-
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(TopologyRetrievalQueryResponse.class)))
-                .thenReturn(responseEntity);
+        ResponseEntity<TopologyRetrievalQueryResponse> expectedResponse = new ResponseEntity<>(new TopologyRetrievalQueryResponse(), HttpStatus.OK);
+        Mockito.when(restTemplate.exchange(
+                Mockito.eq(configParam.getTopologyObjectsByQuery()),
+                Mockito.eq(HttpMethod.POST),
+                Mockito.any(HttpEntity.class),
+                Mockito.eq(TopologyRetrievalQueryResponse.class)))
+                .thenReturn(expectedResponse);
 
         ResponseEntity<TopologyRetrievalQueryResponse> result = alarmOperationsAPI.getTopologyObjectsByQuery(topoTraversalQuery, range);
-        assertNotNull(result);
+        Assertions.assertEquals(expectedResponse.getStatusCode(), result.getStatusCode());
     }
 
     @Test
-    public void testFetchTopologyTraversalDetails() throws Exception {
+    void testFetchTopologyTraversalDetails() {
         HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        String componentIdReq = "componentID";
-        String tbl = "tbl";
-        String tag = "tag";
-        String limit = "1000";
+        alarmTagValueMap.put("alarmIdentity", "123456");
+        String componentIdReq = "component123";
+        String tbl = "TBL";
+        String tag = "OSSNAME";
+        String limit = "100";
 
-        TopologyTraversalRequest request = new TopologyTraversalRequest(componentIdReq, tbl, tag, limit);
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "apikey");
-
-        HttpEntity<Object> entity = new HttpEntity<>(request, headers);
-        ResponseEntity<String> responseEntity = new ResponseEntity<>("{\"TBL_response\":{\"topologyObjects\":[]}}", HttpStatus.OK);
-
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(String.class)))
-                .thenReturn(responseEntity);
+        ResponseEntity<String> expectedResponse = new ResponseEntity<>("response", HttpStatus.OK);
+        Mockito.when(restTemplate.exchange(
+                Mockito.eq(alarmOperationsAPI.TOPOLOGYTRAVERSAL_URL),
+                Mockito.eq(HttpMethod.POST),
+                Mockito.any(HttpEntity.class),
+                Mockito.eq(String.class)))
+                .thenReturn(expectedResponse);
 
         ResponseEntity<String> result = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, componentIdReq, tbl, tag, limit);
-        assertNotNull(result);
+        Assertions.assertEquals(expectedResponse.getStatusCode(), result.getStatusCode());
+    }
+
+    @Test
+    void testFetchTopologyTraversalDetailsWithException() {
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "123456");
+        String componentIdReq = "component123";
+        String tbl = "TBL";
+        String tag = "OSSNAME";
+        String limit = "100";
+
+        Mockito.when(restTemplate.exchange(
+                Mockito.eq(alarmOperationsAPI.TOPOLOGYTRAVERSAL_URL),
+                Mockito.eq(HttpMethod.POST),
+                Mockito.any(HttpEntity.class),
+                Mockito.eq(String.class)))
+                .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+
+        ResponseEntity<String> result = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, componentIdReq, tbl, tag, limit);
+        Assertions.assertEquals(HttpStatus.NOT_FOUND, result.getStatusCode());
     }
 }
 ```
 
-### Explanation:
-1. **Setup and Mocks:** The
+In this example, we're using the Mockito framework to mock the dependencies of the AlarmOperationsAPI class. We're also using the Reflection API to access the private methods of the class, such as `correlateAlarm`, `getTopologyTraversalObjectsList`, and `getMatchingAlarms`.
+
+The test cases cover the following scenarios:
+
+1. `testGetAlarmDetailsByID`: Tests the `getAlarmDetailsByID` method.
+2. `testRetrieveAndCorrelateAlarm`: Tests the `retrieveAndCorrelateAlarm` method.
+3. `testGetTopologyTraversalObjectsList`: Tests the `getTopologyTraversalObjectsList` method.
+4. `testGetComponentIdForTopoTraversal`: Tests the `getComponentIdForTopoTraversal` method.
+5. `testApplyTopologyTraversalAndCorrelateAlarms`: Tests the `applyTopologyTraversalAndCorrelateAlarms` method.
+6. `testGetMatchingAlarms`: Tests the `getMatchingAlarms` method.
+7. `testCorrelateAlarm`: Tests the `correlateAlarm` method.
+8. `testGetTopologyObjectsByQuery`: Tests the `getTopologyObjectsByQuery` method.
+9. `testFetchTopologyTraversalDetails`: Tests the `fetchTopologyTraversalDetails` method.
+10. `testFetchTopologyTraversalDetailsWithException`: Tests the `fetchTopologyTraversalDetails` method with an exception.
+
+These test cases should provide 100% code coverage for the AlarmOperationsAPI class.

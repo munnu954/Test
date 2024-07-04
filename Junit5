@@ -1,33 +1,129 @@
-Here is an example of JUnit5 test case code using reflection to cover the mentioned if block in the `retrieveAndCorrelateAlarm` method of the `AlarmOperationsAPI` class:
+To write JUnit 5 test cases that cover the specified `if` block in the `retrieveAndCorrelateAlarm` method of the `AlarmOperationsAPI` class, we can use reflection to access the private fields and methods. Below is a possible implementation of such test cases:
 
 ```java
-import org.junit.jupiter.api.Test;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-public class AlarmOperationsAPITest {
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.env.Environment;
+import org.springframework.http.*;
+import org.springframework.web.client.RestTemplate;
+
+import java.lang.reflect.Field;
+import java.util.*;
+
+@ExtendWith(MockitoExtension.class)
+class AlarmOperationsAPITest {
+
+    @InjectMocks
+    private AlarmOperationsAPI alarmOperationsAPI;
+
+    @Mock
+    private APIEndPointParam configParam;
+
+    @Mock
+    private CustomHealthChecker healthChecker;
+
+    @Mock
+    private RestTemplate restTemplate;
+
+    @Mock
+    private Environment env;
+
+    @Mock
+    private AlarmRelationUtils utils;
+
+    private String alarmIdentity = "test-alarm-identity";
+    private String topologyTraversalOppositeLevel = "test-topology-traversal";
+    private String componentId = "test-component-id";
+    private String alarmedObjectIncomingAlarm = "test-alarmed-object";
+
+    @BeforeEach
+    void setUp() throws Exception {
+        // Set the private fields using reflection
+        Field objectMapperField = RulesConstants.class.getDeclaredField("mapper");
+        objectMapperField.setAccessible(true);
+        objectMapperField.set(null, new ObjectMapper());
+
+        Field TOPOLOGYTRAVERSAL_URL = AlarmOperationsAPI.class.getDeclaredField("TOPOLOGYTRAVERSAL_URL");
+        TOPOLOGYTRAVERSAL_URL.setAccessible(true);
+        TOPOLOGYTRAVERSAL_URL.set(alarmOperationsAPI, "http://test-url");
+
+        Field TRAVERSAL_TOPOLOGYOBJECTS_PATH = AlarmOperationsAPI.class.getDeclaredField("TRAVERSAL_TOPOLOGYOBJECTS_PATH");
+        TRAVERSAL_TOPOLOGYOBJECTS_PATH.setAccessible(true);
+        TRAVERSAL_TOPOLOGYOBJECTS_PATH.set(alarmOperationsAPI, "/TBL_response/topologyObjects");
+
+        Field topologyApiReqLimit = AlarmOperationsAPI.class.getDeclaredField("topologyApiReqLimit");
+        topologyApiReqLimit.setAccessible(true);
+        topologyApiReqLimit.set(alarmOperationsAPI, "1000");
+
+        Field topoEntityListExpression = AlarmOperationsAPI.class.getDeclaredField("topoEntityListExpression");
+        topoEntityListExpression.setAccessible(true);
+        topoEntityListExpression.set(alarmOperationsAPI, "%TopoObject: OSS_Names%");
+
+        Field topologyObjectEligibilityCheckValue = AlarmOperationsAPI.class.getDeclaredField("topologyObjectEligibilityCheckValue");
+        topologyObjectEligibilityCheckValue.setAccessible(true);
+        topologyObjectEligibilityCheckValue.set(alarmOperationsAPI, "%TopoObject:OSS_Names[0]%");
+
+        Field topologyObjectEligibilityCheckExpression = AlarmOperationsAPI.class.getDeclaredField("topologyObjectEligibilityCheckExpression");
+        topologyObjectEligibilityCheckExpression.setAccessible(true);
+        topologyObjectEligibilityCheckExpression.set(alarmOperationsAPI, "^(?!\\s*$).+");
+
+        Field componentIDAttributePattern = AlarmOperationsAPI.class.getDeclaredField("componentIDAttributePattern");
+        componentIDAttributePattern.setAccessible(true);
+        componentIDAttributePattern.set(alarmOperationsAPI, "%Alarm:alarmedObject%");
+    }
 
     @Test
-    public void testRetrieveAndCorrelateAlarmIfBlockCoverage() {
-        AlarmOperationsAPI alarmOperationsAPI = new AlarmOperationsAPI();
-        try {
-            Field topologyTraversalOppositeLevelField = AlarmOperationsAPI.class.getDeclaredField("topologyTraversalOppositeLevel");
-            topologyTraversalOppositeLevelField.setAccessible(true);
-            topologyTraversalOppositeLevelField.set(alarmOperationsAPI, "test_value");
+    void testRetrieveAndCorrelateAlarm_TopologyTraversalNotEmpty() throws Exception {
+        // Prepare test data
+        String sqlQuery = "SELECT * FROM alarms";
+        TernaryValue isMasterAlarm = TernaryValue.FALSE;
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", alarmIdentity);
+        alarmTagValueMap.put("alarmedObject", alarmedObjectIncomingAlarm);
 
-            Method retrieveAndCorrelateAlarmMethod = AlarmOperationsAPI.class.getDeclaredMethod("retrieveAndCorrelateAlarm",
-                    String.class, TernaryValue.class, HashMap.class, String.class, long.class, RelationRule.class, RuleDetails.class, Long.class, List.class);
-            retrieveAndCorrelateAlarmMethod.setAccessible(true);
+        long ruleID = 1L;
+        RelationRule rule = mock(RelationRule.class);
+        when(rule.getRuleTraversalExp()).thenReturn(topologyTraversalOppositeLevel);
+        when(rule.getActionToBePerformed()).thenReturn("Relate Child To Master");
+        when(rule.getRuleId()).thenReturn(ruleID);
 
-            assertDoesNotThrow(() -> retrieveAndCorrelateAlarmMethod.invoke(alarmOperationsAPI, "sqlQuery", TernaryValue.TRUE,
-                    new HashMap<>(), "action", 123L, new RelationRule(), new RuleDetails(), 456L, new ArrayList<RelationAPIRequest>()));
+        RuleDetails ruleDetails = mock(RuleDetails.class);
+        when(ruleDetails.getRuleDtlTraversalExpression()).thenReturn(topologyTraversalOppositeLevel);
 
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        Long ruleDetailsId = 1L;
+        List<RelationAPIRequest> relationAPIRequestRecords = new ArrayList<>();
+
+        AlarmQueryResponse alarmQueryResponse = mock(AlarmQueryResponse.class);
+        AlarmDetail alarmDetail = mock(AlarmDetail.class);
+        List<AlarmDetail> alarmDetails = Collections.singletonList(alarmDetail);
+        when(alarmQueryResponse.getAlarmDetails()).thenReturn(alarmDetails);
+        when(alarmQueryResponse.getNextquery()).thenReturn(null);
+
+        ResponseEntity<AlarmQueryResponse> responseEntity = new ResponseEntity<>(alarmQueryResponse, HttpStatus.OK);
+        doReturn(responseEntity).when(alarmOperationsAPI).getMatchingAlarms(anyString());
+
+        when(utils.evaluateExpression(anyString(), anyMap())).thenReturn(componentId);
+
+        // Mock fetchTopologyTraversalDetails to return a valid response
+        ResponseEntity<String> topologyResponseEntity = new ResponseEntity<>("{\"TBL_response\": {\"topologyObjects\": []}}", HttpStatus.OK);
+        doReturn(topologyResponseEntity).when(alarmOperationsAPI).fetchTopologyTraversalDetails(anyMap(), eq(componentId), anyString(), anyString(), anyString());
+
+        // Call the method under test
+        String status = alarmOperationsAPI.retrieveAndCorrelateAlarm(sqlQuery, isMasterAlarm, alarmTagValueMap, "Relate Child To Master", ruleID, rule, ruleDetails, ruleDetailsId, relationAPIRequestRecords);
+
+        // Verify the results
+        assertEquals("SUCCESS", status);
+        verify(alarmOperationsAPI, times(1)).getMatchingAlarms(anyString());
+        verify(alarmOperationsAPI, times(1)).fetchTopologyTraversalDetails(anyMap(), eq(componentId), anyString(), anyString(), anyString());
     }
 }
 ```
 
-In this test case example, we are using reflection to access and set the private field `topologyTraversalOppositeLevel` with a test value and to invoke the private method `retrieveAndCorrelateAlarm` with the necessary parameters. This approach allows us to test the private method and cover the specified if block without modifying the access modifiers of the fields or methods.
+This test case uses `Mockito` to mock dependencies and uses reflection to set private fields. The test ensures that the `retrieveAndCorrelateAlarm` method covers the specified `if` block. The mock setup ensures that the method behaves as expected when `topologyTraversalOppositeLevel` is not null and not empty.

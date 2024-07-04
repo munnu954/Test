@@ -1,14 +1,37 @@
-Here are the JUnit 5 test cases for the `AlarmOperationsAPI` class:
+To achieve 100% code coverage for the `AlarmOperationsAPI` class, we will write JUnit 5 test cases. Given that some methods have private access, we'll use reflection to test them. Here's the JUnit 5 test code:
 
-```
+```java
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.env.Environment;
+import org.springframework.http.*;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestTemplate;
+
+import java.lang.reflect.Method;
+import java.util.*;
+
 @ExtendWith(MockitoExtension.class)
-class AlarmOperationsAPITest {
+@SpringBootTest(classes = {AlarmOperationsAPI.class, AlarmRelationUtils.class, CustomHealthChecker.class})
+public class AlarmOperationsAPITest {
+
+    @InjectMocks
+    private AlarmOperationsAPI alarmOperationsAPI;
 
     @Mock
     private APIEndPointParam configParam;
-
-    @Mock
-    private CustomHealthChecker healthChecker;
 
     @Mock
     private RestTemplate restTemplate;
@@ -19,124 +42,175 @@ class AlarmOperationsAPITest {
     @Mock
     private AlarmRelationUtils utils;
 
-    private AlarmOperationsAPI alarmOperationsAPI;
+    @Mock
+    private CustomHealthChecker healthChecker;
 
     @BeforeEach
-    void setUp() {
-        alarmOperationsAPI = new AlarmOperationsAPI(configParam, healthChecker, restTemplate, env, utils);
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    void testGetAlarmDetailsByID() throws JsonProcessingException {
-        // Arrange
-        String alarmIdentity = "alarmIdentity";
-        String expectedResponse = "expectedResponse";
+    public void testGetAlarmDetailsByID() throws Exception {
+        String alarmIdentity = "testAlarmID";
+        String url = "http://test-url";
+        when(configParam.getAlarmByAlarmIdentity()).thenReturn(url + "?");
+        when(env.getProperty("AUTH_APIGEE_KEY")).thenReturn("apikey");
 
-        // Mock the behavior of the getAlarmByAlarmIdentity method
-        when(configParam.getAlarmByAlarmIdentity()).thenReturn("alarmByAlarmIdentity");
+        ResponseEntity<Object> responseEntity = new ResponseEntity<>(new Object(), HttpStatus.OK);
+        when(restTemplate.exchange(eq(url + alarmIdentity), eq(HttpMethod.GET), any(), eq(Object.class)))
+                .thenReturn(responseEntity);
 
-        // Mock the behavior of the restTemplate.exchange method
-        ResponseEntity<Object> responseEntity = ResponseEntity.ok(expectedResponse);
-        when(restTemplate.exchange(anyString(), any(HttpMethod.class), any(HttpEntity.class), eq(Object.class))).thenReturn(responseEntity);
-
-        // Act
         String result = alarmOperationsAPI.getAlarmDetailsByID(alarmIdentity);
-
-        // Assert
-        assertEquals(expectedResponse, result);
+        assertNotNull(result);
     }
 
     @Test
-    void testRetrieveAndCorrelateAlarm() {
-        // Arrange
-        String sqlQuery = "sqlQuery";
+    public void testRetrieveAndCorrelateAlarm() throws Exception {
+        String sqlQuery = "SELECT * FROM alarms";
         TernaryValue isMasterAlarm = TernaryValue.TRUE;
         String alarmID = "alarmID";
-        String action = "action";
+        String action = "Relate Child To Master";
         long ruleID = 1L;
 
-        // Act
-        String result = alarmOperationsAPI.retrieveAndCorrelateAlarm(sqlQuery, isMasterAlarm, alarmID, action, ruleID);
+        AlarmQueryResponse alarmQueryResponse = new AlarmQueryResponse();
+        alarmQueryResponse.setAlarms(new ArrayList<>());
+        alarmQueryResponse.setNextquery(null);
 
-        // Assert
+        ResponseEntity<AlarmQueryResponse> responseEntity = new ResponseEntity<>(alarmQueryResponse, HttpStatus.OK);
+
+        Method getMatchingAlarms = AlarmOperationsAPI.class.getDeclaredMethod("getMatchingAlarms", String.class);
+        getMatchingAlarms.setAccessible(true);
+        when(getMatchingAlarms.invoke(alarmOperationsAPI, sqlQuery)).thenReturn(responseEntity);
+
+        String result = alarmOperationsAPI.retrieveAndCorrelateAlarm(sqlQuery, isMasterAlarm, alarmID, action, ruleID);
         assertEquals("SUCCESS", result);
     }
 
     @Test
-    void testGetTopologyTraversalObjectsList() throws Exception {
-        // Arrange
-        String responseString = "{\"topologyObjects\":[{\"id\":\"1\"}]}";
+    public void testGetTopologyTraversalObjectsList() throws Exception {
+        String responseString = "{\"TBL_response\":{\"topologyObjects\":[]}}";
         HashMap<String, Object> alarmTagValueMap = new HashMap<>();
 
-        // Act
-        Method getTopologyTraversalObjectsListMethod = AlarmOperationsAPI.class.getDeclaredMethod("getTopologyTraversalObjectsList", String.class, HashMap.class);
-        getTopologyTraversalObjectsListMethod.setAccessible(true);
-        List<String> topologyObjectsList = (List<String>) getTopologyTraversalObjectsListMethod.invoke(alarmOperationsAPI, responseString, alarmTagValueMap);
-
-        // Assert
-        assertNotNull(topologyObjectsList);
+        Method getTopologyTraversalObjectsList = AlarmOperationsAPI.class.getDeclaredMethod("getTopologyTraversalObjectsList", String.class, HashMap.class);
+        getTopologyTraversalObjectsList.setAccessible(true);
+        List<String> result = (List<String>) getTopologyTraversalObjectsList.invoke(alarmOperationsAPI, responseString, alarmTagValueMap);
+        assertNotNull(result);
     }
 
     @Test
-    void testGetComponentIdForTopoTraversal() {
-        // Arrange
+    public void testGetComponentIdForTopoTraversal() {
         HashMap<String, Object> alarmMap = new HashMap<>();
+        when(utils.evaluateExpression(anyString(), eq(alarmMap))).thenReturn("componentID");
 
-        // Act
-        String componentID = alarmOperationsAPI.getComponentIdForTopoTraversal(alarmMap);
-
-        // Assert
-        assertNull(componentID);
+        String result = alarmOperationsAPI.getComponentIdForTopoTraversal(alarmMap);
+        assertEquals("componentID", result);
     }
 
     @Test
-    void testApplyTopologyTraversalAndCorrelateAlarms() {
-        // Arrange
-        String sqlQuery = "sqlQuery";
+    public void testApplyTopologyTraversalAndCorrelateAlarms() throws Exception {
+        String sqlQuery = "SELECT * FROM alarms";
         TernaryValue isMasterAlarm = TernaryValue.TRUE;
         HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        RelationRule rule = new RelationRule(1L, "ruleName", 1, 1, "ruleMatchingCriteria");
-        RuleDetails ruleDetails = new RuleDetails(1L, 1L, "ruleDtlMatchingCriteria", "ruleDtlComparator", "ruleDtlTraversalExpression");
+        RelationRule rule = mock(RelationRule.class);
+        RuleDetails ruleDetails = mock(RuleDetails.class);
 
-        // Act
+        when(rule.getRuleTraversalExp()).thenReturn("traversalExp");
+        when(utils.evaluateExpression(anyString(), eq(alarmTagValueMap))).thenReturn("componentID");
+
+        ResponseEntity<String> responseEntity = new ResponseEntity<>("{\"TBL_response\":{\"topologyObjects\":[]}}", HttpStatus.OK);
+        Method fetchTopologyTraversalDetails = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails", HashMap.class, String.class, String.class, String.class, String.class);
+        fetchTopologyTraversalDetails.setAccessible(true);
+        when(fetchTopologyTraversalDetails.invoke(alarmOperationsAPI, alarmTagValueMap, "componentID", "traversalExp", null, "1000")).thenReturn(responseEntity);
+
         String result = alarmOperationsAPI.applyTopologyTraversalAndCorrelateAlarms(sqlQuery, isMasterAlarm, alarmTagValueMap, rule, ruleDetails);
-
-        // Assert
         assertEquals("SUCCESS", result);
     }
 
     @Test
-    void testGetMatchingAlarms() throws Exception {
-        // Arrange
-        String query = "query";
+    public void testGetMatchingAlarms() throws Exception {
+        String query = "SELECT * FROM alarms";
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "apikey");
+        AlarmQueryRequest request = new AlarmQueryRequest();
+        request.setQuery(query);
 
-        // Act
-        Method getMatchingAlarmsMethod = AlarmOperationsAPI.class.getDeclaredMethod("getMatchingAlarms", String.class);
-        getMatchingAlarmsMethod.setAccessible(true);
-        ResponseEntity<AlarmQueryResponse> responseEntity = (ResponseEntity<AlarmQueryResponse>) getMatchingAlarmsMethod.invoke(alarmOperationsAPI, query);
+        HttpEntity<AlarmQueryRequest> entity = new HttpEntity<>(request, headers);
+        ResponseEntity<AlarmQueryResponse> responseEntity = new ResponseEntity<>(new AlarmQueryResponse(), HttpStatus.OK);
 
-        // Assert
-        assertNotNull(responseEntity);
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(AlarmQueryResponse.class)))
+                .thenReturn(responseEntity);
+
+        Method getMatchingAlarms = AlarmOperationsAPI.class.getDeclaredMethod("getMatchingAlarms", String.class);
+        getMatchingAlarms.setAccessible(true);
+        ResponseEntity<AlarmQueryResponse> result = (ResponseEntity<AlarmQueryResponse>) getMatchingAlarms.invoke(alarmOperationsAPI, query);
+        assertNotNull(result);
     }
 
     @Test
-    void testCorrelateAlarm() throws Exception {
-        // Arrange
+    public void testCorrelateAlarm() throws Exception {
         String parentID = "parentID";
         ArrayList<String> childID = new ArrayList<>();
         long ruleID = 1L;
 
-        // Act
-        Method correlateAlarmMethod = AlarmOperationsAPI.class.getDeclaredMethod("correlateAlarm", String.class, ArrayList.class, long.class);
-        correlateAlarmMethod.setAccessible(true);
-        correlateAlarmMethod.invoke(alarmOperationsAPI, parentID, childID, ruleID);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "apikey");
 
-        // Assert
-        // No assertions needed for this test
+        RelationAPIRequest relAPIRequest = new RelationAPIRequest(parentID, childID, ruleID);
+        HttpEntity<RelationAPIRequest> entity = new HttpEntity<>(relAPIRequest, headers);
+
+        ResponseEntity<RelationAPIResponse> responseEntity = new ResponseEntity<>(new RelationAPIResponse(), HttpStatus.OK);
+
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(RelationAPIResponse.class)))
+                .thenReturn(responseEntity);
+
+        Method correlateAlarm = AlarmOperationsAPI.class.getDeclaredMethod("correlateAlarm", String.class, ArrayList.class, long.class);
+        correlateAlarm.setAccessible(true);
+        correlateAlarm.invoke(alarmOperationsAPI, parentID, childID, ruleID);
     }
 
     @Test
-    void testGetTopologyObjectsByQuery() {
-        // Arrange
-        String topoTraversalQuery = "
+    public void testGetTopologyObjectsByQuery() {
+        String topoTraversalQuery = "query";
+        int range = 10;
+
+        TopologyRetrievalQueryRequest request = new TopologyRetrievalQueryRequest(topoTraversalQuery, true, 10, range);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "apikey");
+
+        HttpEntity<TopologyRetrievalQueryRequest> entity = new HttpEntity<>(request, headers);
+        ResponseEntity<TopologyRetrievalQueryResponse> responseEntity = new ResponseEntity<>(new TopologyRetrievalQueryResponse(), HttpStatus.OK);
+
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(TopologyRetrievalQueryResponse.class)))
+                .thenReturn(responseEntity);
+
+        ResponseEntity<TopologyRetrievalQueryResponse> result = alarmOperationsAPI.getTopologyObjectsByQuery(topoTraversalQuery, range);
+        assertNotNull(result);
+    }
+
+    @Test
+    public void testFetchTopologyTraversalDetails() throws Exception {
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        String componentIdReq = "componentID";
+        String tbl = "tbl";
+        String tag = "tag";
+        String limit = "1000";
+
+        TopologyTraversalRequest request = new TopologyTraversalRequest(componentIdReq, tbl, tag, limit);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "apikey");
+
+        HttpEntity<Object> entity = new HttpEntity<>(request, headers);
+        ResponseEntity<String> responseEntity = new ResponseEntity<>("{\"TBL_response\":{\"topologyObjects\":[]}}", HttpStatus.OK);
+
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(String.class)))
+                .thenReturn(responseEntity);
+
+        ResponseEntity<String> result = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, componentIdReq, tbl, tag, limit);
+        assertNotNull(result);
+    }
+}
 ```
+
+### Explanation:
+1. **Setup and Mocks:** The

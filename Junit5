@@ -1,6 +1,3 @@
-Here's the JUnit5 test code covering all the branches of the `fetchTopologyTraversalDetails()` method in the `AlarmOperationsAPI` class:
-
-```java
 import com.verizon.apollo.service.AlarmOperationsAPI;
 import com.verizon.apollo.service.CustomHealthChecker;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,9 +7,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestTemplate;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 
@@ -29,16 +29,29 @@ class AlarmOperationsAPITest {
     @Mock
     private CustomHealthChecker customHealthChecker;
 
+    private RestTemplate restTemplate;
+    private Environment env;
+
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         alarmOperationsAPI = new AlarmOperationsAPI();
-        alarmOperationsAPI.restTemplate = Mockito.mock(org.springframework.web.client.RestTemplate.class);
-        alarmOperationsAPI.env = Mockito.mock(org.springframework.core.env.Environment.class);
+
+        // Set the restTemplate and env fields using reflection
+        Field restTemplateField = AlarmOperationsAPI.class.getDeclaredField("restTemplate");
+        restTemplateField.setAccessible(true);
+        restTemplate = Mockito.mock(RestTemplate.class);
+        restTemplateField.set(alarmOperationsAPI, restTemplate);
+
+        Field envField = AlarmOperationsAPI.class.getDeclaredField("env");
+        envField.setAccessible(true);
+        env = Mockito.mock(Environment.class);
+        envField.set(alarmOperationsAPI, env);
+
         alarmOperationsAPI.customHealthChecker = customHealthChecker;
     }
 
     @Test
-    void testFetchTopologyTraversalDetailsSuccess() {
+    void testFetchTopologyTraversalDetailsSuccess() throws Exception {
         HashMap<String, Object> alarmTagValueMap = new HashMap<>();
         alarmTagValueMap.put("alarmIdentity", "123");
         String componentIdReq = "componentId";
@@ -47,78 +60,16 @@ class AlarmOperationsAPITest {
         String limit = "limit";
 
         ResponseEntity<String> response = new ResponseEntity<>("Topology Data", HttpStatus.OK);
-        when(alarmOperationsAPI.restTemplate.exchange(any(), any(), any(), any(Class.class))).thenReturn(response);
+        when(restTemplate.exchange(any(), any(), any(), any(Class.class))).thenReturn(response);
 
-        ResponseEntity<String> result = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, componentIdReq, tbl, tag, limit);
+        Method fetchTopologyTraversalDetailsMethod = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails", HashMap.class, String.class, String.class, String.class, String.class);
+        fetchTopologyTraversalDetailsMethod.setAccessible(true);
+        ResponseEntity<String> result = (ResponseEntity<String>) fetchTopologyTraversalDetailsMethod.invoke(alarmOperationsAPI, alarmTagValueMap, componentIdReq, tbl, tag, limit);
         assertEquals(HttpStatus.OK, result.getStatusCode());
         assertEquals("Topology Data", result.getBody());
     }
 
-    @Test
-    void testFetchTopologyTraversalDetailsNotFoundException() {
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "123");
-        String componentIdReq = "componentId";
-        String tbl = "tbl";
-        String tag = "tag";
-        String limit = "limit";
-
-        when(alarmOperationsAPI.restTemplate.exchange(any(), any(), any(), any(Class.class))).thenThrow(new org.springframework.web.client.HttpClientErrorException(HttpStatus.NOT_FOUND, "No data found for the requested ComponentId and TBL"));
-
-        ResponseEntity<String> result = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, componentIdReq, tbl, tag, limit);
-        assertEquals(HttpStatus.NOT_FOUND, result.getStatusCode());
-    }
-
-    @Test
-    void testFetchTopologyTraversalDetailsException() {
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "123");
-        String componentIdReq = "componentId";
-        String tbl = "tbl";
-        String tag = "tag";
-        String limit = "limit";
-
-        when(alarmOperationsAPI.restTemplate.exchange(any(), any(), any(), any(Class.class))).thenThrow(new RuntimeException("Error occurred"));
-
-        ResponseEntity<String> result = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, componentIdReq, tbl, tag, limit);
-        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, result.getStatusCode());
-    }
-
-    @Test
-    void testFetchTopologyTraversalDetailsHealthCheckFailure() {
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "123");
-        String componentIdReq = "componentId";
-        String tbl = "tbl";
-        String tag = "tag";
-        String limit = "limit";
-
-        when(alarmOperationsAPI.restTemplate.exchange(any(), any(), any(), any(Class.class))).thenThrow(new org.springframework.web.client.HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR, "Topology Service cannot be accessed."));
-
-        try {
-            alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, componentIdReq, tbl, tag, limit);
-        } catch (Exception e) {
-            // Verify that the health check is set to DOWN
-            Mockito.verify(customHealthChecker).health().down().withDetail("Error", "Topology Service cannot be accessed.").build();
-        }
-    }
-
-    @Test
-    void testFetchTopologyTraversalDetailsWithNullTag() {
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "123");
-        String componentIdReq = "componentId";
-        String tbl = "tbl";
-        String tag = null;
-        String limit = "limit";
-
-        ResponseEntity<String> response = new ResponseEntity<>("Topology Data", HttpStatus.OK);
-        when(alarmOperationsAPI.restTemplate.exchange(any(), any(), any(), any(Class.class))).thenReturn(response);
-
-        ResponseEntity<String> result = alarmOperationsAPI.fetchTopologyTraversalDetails(alarmTagValueMap, componentIdReq, tbl, tag, limit);
-        assertEquals(HttpStatus.OK, result.getStatusCode());
-        assertEquals("Topology Data", result.getBody());
-    }
+    // Rest of the test cases similar to the previous code
 
     @Test
     void testCorrelateAlarm() throws Exception {
@@ -131,7 +82,7 @@ class AlarmOperationsAPITest {
         correlateAlarmMethod.invoke(alarmOperationsAPI, parentID, new java.util.ArrayList<>(java.util.Arrays.asList(childID)), ruleID);
 
         // Verify that the method was called
-        Mockito.verify(alarmOperationsAPI.restTemplate).exchange(any(), any(), any(), any(Class.class));
+        Mockito.verify(restTemplate).exchange(any(), any(), any(), any(Class.class));
     }
 
     @Test
@@ -143,24 +94,79 @@ class AlarmOperationsAPITest {
         ResponseEntity<com.verizon.apollo.model.AlarmQueryResponse> result = (ResponseEntity<com.verizon.apollo.model.AlarmQueryResponse>) getMatchingAlarmsMethod.invoke(alarmOperationsAPI, query);
 
         // Verify that the method was called
-        Mockito.verify(alarmOperationsAPI.restTemplate).exchange(any(), any(), any(), any(Class.class));
+        Mockito.verify(restTemplate).exchange(any(), any(), any(), any(Class.class));
+    }
+@Test
+void testFetchTopologyTraversalDetailsNotFoundException() throws Exception {
+    HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+    alarmTagValueMap.put("alarmIdentity", "123");
+    String componentIdReq = "componentId";
+    String tbl = "tbl";
+    String tag = "tag";
+    String limit = "limit";
+
+    when(restTemplate.exchange(any(), any(), any(), any(Class.class))).thenThrow(new org.springframework.web.client.HttpClientErrorException(HttpStatus.NOT_FOUND, "No data found for the requested ComponentId and TBL"));
+
+    Method fetchTopologyTraversalDetailsMethod = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails", HashMap.class, String.class, String.class, String.class, String.class);
+    fetchTopologyTraversalDetailsMethod.setAccessible(true);
+    ResponseEntity<String> result = (ResponseEntity<String>) fetchTopologyTraversalDetailsMethod.invoke(alarmOperationsAPI, alarmTagValueMap, componentIdReq, tbl, tag, limit);
+    assertEquals(HttpStatus.NOT_FOUND, result.getStatusCode());
+}
+
+@Test
+void testFetchTopologyTraversalDetailsException() throws Exception {
+    HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+    alarmTagValueMap.put("alarmIdentity", "123");
+    String componentIdReq = "componentId";
+    String tbl = "tbl";
+    String tag = "tag";
+    String limit = "limit";
+
+    when(restTemplate.exchange(any(), any(), any(), any(Class.class))).thenThrow(new RuntimeException("Error occurred"));
+
+    Method fetchTopologyTraversalDetailsMethod = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails", HashMap.class, String.class, String.class, String.class, String.class);
+    fetchTopologyTraversalDetailsMethod.setAccessible(true);
+    ResponseEntity<String> result = (ResponseEntity<String>) fetchTopologyTraversalDetailsMethod.invoke(alarmOperationsAPI, alarmTagValueMap, componentIdReq, tbl, tag, limit);
+    assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, result.getStatusCode());
+}
+
+@Test
+void testFetchTopologyTraversalDetailsHealthCheckFailure() throws Exception {
+    HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+    alarmTagValueMap.put("alarmIdentity", "123");
+    String componentIdReq = "componentId";
+    String tbl = "tbl";
+    String tag = "tag";
+    String limit = "limit";
+
+    when(restTemplate.exchange(any(), any(), any(), any(Class.class))).thenThrow(new org.springframework.web.client.HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR, "Topology Service cannot be accessed."));
+
+    try {
+        Method fetchTopologyTraversalDetailsMethod = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails", HashMap.class, String.class, String.class, String.class, String.class);
+        fetchTopologyTraversalDetailsMethod.setAccessible(true);
+        fetchTopologyTraversalDetailsMethod.invoke(alarmOperationsAPI, alarmTagValueMap, componentIdReq, tbl, tag, limit);
+    } catch (Exception e) {
+        // Verify that the health check is set to DOWN
+        Mockito.verify(customHealthChecker).health().down().withDetail("Error", "Topology Service cannot be accessed.").build();
     }
 }
-```
 
-Explanation:
+@Test
+void testFetchTopologyTraversalDetailsWithNullTag() throws Exception {
+    HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+    alarmTagValueMap.put("alarmIdentity", "123");
+    String componentIdReq = "componentId";
+    String tbl = "tbl";
+    String tag = null;
+    String limit = "limit";
 
-1. The test cases cover the following scenarios:
-   - `testFetchTopologyTraversalDetailsSuccess`: Verifies the successful execution of the `fetchTopologyTraversalDetails()` method.
-   - `testFetchTopologyTraversalDetailsNotFoundException`: Verifies the handling of a `HttpClientErrorException` with a 404 status code.
-   - `testFetchTopologyTraversalDetailsException`: Verifies the handling of a generic `RuntimeException`.
-   - `testFetchTopologyTraversalDetailsHealthCheckFailure`: Verifies the health check failure scenario when a `HttpServerErrorException` is thrown.
-   - `testFetchTopologyTraversalDetailsWithNullTag`: Verifies the behavior when the `tag` parameter is `null`.
+    ResponseEntity<String> response = new ResponseEntity<>("Topology Data", HttpStatus.OK);
+    when(restTemplate.exchange(any(), any(), any(), any(Class.class))).thenReturn(response);
 
-2. To test the `correlateAlarm()` and `getMatchingAlarms()` methods, which have private access in the `AlarmOperationsAPI` class, the test cases use reflection to access and invoke these methods.
+    Method fetchTopologyTraversalDetailsMethod = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails", HashMap.class, String.class, String.class, String.class, String.class);
+    fetchTopologyTraversalDetailsMethod.setAccessible(true);
+    ResponseEntity<String> result = (ResponseEntity<String>) fetchTopologyTraversalDetailsMethod.invoke(alarmOperationsAPI, alarmTagValueMap, componentIdReq, tbl, tag, limit);
+    assertEquals(HttpStatus.OK, result.getStatusCode());
+    assertEquals("Topology Data", result.getBody());
+}
 
-3. The `testCorrelateAlarm()` method uses reflection to invoke the `correlateAlarm()` method and verify that it was called correctly.
-
-4. The `testGetMatchingAlarms()` method uses reflection to invoke the `getMatchingAlarms()` method and verify that it was called correctly.
-
-By covering these test cases, you can achieve 100% code coverage for the `fetchTopologyTraversalDetails()` method in the `AlarmOperationsAPI` class.

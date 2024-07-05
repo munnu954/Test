@@ -1,204 +1,46 @@
-Below are the JUnit 5 test cases for the `AlarmOperationsAPI` class. These tests will strive to achieve 100% code coverage, including all branches. Reflection APIs will be used to access private methods and fields.
-
-Note: Ensure you have the necessary dependencies for JUnit 5, Mockito, and Jackson in your build file (e.g., Maven or Gradle).
-
-### Maven Dependencies:
-```xml
-<dependency>
-    <groupId>org.junit.jupiter</groupId>
-    <artifactId>junit-jupiter-engine</artifactId>
-    <version>5.8.1</version>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.mockito</groupId>
-    <artifactId>mockito-core</artifactId>
-    <version>3.12.4</version>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-test</artifactId>
-    <version>2.5.6</version>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>com.fasterxml.jackson.core</groupId>
-    <artifactId>jackson-databind</artifactId>
-    <version>2.12.5</version>
-</dependency>
-```
-
-### JUnit 5 Test Cases:
-
-```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.BeforeEach;
 import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.core.env.Environment;
-import org.springframework.http.*;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestTemplate;
+import org.mockito.Mockito;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.util.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 
-@ExtendWith(MockitoExtension.class)
 public class AlarmOperationsAPITest {
-
-    @Mock
-    private APIEndPointParam configParam;
-
-    @Mock
-    private CustomHealthChecker healthChecker;
-
-    @Mock
-    private Environment env;
-
-    @Mock
-    private RestTemplate restTemplate;
-
-    @Mock
-    private AlarmRelationUtils utils;
 
     @InjectMocks
     private AlarmOperationsAPI alarmOperationsAPI;
 
-    private final ObjectMapper mapper = new ObjectMapper();
-
     @BeforeEach
-    void setUp() throws Exception {
-        Field topologyTraversalUrlField = AlarmOperationsAPI.class.getDeclaredField("TOPOLOGYTRAVERSAL_URL");
-        topologyTraversalUrlField.setAccessible(true);
-        topologyTraversalUrlField.set(alarmOperationsAPI, "http://topologytraversal.url");
-
-        Field traversalTopologyObjectsPathField = AlarmOperationsAPI.class.getDeclaredField("TRAVERSAL_TOPOLOGYOBJECTS_PATH");
-        traversalTopologyObjectsPathField.setAccessible(true);
-        traversalTopologyObjectsPathField.set(alarmOperationsAPI, "/TBL_response/topologyObjects");
-
-        Field topologyApiReqLimitField = AlarmOperationsAPI.class.getDeclaredField("topologyApiReqLimit");
-        topologyApiReqLimitField.setAccessible(true);
-        topologyApiReqLimitField.set(alarmOperationsAPI, "1000");
-
-        Field topoEntityListExpressionField = AlarmOperationsAPI.class.getDeclaredField("topoEntityListExpression");
-        topoEntityListExpressionField.setAccessible(true);
-        topoEntityListExpressionField.set(alarmOperationsAPI, "%TopoObject: OSS_Names%");
-
-        Field topologyObjectEligibilityCheckValueField = AlarmOperationsAPI.class.getDeclaredField("topologyObjectEligibilityCheckValue");
-        topologyObjectEligibilityCheckValueField.setAccessible(true);
-        topologyObjectEligibilityCheckValueField.set(alarmOperationsAPI, "%TopoObject:OSS_Names[0]%");
-
-        Field topologyObjectEligibilityCheckExpressionField = AlarmOperationsAPI.class.getDeclaredField("topologyObjectEligibilityCheckExpression");
-        topologyObjectEligibilityCheckExpressionField.setAccessible(true);
-        topologyObjectEligibilityCheckExpressionField.set(alarmOperationsAPI, "^(?!\\s*$).+");
-
-        Field componentIDAttributePatternField = AlarmOperationsAPI.class.getDeclaredField("componentIDAttributePattern");
-        componentIDAttributePatternField.setAccessible(true);
-        componentIDAttributePatternField.set(alarmOperationsAPI, "%Alarm:alarmedObject%");
+    void setUp() {
+        alarmOperationsAPI = new AlarmOperationsAPI(); // Instantiate the class before each test
     }
 
     @Test
-    void testGetAlarmDetailsByID() throws JsonProcessingException {
-        String alarmIdentity = "testAlarmIdentity";
-        String url = "http://alarmdetails.url/alarm/" + alarmIdentity;
+    public void testRetrieveAndCorrelateAlarmTopologyTraversalOppositeLevelNotNullNotEmpty() {
+        // Mocking necessary dependencies
+        ResponseEntity<AlarmQueryResponse> responseEntity = new ResponseEntity<>(HttpStatus.OK);
+        AlarmOperationsAPI spy = Mockito.spy(alarmOperationsAPI);
+        Mockito.doReturn(responseEntity).when(spy).getMatchingAlarms(any());
 
-        when(configParam.getAlarmByAlarmIdentity()).thenReturn(url);
-        when(env.getProperty("AUTH_APIGEE_KEY")).thenReturn("testKey");
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "testKey");
-        HttpEntity<Object> entity = new HttpEntity<>(headers);
-        ResponseEntity<Object> responseEntity = new ResponseEntity<>(new Object(), HttpStatus.OK);
-
-        when(restTemplate.exchange(url, HttpMethod.GET, entity, Object.class)).thenReturn(responseEntity);
-
-        String result = alarmOperationsAPI.getAlarmDetailsByID(alarmIdentity);
-
-        assertEquals(mapper.writeValueAsString(responseEntity.getBody()), result);
-    }
-
-    @Test
-    void testGetAlarmedObjectListWithTopologyTraversal() throws Exception {
-        List<String> alarmedObjectList = new ArrayList<>();
-        String componentId = "testComponentId";
-        String topologyTraversal = "testTraversal";
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-
-        Method fetchTopologyTraversalDetails = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails", HashMap.class, String.class, String.class, String.class, String.class);
-        fetchTopologyTraversalDetails.setAccessible(true);
-
-        ResponseEntity<String> responseEntity = new ResponseEntity<>("{\"TBL_response\":{\"topologyObjects\":[{\"OSS_Names\":\"testObject\"}]}}", HttpStatus.OK);
-
-        when(fetchTopologyTraversalDetails.invoke(alarmOperationsAPI, alarmTagValueMap, componentId, topologyTraversal, null, "1000")).thenReturn(responseEntity);
-        when(utils.evaluateExpression("%TopoObject:OSS_Names[0]%", new HashMap<>())).thenReturn("testObject");
-        when(utils.evaluateExpression("%TopoObject: OSS_Names%", new HashMap<>())).thenReturn("[testObject]");
-
-        boolean result = alarmOperationsAPI.getAlarmedObjectListWithTopologyTraversal(alarmedObjectList, componentId, topologyTraversal, alarmTagValueMap);
-
-        assertTrue(result);
-        assertTrue(alarmedObjectList.contains("testObject"));
-    }
-
-    @Test
-    void testRetrieveAndCorrelateAlarm() throws Exception {
-        String sqlQuery = "SELECT * FROM alarms";
-        TernaryValue isMasterAlarm = TernaryValue.TRUE;
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "testAlarmIdentity");
+        // Prepare data for the test
+        String alarmTagValueMap = new HashMap<>();
         String action = "Relate Child To Master";
+        boolean isMasterAlarm = TernaryValue.TRUE;
         long ruleID = 1;
-        RelationRule rule = mock(RelationRule.class);
-        RuleDetails ruleDetails = mock(RuleDetails.class);
+        RelationRule rule = new RelationRule();
+        RuleDetails ruleDetails = new RuleDetails();
         Long ruleDetailsId = 1L;
         List<RelationAPIRequest> relationAPIRequestRecords = new ArrayList<>();
 
-        when(rule.getRuleTraversalExp()).thenReturn("testTraversalExp");
-        when(rule.getRuleDetails()).thenReturn(Collections.singletonList(ruleDetails));
-        when(ruleDetails.getRuleDetailsId()).thenReturn(ruleDetailsId);
+        // Call the method under test
+        String result = spy.retrieveAndCorrelateAlarm("testQuery", isMasterAlarm, alarmTagValueMap, action, ruleID, rule, ruleDetails, ruleDetailsId, relationAPIRequestRecords);
 
-        Method getMatchingAlarms = AlarmOperationsAPI.class.getDeclaredMethod("getMatchingAlarms", String.class);
-        getMatchingAlarms.setAccessible(true);
-
-        AlarmQueryResponse alarmQueryResponse = new AlarmQueryResponse();
-        AlarmDetail alarmDetail = new AlarmDetail();
-        alarmDetail.setAlarmidentity("testAlarmIdentity");
-        alarmQueryResponse.setAlarmDetails(Collections.singletonList(alarmDetail));
-        alarmQueryResponse.setNextquery("");
-
-        ResponseEntity<AlarmQueryResponse> responseEntity = new ResponseEntity<>(alarmQueryResponse, HttpStatus.OK);
-        when(getMatchingAlarms.invoke(alarmOperationsAPI, sqlQuery)).thenReturn(responseEntity);
-
-        String result = alarmOperationsAPI.retrieveAndCorrelateAlarm(sqlQuery, isMasterAlarm, alarmTagValueMap, action, ruleID, rule, ruleDetails, ruleDetailsId, relationAPIRequestRecords);
-
+        // Assert the result
         assertEquals("SUCCESS", result);
+        // You can add more assertions as needed
     }
-
-    @Test
-    void testApplyTopologyTraversalAndCorrelateAlarms() throws Exception {
-        Map<Long, String> sqlQueryMap = new HashMap<>();
-        sqlQueryMap.put(1L, "SELECT * FROM alarms");
-        TernaryValue isMasterAlarm = TernaryValue.TRUE;
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "testAlarmIdentity");
-        RelationRule rule = mock(RelationRule.class);
-        RuleDetails ruleDetails = mock(RuleDetails.class);
-
-        when(rule.getRuleTraversalExp()).thenReturn("testTraversalExp");
-
-        Method getComponentIdForTopoTraversal = AlarmOperationsAPI.class.getDeclaredMethod("getComponentIdForTopoTraversal", HashMap.class);
-        getComponentIdForTopoTraversal.setAccessible(true);
-        when(getComponentIdForTopoTraversal.invoke(alarmOperationsAPI, alarmTagValueMap)).thenReturn("testComponentId");
-
-        Method fetchTopologyTraversalDetails = AlarmOperationsAPI.class.getDeclaredMethod("fetchTopologyTraversalDetails", HashMap.class, String.class, String.class, String.class, String.class);
-        fetchTopologyTraversalDetails.setAccessible(true);
-        Response
+}

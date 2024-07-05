@@ -1,149 +1,148 @@
-The `java.lang.NullPointerException` is occurring because the `restTemplate.exchange` method call is returning `null`, which means the `response` is `null` and hence invoking `response.getStatusCode()` leads to a `NullPointerException`.
+ChatbotAI here. I can help you with writing the JUnit5 test cases for the `correlateAlarm(relationAPIRequest)` and `applyTopologyTraversalAndCorrelateAlarms` methods of the `AlarmOperationsAPI` class.
 
-To fix this, we need to ensure that the `restTemplate.exchange` method call is properly mocked to return a non-null `ResponseEntity`. Additionally, we should handle the case where the `ResponseEntity` might be null within the `applyTopologyTraversalAndCorrelateAlarms` method.
+To ensure 100% code coverage, we need to test different scenarios and edge cases. Here's an example of the test cases you can write:
 
-Here is the revised code for the test cases along with a potential fix in the `applyTopologyTraversalAndCorrelateAlarms` method:
+1. **Test case for `correlateAlarm(relationAPIRequest)` method:**
 
-### Revised Test Cases
+   ```java
+   @ExtendWith(MockitoExtension.class)
+   class AlarmOperationsAPITest {
+       @Mock
+       private APIEndPointParam configParam;
+       @Mock
+       private RestTemplate restTemplate;
+       @Mock
+       private Environment env;
 
-```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
+       @InjectMocks
+       private AlarmOperationsAPI alarmOperationsAPI;
 
-import java.lang.reflect.Method;
-import java.util.*;
+       @Test
+       void testCorrelateAlarm_Success() {
+           // Arrange
+           RelationAPIRequest relationAPIRequest = new RelationAPIRequest("parentID", new ArrayList<>(Arrays.asList("childID1", "childID2")), 123L);
+           when(env.getProperty("AUTH_APOLLO_KEY")).thenReturn("mockAuthKey");
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.*;
-import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.client.RestTemplate;
+           // Act
+           alarmOperationsAPI.correlateAlarm(relationAPIRequest);
 
-@ExtendWith(MockitoExtension.class)
-@SpringBootTest
-public class AlarmOperationsAPITest {
+           // Assert
+           verify(restTemplate, times(1)).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(RelationAPIResponse.class));
+       }
 
-    @InjectMocks
-    private AlarmOperationsAPI alarmOperationsAPI;
+       @Test
+       void testCorrelateAlarm_HttpClientErrorException() {
+           // Arrange
+           RelationAPIRequest relationAPIRequest = new RelationAPIRequest("parentID", new ArrayList<>(Arrays.asList("childID1", "childID2")), 123L);
+           when(env.getProperty("AUTH_APOLLO_KEY")).thenReturn("mockAuthKey");
+           doThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST, "Error")).when(restTemplate).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(RelationAPIResponse.class));
 
-    @Mock
-    private RestTemplate restTemplate;
+           // Act
+           alarmOperationsAPI.correlateAlarm(relationAPIRequest);
 
-    @Mock
-    private APIEndPointParam configParam;
+           // Assert
+           verify(restTemplate, times(1)).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(RelationAPIResponse.class));
+           // Verify that the error is logged
+           verify(alarmOperationsAPI.logger, times(1)).error(anyString());
+       }
+   }
+   ```
 
-    @Mock
-    private Environment env;
+2. **Test case for `applyTopologyTraversalAndCorrelateAlarms` method:**
 
-    @Mock
-    private AlarmRelationUtils utils;
+   ```java
+   @ExtendWith(MockitoExtension.class)
+   class AlarmOperationsAPITest {
+       @Mock
+       private APIEndPointParam configParam;
+       @Mock
+       private RestTemplate restTemplate;
+       @Mock
+       private Environment env;
+       @Mock
+       private CustomHealthChecker healthChecker;
+       @Mock
+       private AlarmRelationUtils utils;
 
-    @Mock
-    private CustomHealthChecker healthChecker;
+       @InjectMocks
+       private AlarmOperationsAPI alarmOperationsAPI;
 
-    @BeforeEach
-    public void setup() {
-        alarmOperationsAPI = new AlarmOperationsAPI();
-        // Inject mocks into fields
-        ReflectionTestUtils.setField(alarmOperationsAPI, "restTemplate", restTemplate);
-        ReflectionTestUtils.setField(alarmOperationsAPI, "configParam", configParam);
-        ReflectionTestUtils.setField(alarmOperationsAPI, "env", env);
-        ReflectionTestUtils.setField(alarmOperationsAPI, "utils", utils);
-    }
+       @Test
+       void testApplyTopologyTraversalAndCorrelateAlarms_Success() {
+           // Arrange
+           Map<Long, String> sqlQueryMap = new HashMap<>();
+           sqlQueryMap.put(123L, "SELECT * FROM alarms WHERE alarmedObject = ?");
+           TernaryValue isMasterAlarm = TernaryValue.TRUE;
+           HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+           alarmTagValueMap.put("alarmIdentity", "mockAlarmIdentity");
+           alarmTagValueMap.put("alarmedObject", "mockAlarmedObject");
+           RelationRule rule = new RelationRule();
+           rule.setRuleTraversalExp("mockTopologyTraversal");
+           rule.setActionToBePerformed("Relate Child To Master");
+           rule.setRuleId(123L);
+           RuleDetails ruleDetails = new RuleDetails();
+           ruleDetails.setRuleDtlTraversalExpression("mockRuleDetailsTraversal");
+           ruleDetails.setRuleDetailsId(456L);
 
-    @Test
-    public void testApplyTopologyTraversalAndCorrelateAlarms_Success() throws Exception {
-        String sqlQuery = "SELECT * FROM alarms";
-        TernaryValue isMasterAlarm = TernaryValue.TRUE;
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "12345");
-        RelationRule rule = mock(RelationRule.class);
-        when(rule.getRuleTraversalExp()).thenReturn("topologyTraversalExpression");
-        when(rule.getActionToBePerformed()).thenReturn("Relate Child To Master");
-        when(rule.getRuleId()).thenReturn(1L);
+           when(utils.getComponentIdForTopoTraversal(alarmTagValueMap)).thenReturn("mockComponentId");
+           when(alarmOperationsAPI.getAlarmedObjectListWithTopologyTraversal(any(), anyString(), anyString(), any())).thenReturn(true);
+           when(alarmOperationsAPI.retrieveAndCorrelateAlarm(anyString(), any(), any(), anyString(), anyLong(), any(), any(), anyLong(), any())).thenReturn("SUCCESS");
 
-        RuleDetails ruleDetails = mock(RuleDetails.class);
-        Map<Long, String> sqlQueryMap = new HashMap<>();
-        sqlQueryMap.put(1L, sqlQuery);
+           // Act
+           String result = alarmOperationsAPI.applyTopologyTraversalAndCorrelateAlarms(sqlQueryMap, isMasterAlarm, alarmTagValueMap, rule, ruleDetails);
 
-        // Mocking RestTemplate response
-        String topologyTraversalResponse = "response";
-        ResponseEntity<String> responseEntity = new ResponseEntity<>(topologyTraversalResponse, HttpStatus.OK);
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
-                .thenReturn(responseEntity);
+           // Assert
+           assertThat(result).isEqualTo("SUCCESS");
+           verify(alarmOperationsAPI, times(1)).getComponentIdForTopoTraversal(alarmTagValueMap);
+           verify(alarmOperationsAPI, times(1)).getAlarmedObjectListWithTopologyTraversal(any(), anyString(), anyString(), any());
+           verify(alarmOperationsAPI, times(1)).retrieveAndCorrelateAlarm(anyString(), any(), any(), anyString(), anyLong(), any(), any(), anyLong(), any());
+       }
 
-        // Access private method correlateAlarm using reflection
-        Method correlateAlarmMethod = AlarmOperationsAPI.class.getDeclaredMethod("correlateAlarm", RelationAPIRequest.class);
-        correlateAlarmMethod.setAccessible(true);
+       @Test
+       void testApplyTopologyTraversalAndCorrelateAlarms_Exception() {
+           // Arrange
+           Map<Long, String> sqlQueryMap = new HashMap<>();
+           sqlQueryMap.put(123L, "SELECT * FROM alarms WHERE alarmedObject = ?");
+           TernaryValue isMasterAlarm = TernaryValue.TRUE;
+           HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+           alarmTagValueMap.put("alarmIdentity", "mockAlarmIdentity");
+           alarmTagValueMap.put("alarmedObject", "mockAlarmedObject");
+           RelationRule rule = new RelationRule();
+           rule.setRuleTraversalExp("mockTopologyTraversal");
+           rule.setActionToBePerformed("Relate Child To Master");
+           rule.setRuleId(123L);
+           RuleDetails ruleDetails = new RuleDetails();
+           ruleDetails.setRuleDtlTraversalExpression("mockRuleDetailsTraversal");
+           ruleDetails.setRuleDetailsId(456L);
 
-        // Mocking correlation of alarms
-        correlateAlarmMethod.invoke(alarmOperationsAPI, new RelationAPIRequest("12345", new ArrayList<>(), 1L));
+           when(utils.getComponentIdForTopoTraversal(alarmTagValueMap)).thenReturn(null);
+           doThrow(new RuntimeException("Error")).when(alarmOperationsAPI).getAlarmedObjectListWithTopologyTraversal(any(), anyString(), anyString(), any());
 
-        // Call method to test
-        String result = alarmOperationsAPI.applyTopologyTraversalAndCorrelateAlarms(sqlQueryMap, isMasterAlarm, alarmTagValueMap, rule, ruleDetails);
+           // Act
+           String result = alarmOperationsAPI.applyTopologyTraversalAndCorrelateAlarms(sqlQueryMap, isMasterAlarm, alarmTagValueMap, rule, ruleDetails);
 
-        // Assertions
-        assertEquals("SUCCESS", result);
-    }
+           // Assert
+           assertThat(result).isEqualTo("ERROR");
+           verify(alarmOperationsAPI, times(1)).getComponentIdForTopoTraversal(alarmTagValueMap);
+           verify(alarmOperationsAPI, times(1)).getAlarmedObjectListWithTopologyTraversal(any(), anyString(), anyString(), any());
+           // Verify that the error is logged
+           verify(alarmOperationsAPI.logger, times(1)).error(anyString(), any(Exception.class));
+       }
+   }
+   ```
 
-    @Test
-    public void testApplyTopologyTraversalAndCorrelateAlarms_Error() throws Exception {
-        String sqlQuery = "SELECT * FROM alarms";
-        TernaryValue isMasterAlarm = TernaryValue.TRUE;
-        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "12345");
-        RelationRule rule = mock(RelationRule.class);
-        when(rule.getRuleTraversalExp()).thenReturn("topologyTraversalExpression");
-        when(rule.getActionToBePerformed()).thenReturn("Relate Child To Master");
-        when(rule.getRuleId()).thenReturn(1L);
+These test cases cover the following scenarios:
 
-        RuleDetails ruleDetails = mock(RuleDetails.class);
-        Map<Long, String> sqlQueryMap = new HashMap<>();
-        sqlQueryMap.put(1L, sqlQuery);
+1. **`testCorrelateAlarm_Success`**: Verifies that the `correlateAlarm` method successfully calls the `restTemplate.exchange` method with the correct parameters.
+2. **`testCorrelateAlarm_HttpClientErrorException`**: Verifies that the `correlateAlarm` method handles the `HttpClientErrorException` and logs the error.
+3. **`testApplyTopologyTraversalAndCorrelateAlarms_Success`**: Verifies that the `applyTopologyTraversalAndCorrelateAlarms` method successfully calls the `getComponentIdForTopoTraversal`, `getAlarmedObjectListWithTopologyTraversal`, and `retrieveAndCorrelateAlarm` methods with the correct parameters.
+4. **`testApplyTopologyTraversalAndCorrelateAlarms_Exception`**: Verifies that the `applyTopologyTraversalAndCorrelateAlarms` method handles the exception thrown by the `getAlarmedObjectListWithTopologyTraversal` method and logs the error.
 
-        // Mocking RestTemplate response to throw an exception
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
-                .thenThrow(new HttpClientErrorException(HttpStatus.INTERNAL_SERVER_ERROR));
+You can further expand these test cases to cover additional scenarios and edge cases, such as:
 
-        // Call method to test
-        String result = alarmOperationsAPI.applyTopologyTraversalAndCorrelateAlarms(sqlQueryMap, isMasterAlarm, alarmTagValueMap, rule, ruleDetails);
+- Testing the behavior when the `topologyTraversal` is null or empty.
+- Testing the behavior when the `sqlQueryMap` is empty or null.
+- Testing the behavior when the `alarmTagValueMap` is missing required keys.
+- Testing the behavior when the `relationAPIRequestRecords` list is empty.
 
-        // Assertions
-        assertEquals("ERROR", result);
-    }
-    
-    // Additional helper methods or test cases can be added here
-}
-```
-
-### Potential Fix in `AlarmOperationsAPI`
-
-Ensure that the `applyTopologyTraversalAndCorrelateAlarms` method handles the case where the `ResponseEntity` might be null:
-
-```java
-public String applyTopologyTraversalAndCorrelateAlarms(Map<Long, String> sqlQueryMap, TernaryValue isMasterAlarm, HashMap<String, Object> alarmTagValueMap, RelationRule rule, RuleDetails ruleDetails) {
-    try {
-        // Assume this is the logic for using the RestTemplate to make a call
-        ResponseEntity<String> response = restTemplate.exchange("url", HttpMethod.POST, new HttpEntity<>(new HttpHeaders()), String.class);
-
-        if (response != null && response.getStatusCode() == HttpStatus.OK) {
-            // Perform correlation logic
-            correlateAlarm(new RelationAPIRequest("12345", new ArrayList<>(), 1L));
-            return "SUCCESS";
-        } else {
-            // Handle the case where response is null or status is not OK
-            return "ERROR";
-        }
-    } catch (Exception e) {
-        // Handle exceptions
-        return "ERROR";
-    }
-}
-```
-
-By updating the `applyTopologyTraversalAndCorrelateAlarms` method to handle null `ResponseEntity` objects, we can prevent the `NullPointerException` and ensure that the test cases execute as expected.
+Remember to use the `@Mock`, `@InjectMocks`, and `@ExtendWith(MockitoExtension.class)` annotations to set up the necessary mocks and dependencies for your tests.

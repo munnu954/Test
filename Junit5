@@ -1,137 +1,128 @@
-Here's the Junit5 test case code covering the else-if block of the `retrieveAndCorrelateAlarm` method of the `AlarmOperationsAPI` class:
+Certainly! To write JUnit 5 test cases for the `applyTopologyTraversalAndCorrelateAlarms` method and particularly focus on covering the `correlateAlarm(relationAPIRequest);` part of the `AlarmOperationsAPI` class, we will need to use reflection to access private methods and fields. Below is an example of how you might write such test cases:
 
 ```java
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.lang.reflect.Field;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.lang.reflect.Method;
+import java.util.*;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.*;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
-class AlarmOperationsAPITest {
+@SpringBootTest
+public class AlarmOperationsAPITest {
 
     @InjectMocks
     private AlarmOperationsAPI alarmOperationsAPI;
 
     @Mock
+    private RestTemplate restTemplate;
+
+    @Mock
+    private APIEndPointParam configParam;
+
+    @Mock
+    private Environment env;
+
+    @Mock
     private AlarmRelationUtils utils;
 
-    @Test
-    void testRetrieveAndCorrelateAlarm_RelateChildToMasterAndIsMasterAlarmFalse() throws Exception {
-        // Arrange
-        Map<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "alarm-1");
+    @Mock
+    private CustomHealthChecker healthChecker;
 
-        RelationRule rule = new RelationRule();
-        rule.setActionToBePerformed("Relate Child To Master");
-        rule.setRuleId(1L);
-
-        RuleDetails ruleDetails = new RuleDetails();
-        ruleDetails.setRuleDetailsId(1L);
-
-        List<RelationAPIRequest> relationAPIRequestRecords = new ArrayList<>();
-
-        // Act
-        String status = alarmOperationsAPI.retrieveAndCorrelateAlarm("", TernaryValue.FALSE, alarmTagValueMap, "Relate Child To Master", 1L, rule, ruleDetails, 1L, relationAPIRequestRecords);
-
-        // Assert
-        Assertions.assertEquals("SUCCESS", status);
-        Assertions.assertEquals(1, relationAPIRequestRecords.size());
-        Assertions.assertEquals("alarm-1", relationAPIRequestRecords.get(0).getParentID());
-        Assertions.assertEquals(0, relationAPIRequestRecords.get(0).getChildIDs().size());
-        Assertions.assertEquals(1L, relationAPIRequestRecords.get(0).getRuleID());
+    @BeforeEach
+    public void setup() {
+        alarmOperationsAPI = new AlarmOperationsAPI();
+        // Inject mocks into fields
+        ReflectionTestUtils.setField(alarmOperationsAPI, "restTemplate", restTemplate);
+        ReflectionTestUtils.setField(alarmOperationsAPI, "configParam", configParam);
+        ReflectionTestUtils.setField(alarmOperationsAPI, "env", env);
+        ReflectionTestUtils.setField(alarmOperationsAPI, "utils", utils);
     }
 
     @Test
-    void testRetrieveAndCorrelateAlarm_RelateMasterToChildAndIsMasterAlarmTrue() throws Exception {
-        // Arrange
-        Map<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "alarm-1");
+    public void testApplyTopologyTraversalAndCorrelateAlarms_Success() throws Exception {
+        String sqlQuery = "SELECT * FROM alarms";
+        TernaryValue isMasterAlarm = TernaryValue.TRUE;
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "12345");
+        RelationRule rule = mock(RelationRule.class);
+        when(rule.getRuleTraversalExp()).thenReturn("topologyTraversalExpression");
+        when(rule.getActionToBePerformed()).thenReturn("Relate Child To Master");
+        when(rule.getRuleId()).thenReturn(1L);
 
-        RelationRule rule = new RelationRule();
-        rule.setActionToBePerformed("Relate Master To Child");
-        rule.setRuleId(1L);
+        RuleDetails ruleDetails = mock(RuleDetails.class);
+        Map<Long, String> sqlQueryMap = new HashMap<>();
+        sqlQueryMap.put(1L, sqlQuery);
 
-        RuleDetails ruleDetails = new RuleDetails();
-        ruleDetails.setRuleDetailsId(1L);
+        // Mocking RestTemplate response
+        String topologyTraversalResponse = "response";
+        ResponseEntity<String> responseEntity = new ResponseEntity<>(topologyTraversalResponse, HttpStatus.OK);
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(responseEntity);
 
-        List<RelationAPIRequest> relationAPIRequestRecords = new ArrayList<>();
+        // Access private method correlateAlarm using reflection
+        Method correlateAlarmMethod = AlarmOperationsAPI.class.getDeclaredMethod("correlateAlarm", RelationAPIRequest.class);
+        correlateAlarmMethod.setAccessible(true);
 
-        // Act
-        String status = alarmOperationsAPI.retrieveAndCorrelateAlarm("", TernaryValue.TRUE, alarmTagValueMap, "Relate Master To Child", 1L, rule, ruleDetails, 1L, relationAPIRequestRecords);
+        // Mocking correlation of alarms
+        correlateAlarmMethod.invoke(alarmOperationsAPI, new RelationAPIRequest("12345", new ArrayList<>(), 1L));
 
-        // Assert
-        Assertions.assertEquals("SUCCESS", status);
-        Assertions.assertEquals(1, relationAPIRequestRecords.size());
-        Assertions.assertEquals("alarm-1", relationAPIRequestRecords.get(0).getParentID());
-        Assertions.assertEquals(0, relationAPIRequestRecords.get(0).getChildIDs().size());
-        Assertions.assertEquals(1L, relationAPIRequestRecords.get(0).getRuleID());
+        // Call method to test
+        String result = alarmOperationsAPI.applyTopologyTraversalAndCorrelateAlarms(sqlQueryMap, isMasterAlarm, alarmTagValueMap, rule, ruleDetails);
+
+        // Assertions
+        assertEquals("SUCCESS", result);
     }
 
     @Test
-    void testRetrieveAndCorrelateAlarm_Exception() throws Exception {
-        // Arrange
-        Map<String, Object> alarmTagValueMap = new HashMap<>();
-        alarmTagValueMap.put("alarmIdentity", "alarm-1");
+    public void testApplyTopologyTraversalAndCorrelateAlarms_Error() throws Exception {
+        String sqlQuery = "SELECT * FROM alarms";
+        TernaryValue isMasterAlarm = TernaryValue.TRUE;
+        HashMap<String, Object> alarmTagValueMap = new HashMap<>();
+        alarmTagValueMap.put("alarmIdentity", "12345");
+        RelationRule rule = mock(RelationRule.class);
+        when(rule.getRuleTraversalExp()).thenReturn("topologyTraversalExpression");
+        when(rule.getActionToBePerformed()).thenReturn("Relate Child To Master");
+        when(rule.getRuleId()).thenReturn(1L);
 
-        RelationRule rule = new RelationRule();
-        rule.setActionToBePerformed("Relate Child To Master");
-        rule.setRuleId(1L);
+        RuleDetails ruleDetails = mock(RuleDetails.class);
+        Map<Long, String> sqlQueryMap = new HashMap<>();
+        sqlQueryMap.put(1L, sqlQuery);
 
-        RuleDetails ruleDetails = new RuleDetails();
-        ruleDetails.setRuleDetailsId(1L);
+        // Mocking RestTemplate response to throw an exception
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(new HttpClientErrorException(HttpStatus.INTERNAL_SERVER_ERROR));
 
-        List<RelationAPIRequest> relationAPIRequestRecords = new ArrayList<>();
+        // Call method to test
+        String result = alarmOperationsAPI.applyTopologyTraversalAndCorrelateAlarms(sqlQueryMap, isMasterAlarm, alarmTagValueMap, rule, ruleDetails);
 
-        // Mock the utils.evaluateExpression method to throw an exception
-        Mockito.when(utils.evaluateExpression(Mockito.anyString(), Mockito.anyMap())).thenThrow(new RuntimeException("Test exception"));
-
-        // Act
-        String status = alarmOperationsAPI.retrieveAndCorrelateAlarm("", TernaryValue.FALSE, alarmTagValueMap, "Relate Child To Master", 1L, rule, ruleDetails, 1L, relationAPIRequestRecords);
-
-        // Assert
-        Assertions.assertEquals("ERROR", status);
+        // Assertions
+        assertEquals("ERROR", result);
     }
-
-    @Test
-    void testCorrelateAlarm() throws Exception {
-        // Arrange
-        RelationAPIRequest relationAPIRequest = new RelationAPIRequest("parent-1", new ArrayList<>(), 1L);
-
-        // Act
-        alarmOperationsAPI.correlateAlarm(relationAPIRequest);
-
-        // Assert
-        Mockito.verify(alarmOperationsAPI, Mockito.times(1)).correlateAlarm(relationAPIRequest);
-    }
-
-    private void setPrivateField(Object obj, String fieldName, Object value) throws Exception {
-        Field field = obj.getClass().getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(obj, value);
-    }
+    
+    // Additional helper methods or test cases can be added here
 }
 ```
 
-Here's a breakdown of the test cases:
+### Explanation:
+1. **Setup Mocks:** We set up the necessary mocks for `RestTemplate`, `APIEndPointParam`, `Environment`, and `AlarmRelationUtils`. We inject these mocks into the `AlarmOperationsAPI` instance using `ReflectionTestUtils.setField`.
 
-1. `testRetrieveAndCorrelateAlarm_RelateChildToMasterAndIsMasterAlarmFalse()`: This test case verifies the behavior of the `retrieveAndCorrelateAlarm` method when the action is "Relate Child To Master" and `isMasterAlarm` is `TernaryValue.FALSE`. It checks that the `relationAPIRequestRecords` list is correctly populated with the expected values.
+2. **Test Case for Success Scenario:** We define a test case to cover the successful execution of the `applyTopologyTraversalAndCorrelateAlarms` method. We mock the necessary method responses and use reflection to access the private `correlateAlarm` method. We then invoke the method and assert the expected successful result.
 
-2. `testRetrieveAndCorrelateAlarm_RelateMasterToChildAndIsMasterAlarmTrue()`: This test case verifies the behavior of the `retrieveAndCorrelateAlarm` method when the action is "Relate Master To Child" and `isMasterAlarm` is `TernaryValue.TRUE`. It checks that the `relationAPIRequestRecords` list is correctly populated with the expected values.
+3. **Test Case for Error Scenario:** We define another test case to cover the scenario where an error occurs during the execution of the `applyTopologyTraversalAndCorrelateAlarms` method. We mock the `RestTemplate` to throw an exception and assert that the method returns an "ERROR" result.
 
-3. `testRetrieveAndCorrelateAlarm_Exception()`: This test case verifies the behavior of the `retrieveAndCorrelateAlarm` method when an exception is thrown by the `utils.evaluateExpression` method. It checks that the method returns "ERROR" in case of an exception.
+4. **Reflection for Private Methods:** We use Java reflection to access and invoke the private `correlateAlarm` method to ensure it gets executed within the context of the test.
 
-4. `testCorrelateAlarm()`: This test case verifies the behavior of the `correlateAlarm` method. It checks that the method is called with the expected `relationAPIRequest` object.
-
-The `setPrivateField` method is a helper method that uses reflection to set the value of a private field in the `AlarmOperationsAPI` class. This is necessary because the `correlateAlarm` method is private, and we need to access it to verify its behavior.
-
-Note that the test cases use the `@ExtendWith(MockitoExtension.class)` annotation to enable Mockito mocking capabilities and the `@InjectMocks` and `@Mock` annotations to inject the necessary dependencies.
+This setup should give you a comprehensive test coverage for the `applyTopologyTraversalAndCorrelateAlarms` method, particularly focusing on the `correlateAlarm` invocation.

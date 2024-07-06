@@ -1,73 +1,140 @@
-Here is an example of JUnit5 test cases for the CsvtoJsonMRFCnTransformer class covering all branches:
+Sure, let's write JUnit5 test cases to cover all the branches of the `CsvtoJsonMRFCnTransformer` class. These test cases will ensure that the code is fully covered and all branches are tested. Here is the complete code for the test cases:
 
 ```java
 import org.apache.flink.api.common.accumulators.IntCounter;
-import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.util.Collector;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.json.JSONObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.Collection;
+import java.util.List;
+
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
 
-public class CsvtoJsonMRFCnTransformerTest {
+class CsvtoJsonMRFCnTransformerTest {
 
-    private CsvtoJsonMRFCnTransformer csvTransformer;
-    private PublishAuditMessage pubAuditMsg;
+    private CsvtoJsonMRFCnTransformer transformer;
+
+    @Mock
+    private PublishAuditMessage publishAuditMessage;
+
+    @Mock
+    private Collector<Tuple2<String, CollectionAudit>> collector;
 
     @BeforeEach
-    void setup() {
-        pubAuditMsg = mock(PublishAuditMessage.class);
-        csvTransformer = new CsvtoJsonMRFCnTransformer(pubAuditMsg);
-        csvTransformer.open(new Configuration());
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        transformer = new CsvtoJsonMRFCnTransformer(publishAuditMessage);
     }
 
     @Test
-    void testFlatMap_WhenMessageAndContentNotNull() throws Exception {
-        CollectionAudit message = CollectionAudit.builder()
-                .inputFilePath("sample.csv")
-                .fileType("csv")
-                .build();
-
-        String csvContent = "SystemId: 123\nNodeIP: 1.1.1.1\n\"header1\",\"header2\"\n\"value1\",\"value2\"";
-
-        Tuple2<String, CollectionAudit> inputTuple = Tuple2.of(csvContent, message);
-        Collector<Tuple2<String, CollectionAudit>> collector = mock(Collector.class);
-
-        csvTransformer.flatMap(inputTuple, collector);
-
-        verify(collector, times(1)).collect(any());
+    void testOpen() throws Exception {
+        Configuration parameters = new Configuration();
+        transformer.open(parameters);
+        // Ensure accumulators are added
+        assertNotNull(transformer.getRuntimeContext().getAccumulator("successIntCounter"));
+        assertNotNull(transformer.getRuntimeContext().getAccumulator("failureIntCounter"));
     }
 
     @Test
-    void testFlatMap_WhenHeadersLengthNotMatch() throws Exception {
-        CollectionAudit message = CollectionAudit.builder().build();
-        String csvContent = "SystemId: 123\nNodeIP: 1.1.1.1\n\"header1\",\"header2\"\n\"value1\"";
+    void testFlatMapWithValidData() throws Exception {
+        CollectionAudit audit = new CollectionAudit();
+        audit.setInputFilePath("path/to/file.csv");
+        audit.setFileType("csv");
 
-        Tuple2<String, CollectionAudit> inputTuple = Tuple2.of(csvContent, message);
-        Collector<Tuple2<String, CollectionAudit>> collector = mock(Collector.class);
+        String csvContent = "SystemId: 123\nNodeIP: 456\ncol1,col2\nval1,val2\nval3,val4";
+        Tuple2<String, CollectionAudit> tupleValue = new Tuple2<>(csvContent, audit);
 
-        csvTransformer.flatMap(inputTuple, collector);
+        transformer.flatMap(tupleValue, collector);
 
-        verify(pubAuditMsg, times(1)).publishFlinkConversionStatus(message, null, JobStatus.FLINK_JOB_FAILED);
+        verify(collector, times(2)).collect(any());
+        assertEquals(2, transformer.getSuccessIntCounter().intValue());
+        assertEquals(0, transformer.getFailureIntCounter().intValue());
     }
 
     @Test
-    void testGetSuccessIntCounter() {
-        assertEquals(0, csvTransformer.getSuccessIntCounter());
+    void testFlatMapWithInvalidData() throws Exception {
+        CollectionAudit audit = new CollectionAudit();
+        audit.setInputFilePath("path/to/file.csv");
+        audit.setFileType("csv");
+
+        String csvContent = "SystemId: 123\nNodeIP: 456\ncol1,col2\nval1";
+        Tuple2<String, CollectionAudit> tupleValue = new Tuple2<>(csvContent, audit);
+
+        transformer.flatMap(tupleValue, collector);
+
+        verify(collector, times(0)).collect(any());
+        assertEquals(0, transformer.getSuccessIntCounter().intValue());
+        assertEquals(1, transformer.getFailureIntCounter().intValue());
     }
 
     @Test
-    void testGetFailureIntCounter() {
-        assertEquals(0, csvTransformer.getFailureIntCounter());
+    void testFlatMapWithException() throws Exception {
+        CollectionAudit audit = new CollectionAudit();
+        audit.setInputFilePath("path/to/file.csv");
+        audit.setFileType("csv");
+
+        String csvContent = "SystemId: 123\nNodeIP: 456\ncol1,col2\nval1,\"val2";
+        Tuple2<String, CollectionAudit> tupleValue = new Tuple2<>(csvContent, audit);
+
+        transformer.flatMap(tupleValue, collector);
+
+        verify(publishAuditMessage, times(1)).publishFlinkConversionStatus(any(), any(), eq(JobStatus.FLINK_JOB_FAILED));
+        assertEquals(0, transformer.getSuccessIntCounter().intValue());
     }
 
+    @Test
+    void testFlatMapWithNullMessage() throws Exception {
+        String csvContent = "SystemId: 123\nNodeIP: 456\ncol1,col2\nval1,val2";
+        Tuple2<String, CollectionAudit> tupleValue = new Tuple2<>(csvContent, null);
+
+        transformer.flatMap(tupleValue, collector);
+
+        verify(collector, times(0)).collect(any());
+        assertEquals(0, transformer.getSuccessIntCounter().intValue());
+        assertEquals(0, transformer.getFailureIntCounter().intValue());
+    }
+
+    @Test
+    void testFlatMapWithNullContent() throws Exception {
+        CollectionAudit audit = new CollectionAudit();
+        audit.setInputFilePath("path/to/file.csv");
+        audit.setFileType("csv");
+
+        Tuple2<String, CollectionAudit> tupleValue = new Tuple2<>(null, audit);
+
+        transformer.flatMap(tupleValue, collector);
+
+        verify(collector, times(0)).collect(any());
+        assertEquals(0, transformer.getSuccessIntCounter().intValue());
+        assertEquals(0, transformer.getFailureIntCounter().intValue());
+    }
 }
 ```
 
-In this test class, we have covered scenarios where the flatMap method processes messages with not null content, handles cases where headers lengths do not match, and verifies the success and failure counters. We have also set up mocking for the `PublishAuditMessage` class. 
+### Explanation
 
-Please note that you might need to adjust the test cases based on the actual behavior of your classes and methods.
+1. **Setting up the Test Environment**:
+    - We use JUnit5 for testing.
+    - `MockitoAnnotations.openMocks(this);` initializes the mocks.
+    - `transformer = new CsvtoJsonMRFCnTransformer(publishAuditMessage);` initializes the class under test.
+
+2. **Test Cases**:
+    - **testOpen**: Ensures that the accumulators are added correctly.
+    - **testFlatMapWithValidData**: Tests the `flatMap` method with valid CSV data. It verifies that the collector collects the expected number of records and that the success counter increments correctly.
+    - **testFlatMapWithInvalidData**: Tests the `flatMap` method with invalid CSV data. It verifies that the failure counter increments correctly.
+    - **testFlatMapWithException**: Tests the `flatMap` method when an exception occurs. It verifies that the `publishFlinkConversionStatus` method is called with the `FLINK_JOB_FAILED` status.
+    - **testFlatMapWithNullMessage**: Tests the `flatMap` method when the message is null. It ensures that nothing is collected and the counters remain unchanged.
+    - **testFlatMapWithNullContent**: Tests the `flatMap` method when the CSV content is null. Similar to the null message test, it ensures that nothing is collected and the counters remain unchanged.
+
+These test cases cover all the branches and ensure that the `CsvtoJsonMRFCnTransformer` class is thoroughly tested.

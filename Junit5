@@ -1,129 +1,51 @@
-Sure! Below is a comprehensive JUnit 5 test class for `KafkaProducerService` that covers all the branches of the `readObject(ObjectInputStream ois)` method and the catch block of the `createProducer` method. The tests make use of reflection to access the private `readObject` method.
-
-```java
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.common.serialization.StringSerializer;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.io.*;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.Properties;
-
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
-class KafkaProducerServiceTest {
+import java.io.*;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.junit.jupiter.api.Test;
 
-    @Mock
-    private KafkaProducer<String, String> producer;
+public class KafkaProducerServiceTest {
 
-    @Mock
-    private AppProperties appProperties;
+    @Test
+    void testReadObject() throws IOException, ClassNotFoundException {
+        // Mock KafkaProducer
+        KafkaProducer<String, String> mockProducer = mock(KafkaProducer.class);
 
-    @InjectMocks
-    private KafkaProducerService kafkaProducerService;
+        // Create test data
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        ObjectOutputStream objectOutputStream = new ObjectOutputStream(byteArrayOutputStream);
+        objectOutputStream.writeObject(new KafkaProducerService(mockProducer));
+        byte[] serializedObject = byteArrayOutputStream.toByteArray();
 
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-        kafkaProducerService = new KafkaProducerService(producer);
+        // Mock ObjectInputStream
+        ObjectInputStream objectInputStream = new ObjectInputStream(new ByteArrayInputStream(serializedObject));
+
+        // Invoke readObject using reflection
+        KafkaProducerService kafkaProducerService = new KafkaProducerService();
+        try {
+            kafkaProducerService.getClass().getDeclaredMethod("readObject", ObjectInputStream.class).invoke(kafkaProducerService, objectInputStream);
+        } catch (Exception e) {
+            fail("Exception occurred while invoking readObject method");
+        }
+
+        // Verify mockProducer close method called
+        verify(mockProducer).close();
     }
 
     @Test
-    void testCreateProducerCatchBlock() {
-        // Mock the properties to throw an exception
-        when(appProperties.setAndGetKafkaProducerSSLproperties()).thenThrow(new RuntimeException("SSL properties error"));
+    void testCreateProducerException() {
+        KafkaProducerService kafkaProducerService = new KafkaProducerService();
 
-        Exception exception = assertThrows(RuntimeException.class, () -> {
-            kafkaProducerService.createProducer();
-        });
+        // Mock AppProperties exception
+        AppProperties appProperties = mock(AppProperties.class);
+        when(appProperties.setAndGetKafkaProducerSSLproperties()).thenThrow(new RuntimeException("Mocked exception"));
 
-        assertTrue(exception.getMessage().contains("Failed to create Kafka producer"));
-        verify(producer, never()).close();
+        // Set mock AppProperties instance
+        kafkaProducerService.appProp = appProperties;
+
+        // Verify RuntimeException thrown
+        assertThrows(RuntimeException.class, kafkaProducerService::createProducer);
     }
 
-    @Test
-    void testReadObjectWithProducerNotNull() throws Exception {
-        // Use reflection to access the private readObject method
-        Method readObjectMethod = KafkaProducerService.class.getDeclaredMethod("readObject", ObjectInputStream.class);
-        readObjectMethod.setAccessible(true);
-
-        ByteArrayInputStream bis = new ByteArrayInputStream(new byte[]{});
-        ObjectInputStream ois = new ObjectInputStream(bis);
-
-        // Set the producer to a non-null value
-        kafkaProducerService = new KafkaProducerService(producer);
-
-        readObjectMethod.invoke(kafkaProducerService, ois);
-
-        verify(producer, times(1)).close();
-        assertNotNull(kafkaProducerService.createProducer());
-    }
-
-    @Test
-    void testReadObjectWithProducerNull() throws Exception {
-        // Use reflection to access the private readObject method
-        Method readObjectMethod = KafkaProducerService.class.getDeclaredMethod("readObject", ObjectInputStream.class);
-        readObjectMethod.setAccessible(true);
-
-        ByteArrayInputStream bis = new ByteArrayInputStream(new byte[]{});
-        ObjectInputStream ois = new ObjectInputStream(bis);
-
-        // Set the producer to a null value
-        kafkaProducerService = new KafkaProducerService((KafkaProducer<String, String>) null);
-
-        readObjectMethod.invoke(kafkaProducerService, ois);
-
-        assertNotNull(kafkaProducerService.createProducer());
-    }
-
-    @Test
-    void testWriteMessage() {
-        String topic = "test-topic";
-        String data = "test-data";
-
-        kafkaProducerService.writeMessage(topic, data);
-
-        verify(producer, times(1)).send(any());
-        verify(producer, times(1)).flush();
-    }
-
-    @Test
-    void testCloseProducer() {
-        kafkaProducerService.closeProducer();
-        verify(producer, times(1)).close();
-    }
-
-    @Test
-    void testGetLastWrittenMessage() {
-        assertNull(kafkaProducerService.getLastWrittenMessage());
-    }
 }
-```
-
-Here's a breakdown of what each test does:
-
-1. **testCreateProducerCatchBlock**: This test ensures that if an exception is thrown during the creation of the producer, it is correctly caught and logged, and a `RuntimeException` is thrown.
-
-2. **testReadObjectWithProducerNotNull**: This test uses reflection to invoke the private `readObject` method, ensuring that if the producer is not null, it is closed and a new producer is created.
-
-3. **testReadObjectWithProducerNull**: Similar to the previous test, this test ensures that if the producer is null, a new producer is created during deserialization.
-
-4. **testWriteMessage**: This test verifies that the `writeMessage` method sends a message and flushes the producer.
-
-5. **testCloseProducer**: This test verifies that the `closeProducer` method closes the producer.
-
-6. **testGetLastWrittenMessage**: This test checks the default implementation of `getLastWrittenMessage`, which returns null.
-
-The tests ensure that all branches of the `readObject` method and the catch block of the `createProducer` method are covered, achieving 100% code coverage for the `KafkaProducerService` class.

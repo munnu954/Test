@@ -1,71 +1,58 @@
-Apologies for the oversight. To fix the error and ensure that `producer.close()` is invoked in the test case, you can use the `@Captor` annotation from Mockito to capture the `producer` argument and then verify the `close()` method is called. Here's the updated test case code:
-
-```java
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Captor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
+import java.lang.reflect.Field;
+import java.util.Properties;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.Mockito.verify;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.junit.jupiter.api.Test;
 
-@ExtendWith(MockitoExtension.class)
 public class KafkaProducerServiceTest {
 
-    @Mock
-    private KafkaProducer<String, String> producer;
+    @Test
+    public void testReadObject() throws IOException, ClassNotFoundException {
+        KafkaProducerService kafkaProducerService = new KafkaProducerService();
+        KafkaProducer<String, String> mockProducer = mock(KafkaProducer.class);
 
-    @Captor
-    private ArgumentCaptor<KafkaProducer<String, String>> producerCaptor;
+        Field producerField = null;
+        try {
+            producerField = KafkaProducerService.class.getDeclaredField("producer");
+            producerField.setAccessible(true);
+            producerField.set(kafkaProducerService, mockProducer);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            e.printStackTrace();
+        }
 
-    private KafkaProducerService kafkaProducerService;
+        ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(new byte[0]));
+        kafkaProducerService.readObject(ois);
 
-    @BeforeEach
-    public void setUp() {
-        kafkaProducerService = new KafkaProducerService(producer);
+        verify(mockProducer, times(1)).close();
+        assertNotNull(kafkaProducerService.createProducer());
     }
 
+    // Test for the catch block of createProducer method
     @Test
-    public void testReadObjectWithProducerNotNull() throws IOException, ClassNotFoundException {
-        // Create a serialized byte array of KafkaProducerService instance
-        byte[] serializedObject = SerializationUtils.serialize(kafkaProducerService);
+    public void testCreateProducerException() {
+        KafkaProducerService kafkaProducerService = new KafkaProducerService();
+        KafkaProducer<String, String> mockProducer = mock(KafkaProducer.class);
 
-        // Deserialize the byte array
-        ByteArrayInputStream bais = new ByteArrayInputStream(serializedObject);
-        ObjectInputStream ois = new ObjectInputStream(bais);
-        KafkaProducerService deserializedService = (KafkaProducerService) ois.readObject();
+        try {
+            Field producerField = KafkaProducerService.class.getDeclaredField("producer");
+            producerField.setAccessible(true);
+            producerField.set(kafkaProducerService, mockProducer);
 
-        assertNotNull(deserializedService);
-        assertNotNull(deserializedService.producer);
+            // Mocking the AppProperties to throw an exception
+            AppProperties appPropMock = mock(AppProperties.class);
+            when(appPropMock.setAndGetKafkaProducerSSLproperties()).thenThrow(new RuntimeException());
+            kafkaProducerService.appProp = appPropMock;
 
-        // Verify that the producer is not closed
-        verify(producer, verify()).close();
-    }
+            kafkaProducerService.createProducer();
 
-    @Test
-    public void testReadObjectWithProducerNull() throws IOException, ClassNotFoundException {
-        // Create a serialized byte array of KafkaProducerService instance with null producer
-        kafkaProducerService = new KafkaProducerService(null);
-        byte[] serializedObject = SerializationUtils.serialize(kafkaProducerService);
-
-        // Deserialize the byte array
-        ByteArrayInputStream bais = new ByteArrayInputStream(serializedObject);
-        ObjectInputStream ois = new ObjectInputStream(bais);
-        KafkaProducerService deserializedService = (KafkaProducerService) ois.readObject();
-
-        assertNotNull(deserializedService);
-        assertNull(deserializedService.producer);
+        } catch (Exception e) {
+            fail("Exception caught: " + e.getMessage());
+        }
     }
 }
-```
-
-In this updated test case, the `@Captor` annotation is used to capture the `KafkaProducer` instance passed to the `close()` method. Then, the `verify()` method with `producerCaptor` is used to ensure that `close()` is invoked on the captured producer. This should resolve the error and properly verify the `producer.close()` call in the test case.

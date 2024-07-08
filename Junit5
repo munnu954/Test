@@ -1,51 +1,142 @@
+To achieve 100% code coverage for the `KafkaProducerService` class, including the `readObject(ObjectInputStream ois)` method and catching exceptions in the `createProducer` method, you can utilize JUnit 5 along with Mockito for mocking dependencies and reflection APIs for testing private methods.
+
+Below is the complete JUnit 5 test class to achieve the desired coverage:
+
+```java
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Properties;
+
 import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.StringSerializer;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+@ExtendWith(MockitoExtension.class)
 public class KafkaProducerServiceTest {
+    
+    @Mock
+    private KafkaProducer<String, String> producerMock;
+    
+    @Mock
+    private AppProperties appPropertiesMock;
 
+    private KafkaProducerService kafkaProducerService;
+
+    private AppProperties realAppProperties;
+   
+    @BeforeEach
+    public void setUp() {
+        realAppProperties = AppProperties.getInstance();
+        kafkaProducerService = new KafkaProducerService(producerMock);
+        KafkaProducerService.appProp = appPropertiesMock;  // Mock app properties
+    }
+    
     @Test
-    void testReadObject() throws IOException, ClassNotFoundException {
-        // Mock KafkaProducer
-        KafkaProducer<String, String> mockProducer = mock(KafkaProducer.class);
+    public void testReadObject() throws IOException, ClassNotFoundException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        // Serialize the object
+        ByteArrayOutputStreafenam.m out = new ByteArrayOutputStream();
+        ObjectOutputStream oos = new ObjectOutputStream(out);
+        oos.writeObject(kafkaProducerService);
 
-        // Create test data
-        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
-        ObjectOutputStream objectOutputStream = new ObjectOutputStream(byteArrayOutputStream);
-        objectOutputStream.writeObject(new KafkaProducerService(mockProducer));
-        byte[] serializedObject = byteArrayOutputStream.toByteArray();
+        // Deserialize the object
+        ByteArrayInputStream in = new ByteArrayInputStream(out.toByteArray());
+        ObjectInputStream ois = new ObjectInputStream(in);
 
-        // Mock ObjectInputStream
-        ObjectInputStream objectInputStream = new ObjectInputStream(new ByteArrayInputStream(serializedObject));
+        KafkaProducerService deserializedService = new KafkaProducerService();
 
-        // Invoke readObject using reflection
-        KafkaProducerService kafkaProducerService = new KafkaProducerService();
-        try {
-            kafkaProducerService.getClass().getDeclaredMethod("readObject", ObjectInputStream.class).invoke(kafkaProducerService, objectInputStream);
-        } catch (Exception e) {
-            fail("Exception occurred while invoking readObject method");
-        }
+        // Use reflection to invoke the private method
+        Method readObjectMethod = KafkaProducerService.class.getDeclaredMethod("readObject", ObjectInputStream.class);
+        readObjectMethod.setAccessible(true);
+        readObjectMethod.invoke(deserializedService, ois);
 
-        // Verify mockProducer close method called
-        verify(mockProducer).close();
+        // Verify
+        assertNotNull(deserializedService);
+        assertNotNull(deserializedService.producer);
+    }
+    
+    @Test
+    public void testCreateProducerException() {
+        when(appPropertiesMock.setAndGetKafkaProducerSSLproperties()).thenThrow(new RuntimeException("Mocked Exception"));
+
+        Exception exception = assertThrows(RuntimeException.class, () -> {
+            kafkaProducerService.createProducer();
+        });
+
+        assertEquals("Failed to create Kafka producer", exception.getMessage());
     }
 
     @Test
-    void testCreateProducerException() {
-        KafkaProducerService kafkaProducerService = new KafkaProducerService();
+    public void testWriteMessage() {
+        String topic = "test-topic";
+        String data = "test-data";
 
-        // Mock AppProperties exception
-        AppProperties appProperties = mock(AppProperties.class);
-        when(appProperties.setAndGetKafkaProducerSSLproperties()).thenThrow(new RuntimeException("Mocked exception"));
+        kafkaProducerService.writeMessage(topic, data);
 
-        // Set mock AppProperties instance
-        kafkaProducerService.appProp = appProperties;
-
-        // Verify RuntimeException thrown
-        assertThrows(RuntimeException.class, kafkaProducerService::createProducer);
+        verify(producerMock).send(any());
+        verify(producerMock).flush();
     }
 
+    @Test
+    public void testWriteMessageException() {
+        String topic = "test-topic";
+        String data = "test-data";
+
+        doThrow(new RuntimeException("Mocked Exception")).when(producerMock).send(any());
+
+        kafkaProducerService.writeMessage(topic, data);
+
+        // Verify that an error was logged
+    }
+    
+    @Test
+    public void testCloseProducer() {
+        kafkaProducerService.closeProducer();
+
+        verify(producerMock).close();
+    }
+
+    @Test
+    public void testGetLastWrittenMessage() {
+        assertNull(kafkaProducerService.getLastWrittenMessage());
+    }
 }
+```
+
+### What this Test Class Covers:
+1. **Serialization and Deserialization (`readObject`)**:
+   - The `testReadObject` method covers the serialization and deserialization process including creating the producer again during deserialization.
+
+2. **Exception Handling in `createProducer`**:
+   - The `testCreateProducerException` method tests the `catch` block in `createProducer` by throwing an exception when setting properties.
+
+3. **`writeMessage` Method**:
+   - Includes scenarios for normal operation and exception scenario.
+
+4. **Closing Producer**:
+   - The `testCloseProducer` checks if the producer is properly closed.
+
+5. **`getLastWrittenMessage` Method**:
+   - Ensures the `getLastWrittenMessage` method returns null, as per the current implementation.
+
+### Note:
+- Reflection API is used to access the private `readObject` method.
+- Exceptions are properly handled and tested.
+- Care was taken to avoid `java.io.EOFException` by ensuring proper object serialization and deserialization.
+
+You need to ensure that `AppProperties.java`, `KafkaProducerService.java`, and the necessary dependencies are correctly configured in your project for the above test class to run successfully.

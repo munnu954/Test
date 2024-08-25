@@ -1,86 +1,29 @@
-Sure, let's update your `CoconutServiceVersion3` class to incorporate the conditions for `locationCLLI` and `siteName` in the `queryBasedOnParameter` method. Here’s how you can do it:
+private String queryBasedOnParameter(Map<String, Object> queryParams) {
+    StringBuilder finalQuery = new StringBuilder();
 
-```java
-@Service
-public class CoconutServiceVersion3 {
+    if ("LOCATION".equalsIgnoreCase((String) queryParams.get("outputControl"))) {
+        finalQuery.append(coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY);
+        
+        // Adding LEFT JOIN for gdnm_site
+        finalQuery.append(" LEFT JOIN gdnm_site site ON switch.site_id = site.id ");
 
-    @Autowired
-    CoconutDeviceDao coconutDeviceDao;
-
-    @Autowired
-    EuipmentListCoconutDeviceDao euipmentListCoconutDeviceDao;
-
-    @Autowired
-    EquipmentListCoconutDeviceV3Dao equipmentListCoconutDeviceV3Dao;
-
-    private CoconutDeviceMSConstants coconutDeviceMSConstants;
-
-    private static Logger logger = LoggerFactory.getLogger(CoconutServiceVersion3.class);
-
-    // newly created for v3api
-    public UTSEquipmentList getCOCONUTEquipListV3(EquipmentInputRequest request, UTSEquipmentList utsEquipmentList) throws InternalServerErrorException, NoDataFoundException, InterruptedException, ExecutionException, DaoException {
-        try {
-            String qry = null;
-            String fullQuery = null;
-            Map<String, Object> criteria = request.getRequestParameters();
-            qry = queryBasedOnParameter(criteria);
-            fullQuery = "select COUNT(*) from (" + qry + ")";
-            Integer skip = 0;
-            Integer limit = 10;
-            if (criteria.containsKey("pageNo")) {
-                if (criteria.get("pageNo").equals("1")) {
-                    skip = 0;
-                } else {
-                    skip = (Integer.parseInt(criteria.get("pageNo").toString()) * Integer.parseInt(criteria.get("size").toString()));
-                    skip = skip - Integer.parseInt(criteria.get("size").toString());
-                }
-            } else {
-                skip = 0;
-            }
-            if (criteria.containsKey("size")) {
-                limit = skip + Integer.parseInt(criteria.get("size").toString());
-            } else {
-                limit = 10;
-            }
-            qry = "select * from (select t.*, rownum as rn from (" + qry;
-            qry = qry.concat(" ) t ) WHERE rn BETWEEN " + skip + " and " + limit + " ");
-            if (criteria.containsKey("sortByField")) {
-                qry = qry.concat(" order by " + criteria.get("sortByField") + " ");
-            }
-            if (criteria.containsKey("sortDirection")) {
-                qry = qry.concat(" " + criteria.get("sortDirection") + " ");
-            }
-            UTSEquipmentList response = new UTSEquipmentList();
-            response = equipmentListCoconutDeviceV3Dao.getEquipListDaoV3(criteria, qry, fullQuery, utsEquipmentList, request);
-            return response;
-        } catch (Exception ex) {
-            logger.error(ex.getMessage());
-            throw new InternalServerErrorException(ex.getMessage());
-        }
-    }
-
-    private String queryBasedOnParameter(Map<String, Object> queryParams) {
-        String baseQuery = coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY;
-        StringJoiner finalQuery = new StringJoiner(" ", baseQuery + " WHERE 1=1", "");
-
+        // Check for locationCLLI parameter
         if (queryParams.containsKey("locationCLLI")) {
-            finalQuery.add("AND locationCLLI = '" + queryParams.get("locationCLLI") + "'");
+            finalQuery.append(" WHERE site.clli_code = LOWER('").append(queryParams.get("locationCLLI")).append("') ")
+                      .append(" OR site.clli_code = UPPER('").append(queryParams.get("locationCLLI")).append("') ");
         }
 
+        // Check for siteName parameter
         if (queryParams.containsKey("siteName")) {
-            finalQuery.add("AND siteName = '" + queryParams.get("siteName") + "'");
+            // If locationCLLI is already in WHERE clause, use AND; otherwise, start a new WHERE clause
+            if (finalQuery.toString().contains("WHERE")) {
+                finalQuery.append(" AND ");
+            } else {
+                finalQuery.append(" WHERE ");
+            }
+            finalQuery.append(" siteName = '").append(queryParams.get("siteName")).append("' ");
         }
-
-        return finalQuery.toString();
     }
+
+    return finalQuery.toString();
 }
-```
-
-### Explanation:
-
-1. **Base Query**: The `baseQuery` is initialized with `coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY`.
-2. **StringJoiner Initialization**: `finalQuery` is initialized with the base query and a `WHERE 1=1` clause. The `WHERE 1=1` is a trick to simplify appending additional `AND` conditions.
-3. **LocationCLLI Condition**: If `locationCLLI` is present in `queryParams`, an `AND locationCLLI = 'value'` condition is appended to `finalQuery`.
-4. **SiteName Condition**: Similarly, if `siteName` is present, an `AND siteName = 'value'` condition is appended.
-
-This updated method will dynamically build the query based on the presence of `locationCLLI` and `siteName` in `queryParams`.

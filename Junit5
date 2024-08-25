@@ -1,26 +1,102 @@
-Here is the updated code for the `queryBasedOnParameter` method in the `CoconutServiceVersion3` class:
+To update the `CoconutServiceVersion3` class as per your requirements, we'll modify the `queryBasedOnParameter` method to conditionally append the `locationCLLI` and `siteName` criteria to the `finalQuery`. Here's the updated code:
 
-```
-private String queryBasedOnParameter(Map<String, Object> queryParams) {
-    String query = coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY;
-    StringJoiner finalQuery = new StringJoiner(" AND ");
-    
-    if (queryParams.containsKey("locationCLLI")) {
-        finalQuery.add("site.clli_code = lower('" + queryParams.get("locationCLLI") + "') OR site.clli_code = upper('" + queryParams.get("locationCLLI") + "')");
+```java
+@Service
+public class CoconutServiceVersion3 {
+
+    @Autowired
+    CoconutDeviceDao coconutDeviceDao;
+
+    @Autowired
+    EuipmentListCoconutDeviceDao euipmentListCoconutDeviceDao;
+
+    @Autowired
+    EquipmentListCoconutDeviceV3Dao equipmentListCoconutDeviceV3Dao;
+
+    private CoconutDeviceMSConstants coconutDeviceMSConstants;
+
+    private static Logger logger = LoggerFactory.getLogger(CoconutServiceVersion3.class);
+
+    // newly created for v3api
+    public UTSEquipmentList getCOCONUTEquipListV3(EquipmentInputRequest request, UTSEquipmentList utsEquipmentList) throws InternalServerErrorException, NoDataFoundException, InterruptedException, ExecutionException, DaoException {
+        try {
+            String qry = null;
+            String fullQuery = null;
+            Map<String, Object> criteria = request.getRequestParameters();
+            qry = queryBasedOnParameter(criteria);
+            fullQuery = "select COUNT(*) from (" + qry + ")";
+            Integer skip = 0;
+            Integer limit = 10;
+            if (criteria.containsKey("pageNo")) {
+                if (criteria.get("pageNo").equals("1")) {
+                    skip = 0;
+                } else {
+                    skip = (Integer.parseInt(criteria.get("pageNo").toString()) * Integer.parseInt(criteria.get("size").toString()));
+                    skip = skip - Integer.parseInt(criteria.get("size").toString());
+                }
+            } else {
+                skip = 0;
+            }
+            if (criteria.containsKey("size")) {
+                limit = skip + Integer.parseInt(criteria.get("size").toString());
+            } else {
+                limit = 10;
+            }
+            qry = "select * from (select t.*, rownum as rn from (" + qry;
+            qry = qry.concat(" ) t ) WHERE rn BETWEEN " + skip + " and " + limit + " ");
+            if (criteria.containsKey("sortByField")) {
+                qry = qry.concat(" order by " + criteria.get("sortByField") + " ");
+            }
+            if (criteria.containsKey("sortDirection")) {
+                qry = qry.concat(" " + criteria.get("sortDirection") + " ");
+            }
+            UTSEquipmentList response = new UTSEquipmentList();
+            response = equipmentListCoconutDeviceV3Dao.getEquipListDaoV3(criteria, qry, fullQuery, utsEquipmentList, request);
+            return response;
+        } catch (Exception ex) {
+            logger.error(ex.getMessage());
+            throw new InternalServerErrorException(ex.getMessage());
+        }
     }
-    
-    if (queryParams.containsKey("siteName")) {
-        finalQuery.add("site.site_name = '" + queryParams.get("siteName") + "'");
+
+    private String queryBasedOnParameter(Map<String, Object> queryParams) {
+        String query = "";
+        StringJoiner finalQuery = new StringJoiner(" ");
+
+        if ("LOCATION".equalsIgnoreCase((String) queryParams.get("outputControl"))) {
+            finalQuery.add(coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY);
+        }
+
+        boolean whereAdded = false;
+
+        if (queryParams.containsKey("locationCLLI")) {
+            finalQuery.add(!whereAdded ? " WHERE " : " AND ");
+            finalQuery.add(" (site.clli_code=LOWER(:locationCLLI) OR site.clli_code=UPPER(:locationCLLI)) ");
+            whereAdded = true;
+        }
+
+        if (queryParams.containsKey("siteName")) {
+            finalQuery.add(!whereAdded ? " WHERE " : " AND ");
+            finalQuery.add(" site.site_name=:siteName ");
+        }
+
+        return finalQuery.toString();
     }
-    
-    if (finalQuery.length() > 0) {
-        query += " WHERE " + finalQuery.toString();
-    }
-    
-    return query;
 }
 ```
 
-This updated code checks if the `locationCLLI` and `siteName` parameters are present in the `queryParams` map. If they are present, it appends the corresponding conditions to the `finalQuery`. If they are not present, it does not append anything to the `finalQuery`. The resulting `finalQuery` will work even without `locationCLLI` or `siteName`.
+### Explanation:
 
-Note that I didn't hardcode the existing `finalQuery` value into the code. Instead, I used the `coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY` constant as the base query, and then appended the conditions based on the presence of `locationCLLI` and `siteName` in the `queryParams` map.
+1. **`queryBasedOnParameter` method**:
+    - The method now checks for the presence of `locationCLLI` and `siteName` in the `queryParams` map.
+    - If `locationCLLI` is present, it appends the necessary condition to the `finalQuery`.
+    - If `siteName` is present, it appends the necessary condition to the `finalQuery`.
+    - The conditions are appended using a `StringJoiner` to ensure proper formatting and spacing.
+
+2. **Handling the WHERE clause**:
+    - A `boolean` variable `whereAdded` is used to determine whether the `WHERE` clause has already been added. This ensures that subsequent conditions are appended with `AND`.
+
+3. **Integration with existing code**:
+    - The rest of the class remains unchanged, ensuring that the new conditions integrate seamlessly with the existing logic.
+
+This approach ensures that the `finalQuery` is dynamically built based on the presence of `locationCLLI` and `siteName` in the `queryParams` map, and works correctly even if one or both of these parameters are not present.

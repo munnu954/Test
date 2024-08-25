@@ -1,78 +1,90 @@
-You can achieve this by using Java 8 Stream APIs to filter the employees based on their rating, map their salaries to the increased value, and then collect the updated employees back into a list. Below is a sample implementation:
+Certainly! Here's the updated `CoconutServiceVersion3` class with the conditions you specified for updating the `finalQuery` based on the presence of `locationCLLI` and `siteName` in the `queryParams`:
 
 ```java
-import java.util.Arrays;
-import java.util.List;
+@Service
+public class CoconutServiceVersion3 {
 
-class Employee {
-    private String name;
-    private double salary;
-    private int rating;
+    @Autowired
+    CoconutDeviceDao coconutDeviceDao;
 
-    // Constructor
-    public Employee(String name, double salary, int rating) {
-        this.name = name;
-        this.salary = salary;
-        this.rating = rating;
+    @Autowired
+    EuipmentListCoconutDeviceDao euipmentListCoconutDeviceDao;
+
+    @Autowired
+    EquipmentListCoconutDeviceV3Dao equipmentListCoconutDeviceV3Dao;
+
+    private CoconutDeviceMSConstants coconutDeviceMSConstants;
+
+    private static Logger logger = LoggerFactory.getLogger(CoconutServiceVersion3.class);
+
+    // newly created for v3api
+    public UTSEquipmentList getCOCONUTEquipListV3(EquipmentInputRequest request, UTSEquipmentList utsEquipmentList)
+            throws InternalServerErrorException, NoDataFoundException, InterruptedException, ExecutionException, DaoException {
+        try {
+            String qry = null;
+            String fullQuery = null;
+            Map<String, Object> criteria = request.getRequestParameters();
+            qry = queryBasedOnParameter(criteria);
+            fullQuery = "select COUNT(*) from (" + qry + ")";
+            Integer skip = 0;
+            Integer limit = 10;
+            if (criteria.containsKey("pageNo")) {
+                if (criteria.get("pageNo").equals("1")) {
+                    skip = 0;
+                } else {
+                    skip = (Integer.parseInt(criteria.get("pageNo").toString()) * Integer.parseInt(criteria.get("size").toString()));
+                    skip = skip - Integer.parseInt(criteria.get("size").toString());
+                }
+            } else {
+                skip = 0;
+            }
+            if (criteria.containsKey("size")) {
+                limit = skip + Integer.parseInt(criteria.get("size").toString());
+            } else {
+                limit = 10;
+            }
+            qry = "select * from (select t.*, rownum as rn from (" + qry;
+            qry = qry.concat(" ) t ) WHERE rn BETWEEN " + skip + " and " + limit + " ");
+            if (criteria.containsKey("sortByField")) {
+                qry = qry.concat(" order by " + criteria.get("sortByField") + " ");
+            }
+            if (criteria.containsKey("sortDirection")) {
+                qry = qry.concat(" " + criteria.get("sortDirection") + " ");
+            }
+            UTSEquipmentList response = new UTSEquipmentList();
+            response = equipmentListCoconutDeviceV3Dao.getEquipListDaoV3(criteria, qry, fullQuery, utsEquipmentList, request);
+            return response;
+        } catch (Exception ex) {
+            logger.error(ex.getMessage());
+            throw new InternalServerErrorException(ex.getMessage());
+        }
     }
 
-    // Getters and setters
-    public String getName() {
-        return name;
-    }
+    private String queryBasedOnParameter(Map<String, Object> queryParams) {
+        String query = "";
+        StringJoiner finalQuery = new StringJoiner(" ");
 
-    public double getSalary() {
-        return salary;
-    }
+        if ("LOCATION".equalsIgnoreCase((String) queryParams.get("outputControl"))) {
+            finalQuery.add(coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY);
+        }
 
-    public void setSalary(double salary) {
-        this.salary = salary;
-    }
+        // Adding WHERE clause conditions based on presence of locationCLLI and siteName
+        if (queryParams.containsKey("locationCLLI") || queryParams.containsKey("siteName")) {
+            finalQuery.add("WHERE");
+            if (queryParams.containsKey("locationCLLI")) {
+                finalQuery.add("locationCLLI = '" + queryParams.get("locationCLLI") + "'");
+            }
+            if (queryParams.containsKey("locationCLLI") && queryParams.containsKey("siteName")) {
+                finalQuery.add("AND");
+            }
+            if (queryParams.containsKey("siteName")) {
+                finalQuery.add("siteName = '" + queryParams.get("siteName") + "'");
+            }
+        }
 
-    public int getRating() {
-        return rating;
-    }
-
-    @Override
-    public String toString() {
-        return "Employee {name='" + name + "', salary=" + salary + ", rating=" + rating + '}';
+        return finalQuery.toString();
     }
 }
-
-public class Main {
-    public static void main(String[] args) {
-        List<Employee> employeeList = Arrays.asList(
-            new Employee("Sachin", 50000, 5),
-            new Employee("Saurabh", 55000, 5),
-            new Employee("Rahul", 45000, 4),
-            new Employee("Yuvraj", 60000, 3)
-        );
-
-        employeeList.stream()
-            .filter(e -> e.getRating() > 4)
-            .forEach(e -> e.setSalary(e.getSalary() * 1.1));
-
-        employeeList.forEach(System.out::println);
-    }
-}
 ```
 
-### Explanation:
-1. **Employee Class**: Defines the Employee class with attributes name, salary, and rating. Includes a constructor, getters, setters, and a `toString` method for easy output.
-2. **Main Class**: Contains the main method.
-3. **employeeList Initialization**: Initializes the list of employees.
-4. **Stream Operations**:
-   - **filter**: Filters employees with a rating greater than 4.
-   - **forEach**: Increases the salary by 10% for the filtered employees.
-5. **Output**: Prints the updated list of employees.
-
-This code will result in the following output:
-
-```
-Employee {name='Sachin', salary=55000.0, rating=5}
-Employee {name='Saurabh', salary=60500.0, rating=5}
-Employee {name='Rahul', salary=45000.0, rating=4}
-Employee {name='Yuvraj', salary=60000.0, rating=3}
-```
-
-Note that the salary increase is calculated correctly without the floating-point precision issues seen in the provided example.
+The main updates are in the `queryBasedOnParameter` method. The method now checks for the presence of `locationCLLI` and `siteName` in the `queryParams` map and appends the appropriate conditions to the `finalQuery`. The `WHERE` clause is added only if either `locationCLLI` or `siteName` is present, ensuring that the query works correctly even if both parameters are absent.

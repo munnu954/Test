@@ -1,8 +1,3 @@
-Sure, let's update the `CoconutServiceVersion3` class to include the logic for conditionally appending `locationCLLI` and `siteName` parameters to the `finalQuery` in the `queryBasedOnParameter` method.
-
-Here's the updated `CoconutServiceVersion3` class:
-
-```java
 @Service
 public class CoconutServiceVersion3 {
 
@@ -19,17 +14,31 @@ public class CoconutServiceVersion3 {
 
     private static Logger logger = LoggerFactory.getLogger(CoconutServiceVersion3.class);
 
-    // Newly created for v3api
+    //newly created for v3api
     public UTSEquipmentList getCOCONUTEquipListV3(EquipmentInputRequest request, UTSEquipmentList utsEquipmentList) throws InternalServerErrorException, NoDataFoundException, InterruptedException, ExecutionException, DaoException {
         try {
-            String qry = null;
-            String fullQuery = null;
+            String sqlQuery = null;
+            StringJoiner sqlQueryString = new StringJoiner("");
             Map<String, Object> criteria = request.getRequestParameters();
-            qry = queryBasedOnParameter(criteria);
-            fullQuery = "select COUNT(*) from (" + qry + ")";
+
+            if ("LOCATION".equalsIgnoreCase((String) criteria.get("outputControl"))) {
+                sqlQueryString.add(coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY);
+
+                if ("%".equalsIgnoreCase((String) criteria.get("locationCLLI"))) {
+                    sqlQueryString.add(coconutDeviceMSConstants.COCONUT_V3_DEVICE_LIST_SITE_NAME_QUERY);
+                }
+
+                if ("%".equalsIgnoreCase((String) criteria.get("siteName"))) {
+                    sqlQueryString.add(coconutDeviceMSConstants.COCONUT_V3_DEVICE_LIST_LOCATION_CLLI_QUERY);
+                }
+            } else {
+                sqlQueryString.add(coconutDeviceMSConstants.COCONUT_V3_DEVICE_LIST_QUERY);
+            }
+
+            sqlQuery = sqlQueryString.toString();
+
             Integer skip = 0;
             Integer limit = 10;
-
             if (criteria.containsKey("pageNo")) {
                 if (criteria.get("pageNo").equals("1")) {
                     skip = 0;
@@ -40,26 +49,24 @@ public class CoconutServiceVersion3 {
             } else {
                 skip = 0;
             }
-
             if (criteria.containsKey("size")) {
                 limit = skip + Integer.parseInt(criteria.get("size").toString());
             } else {
                 limit = 10;
             }
-
-            qry = "select * from (select t.*, rownum as rn from (" + qry;
-            qry = qry.concat(" ) t ) WHERE rn BETWEEN " + skip + " and " + limit + " ");
-
+            sqlQuery = "select * from (select t.*, rownum as rn from (" + sqlQuery;
+            sqlQuery = sqlQuery.concat(" ) t ) WHERE rn BETWEEN " + skip + " and " + limit + " ");
             if (criteria.containsKey("sortByField")) {
-                qry = qry.concat(" order by " + criteria.get("sortByField") + " ");
+                sqlQuery = sqlQuery.concat(" order by " + criteria.get("sortByField") + " ");
+            }
+            if (criteria.containsKey("sortDirection")) {
+                sqlQuery = sqlQuery.concat(" " + criteria.get("sortDirection") + " ");
             }
 
-            if (criteria.containsKey("sortDirection")) {
-                qry = qry.concat(" " + criteria.get("sortDirection") + " ");
-            }
+            String fullQuery = "select COUNT(*) from (" + sqlQuery + ")";
 
             UTSEquipmentList response = new UTSEquipmentList();
-            response = equipmentListCoconutDeviceV3Dao.getEquipListDaoV3(criteria, qry, fullQuery, utsEquipmentList, request);
+            response = equipmentListCoconutDeviceV3Dao.getEquipListDaoV3(criteria, sqlQuery, fullQuery, utsEquipmentList, request);
             return response;
         } catch (Exception ex) {
             logger.error(ex.getMessage());
@@ -68,26 +75,18 @@ public class CoconutServiceVersion3 {
     }
 
     private String queryBasedOnParameter(Map<String, Object> queryParams) {
-        String query = coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY;
-        StringJoiner finalQuery = new StringJoiner(" ");
-        finalQuery.add(query);
+        String query = "";
+        StringJoiner finalQuery = new StringJoiner("");
+        finalQuery.add(coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY);
 
-        if (queryParams.containsKey("locationCLLI") && queryParams.get("locationCLLI") != null) {
-            finalQuery.add("AND locationCLLI = '" + queryParams.get("locationCLLI") + "'");
+        if (queryParams.containsKey("locationCLLI") && !"%".equalsIgnoreCase((String) queryParams.get("locationCLLI"))) {
+            finalQuery.add(coconutDeviceMSConstants.COCONUT_V3_DEVICE_LIST_LOCATION_CLLI_QUERY);
         }
 
-        if (queryParams.containsKey("siteName") && queryParams.get("siteName") != null) {
-            finalQuery.add("AND siteName = '" + queryParams.get("siteName") + "'");
+        if (queryParams.containsKey("siteName") && !"%".equalsIgnoreCase((String) queryParams.get("siteName"))) {
+            finalQuery.add(coconutDeviceMSConstants.COCONUT_V3_DEVICE_LIST_SITE_NAME_QUERY);
         }
 
         return finalQuery.toString();
     }
 }
-```
-
-Here's a breakdown of the changes:
-
-1. **`queryBasedOnParameter` Method**: The method now checks for the presence of `locationCLLI` and `siteName` in the `queryParams` map and appends them to the `finalQuery` if they are present.
-2. **`getCOCONUTEquipListV3` Method**: This method remains mostly unchanged, but it will now use the updated query from `queryBasedOnParameter`.
-
-This implementation ensures that the `finalQuery` will include the additional conditions for `locationCLLI` and `siteName` only if they are present in the `queryParams`, thus making it dynamic and adaptable to different inputs.

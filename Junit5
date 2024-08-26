@@ -1,35 +1,72 @@
-private String queryBasedOnParameter(Map<String, Object> queryParams) {
-    String query = "";
-    StringJoiner finalQuery = new StringJoiner(" ");
+@Service
+public class CoconutServiceVersion3 {
 
-    // Start building the base query
-    if ("LOCATION".equalsIgnoreCase((String) queryParams.get("outputControl"))) {
-        finalQuery.add(coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY);
-    }
+    @Autowired
+    CoconutDeviceDao coconutDeviceDao;
 
-    // Initialize a StringJoiner for the WHERE conditions
-    StringJoiner whereConditions = new StringJoiner(" AND ", " WHERE ", "");
+    @Autowired
+    EuipmentListCoconutDeviceDao euipmentListCoconutDeviceDao;
 
-    // Check for locationCLLI in queryParams
-    if (queryParams.containsKey("locationCLLI")) {
-        String locationCLLI = (String) queryParams.get("locationCLLI");
-        if (locationCLLI != null && !locationCLLI.isEmpty()) {
-            whereConditions.add("locationCLLI = '" + locationCLLI + "'");
+    @Autowired
+    EquipmentListCoconutDeviceV3Dao equipmentListCoconutDeviceV3Dao;
+
+    private CoconutDeviceMSConstants coconutDeviceMSConstants;
+
+    private static Logger logger = LoggerFactory.getLogger(CoconutServiceVersion3.class);
+
+    public UTSEquipmentList getCOCONUTEquipListV3(EquipmentInputRequest request, UTSEquipmentList utsEquipmentList) throws InternalServerErrorException, NoDataFoundException, InterruptedException, ExecutionException, DaoException {
+        try {
+            String qry = null;
+            String fullQuery = null;
+            Map<String, Object> criteria = request.getRequestParameters();
+            qry = queryBasedOnParameter(criteria);
+            fullQuery = "select COUNT(*) from (" + qry + ")";
+            Integer skip = 0;
+            Integer limit = 10;
+            if (criteria.containsKey("pageNo")) {
+                if (criteria.get("pageNo").equals("1")) {
+                    skip = 0;
+                } else {
+                    skip = (Integer.parseInt(criteria.get("pageNo").toString()) * Integer.parseInt(criteria.get("size").toString()));
+                    skip = skip - Integer.parseInt(criteria.get("size").toString());
+                }
+            } else {
+                skip = 0;
+            }
+            if (criteria.containsKey("size")) {
+                limit = skip + Integer.parseInt(criteria.get("size").toString());
+            } else {
+                limit = 10;
+            }
+            qry = "select * from (select t.*, rownum as rn from (" + qry;
+            qry = qry.concat(" ) t ) WHERE rn BETWEEN " + skip + " and " + limit + " ");
+            if (criteria.containsKey("sortByField")) {
+                qry = qry.concat(" order by " + criteria.get("sortByField") + " ");
+            }
+            if (criteria.containsKey("sortDirection")) {
+                qry = qry.concat(" " + criteria.get("sortDirection") + " ");
+            }
+            UTSEquipmentList response = new UTSEquipmentList();
+            response = equipmentListCoconutDeviceV3Dao.getEquipListDaoV3(criteria, qry, fullQuery, utsEquipmentList, request);
+            return response;
+        } catch (Exception ex) {
+            logger.error(ex.getMessage());
+            throw new InternalServerErrorException(ex.getMessage());
         }
     }
 
-    // Check for siteName in queryParams
-    if (queryParams.containsKey("siteName")) {
-        String siteName = (String) queryParams.get("siteName");
-        if (siteName != null && !siteName.isEmpty()) {
-            whereConditions.add("siteName = '" + siteName + "'");
+    private String queryBasedOnParameter(Map<String, Object> queryParams) {
+        String query = "";
+        StringJoiner finalQuery = new StringJoiner("");
+        if ("LOCATION".equalsIgnoreCase((String) queryParams.get("outputControl"))) {
+            finalQuery.add(coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY);
+            if (queryParams.containsKey("locationCLLI") && !"%".equalsIgnoreCase((String) queryParams.get("locationCLLI"))) {
+                finalQuery.add(" AND LOCATION_CLLI LIKE :locationCLLI ");
+            }
+            if (queryParams.containsKey("siteName") && !"%".equalsIgnoreCase((String) queryParams.get("siteName"))) {
+                finalQuery.add(" AND SITE_NAME LIKE :siteName ");
+            }
         }
+        return finalQuery.toString();
     }
-
-    // Append the WHERE conditions to the finalQuery if any conditions were added
-    if (whereConditions.length() > 0) {
-        finalQuery.add(whereConditions.toString());
-    }
-
-    return finalQuery.toString();
 }

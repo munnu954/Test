@@ -1,107 +1,29 @@
-Certainly! Below is the updated `CoconutServiceVersion3` class with modifications to the `queryBasedOnParameter` method to handle the `locationCLLI` and `siteName` parameters similarly to the `getTirksEquipListV3` method:
+Certainly! Below is the updated query to check if `locationCLLI` and `siteName` parameters are present in the `queryParams` map, and only append the corresponding conditions if they are present.
 
-```java
-@Service
-public class CoconutServiceVersion3 {
-
-    @Autowired
-    CoconutDeviceDao coconutDeviceDao;
-
-    @Autowired
-    EuipmentListCoconutDeviceDao euipmentListCoconutDeviceDao;
-
-    @Autowired
-    EquipmentListCoconutDeviceV3Dao equipmentListCoconutDeviceV3Dao;
-
-    @Autowired
-    private CoconutDeviceMSConstants coconutDeviceMSConstants;
-
-    private static Logger logger = LoggerFactory.getLogger(CoconutServiceVersion3.class);
-
-    // Newly created for v3api
-    public UTSEquipmentList getCOCONUTEquipListV3(EquipmentInputRequest request, UTSEquipmentList utsEquipmentList) 
-            throws InternalServerErrorException, NoDataFoundException, InterruptedException, ExecutionException, DaoException {
-        try {
-            String sqlQuery = null;
-            StringJoiner sqlQueryString = new StringJoiner("");
-            Map<String, Object> criteria = request.getRequestParameters();
-
-            if ("LOCATION".equalsIgnoreCase((String) criteria.get("outputControl"))) {
-                sqlQueryString.add(coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY);
-
-                if ("%".equalsIgnoreCase((String) criteria.get("locationCLLI"))) {
-                    sqlQueryString.add(coconutDeviceMSConstants.COCONUT_DEVICE_LIST_SITE_NAME_V3_QUERY);
-                }
-                if ("%".equalsIgnoreCase((String) criteria.get("siteName"))) {
-                    sqlQueryString.add(coconutDeviceMSConstants.COCONUT_DEVICE_LIST_LOCATION_CLLI_V3_QUERY);
-                }
-
-                sqlQuery = sqlQueryString.toString();
-            } else {
-                sqlQuery = coconutDeviceMSConstants.COCONUT_DEVICE_LIST_V3_QUERY;
-            }
-
-            String fullQuery = "select COUNT(*) from (" + sqlQuery + ")";
-            Integer skip = 0;
-            Integer limit = 10;
-
-            if (criteria.containsKey("pageNo")) {
-                if (criteria.get("pageNo").equals("1")) {
-                    skip = 0;
-                } else {
-                    skip = (Integer.parseInt(criteria.get("pageNo").toString()) * Integer.parseInt(criteria.get("size").toString()));
-                    skip = skip - Integer.parseInt(criteria.get("size").toString());
-                }
-            }
-
-            if (criteria.containsKey("size")) {
-                limit = skip + Integer.parseInt(criteria.get("size").toString());
-            }
-
-            sqlQuery = "select * from (select t.*, rownum as rn from (" + sqlQuery;
-            sqlQuery = sqlQuery.concat(" ) t ) WHERE rn BETWEEN " + skip + " and " + limit + " ");
-
-            if (criteria.containsKey("sortByField")) {
-                sqlQuery = sqlQuery.concat(" order by " + criteria.get("sortByField") + " ");
-            }
-
-            if (criteria.containsKey("sortDirection")) {
-                sqlQuery = sqlQuery.concat(" " + criteria.get("sortDirection") + " ");
-            }
-
-            UTSEquipmentList response = new UTSEquipmentList();
-            response = equipmentListCoconutDeviceV3Dao.getEquipListDaoV3(criteria, sqlQuery, fullQuery, utsEquipmentList, request);
-            return response;
-        } catch (Exception ex) {
-            logger.error(ex.getMessage());
-            throw new InternalServerErrorException(ex.getMessage());
-        }
-    }
-
-    private String queryBasedOnParameter(Map<String, Object> queryParams) {
-        StringJoiner finalQuery = new StringJoiner("");
-        if ("LOCATION".equalsIgnoreCase((String) queryParams.get("outputControl"))) {
-            finalQuery.add(coconutDeviceMSConstants.COCONUT_V3_SITE_QUERY);
-
-            if ("%".equalsIgnoreCase((String) queryParams.get("locationCLLI"))) {
-                finalQuery.add(coconutDeviceMSConstants.COCONUT_DEVICE_LIST_SITE_NAME_V3_QUERY);
-            }
-            if ("%".equalsIgnoreCase((String) queryParams.get("siteName"))) {
-                finalQuery.add(coconutDeviceMSConstants.COCONUT_DEVICE_LIST_LOCATION_CLLI_V3_QUERY);
-            }
-        }
-        return finalQuery.toString();
-    }
-}
+```sql
+SELECT DISTINCT 
+  site.clli_code AS locationCLLI, 
+  site.site_name AS locationCode, 
+  site.site_name AS siteName, 
+  site.address AS "unparsedAddress", 
+  site.city as city, 
+  site.state AS state, 
+  site.country as country, 
+  site.zip_code as zip, 
+  site.site_code, 
+  'COCONUT' AS "createdBySys" 
+FROM 
+  gdnm_switch switch 
+LEFT JOIN 
+  gdnm_hardware hardware ON switch.hardware_id = hardware.id 
+LEFT JOIN 
+  gdnm_site site ON switch.site_id = site.id 
+WHERE 
+  1=1
+  -- Check if locationCLLI parameter is present
+  AND (:locationCLLI IS NULL OR site.clli_code = lower(:locationCLLI) OR site.clli_code = upper(:locationCLLI))
+  -- Check if siteName parameter is present
+  AND (:siteName IS NULL OR site.site_name = :siteName)
 ```
 
-### Changes Made:
-1. **Refactored `getCOCONUTEquipListV3` Method**:
-   - Added logic to build the `sqlQuery` based on the presence of `locationCLLI` and `siteName` parameters.
-   - Used `StringJoiner` to build the `sqlQuery` similar to the `getTirksEquipListV3` method.
-   - Ensured that `sqlQuery` includes the appropriate conditions based on the criteria.
-
-2. **Updated `queryBasedOnParameter` Method**:
-   - Added logic to append conditions for `locationCLLI` and `siteName` if they are present in `queryParams`.
-
-This ensures that the `sqlQuery` is constructed dynamically based on input parameters, similar to the `getTirksEquipListV3` method.
+This query uses the `1=1` trick to simplify the conditional appending of `WHERE` clauses. The `:locationCLLI IS NULL` and `:siteName IS NULL` checks ensure that the conditions for `locationCLLI` and `siteName` are only appended if the parameters are present.

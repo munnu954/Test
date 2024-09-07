@@ -1,10 +1,6 @@
-To address the issue you're facing with Mockito and checked exceptions, we need to ensure that we're throwing the `SystemException` from a method or part of the code that can realistically throw it. If the `convert` method itself is not publicly accessible or if the `SystemException` is not something the method is expected to throw directly, we need to find a suitable place to simulate this exception.
+To cover the `catch (Exception ex)` block in the `saveToELTable` method of the `EventLedgerServiceManager` class for 100% code coverage, we can simulate an exception being thrown from the `eventLedgerRepository.save(entity)` method. This can be achieved by using Mockito to mock the behavior of the `eventLedgerRepository`.
 
-Since `eventLedgerRepository.insert(entity)` is the method where the exception handling is demonstrated in your `saveToELTable` method, let's consider that we might need to refactor or use a different approach to simulate this exception.
-
-If you have control over the `EventLedgerServiceManager` code, you could make a slight adjustment to allow testing, such as introducing an intermediary method that can be mocked to throw a `SystemException`.
-
-Here's an updated version of the test, assuming you have some flexibility:
+Here's an example of how you might write the JUnit 5 test case for this scenario:
 
 ```java
 import static org.mockito.Mockito.*;
@@ -15,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class EventLedgerServiceManagerTest {
@@ -28,33 +26,43 @@ class EventLedgerServiceManagerTest {
     @InjectMocks
     private EventLedgerServiceManager eventLedgerServiceManager;
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(EventLedgerServiceManagerTest.class);
+
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        ReflectionTestUtils.setField(eventLedgerServiceManager, "insertToEventLedger", "true");
     }
 
     @Test
-    void testSaveEventLedger_throwsSystemException() throws Exception {
+    void testSaveToELTable_catchException() {
         // Arrange
-        EventLedgerRequest request = createRequest(EventLedgerConstants.EVENT_CATEGORY_INTERACTIONS, EventLedgerConstants.EVENT_CHANNEL_MYBIZ);
-        
-        // Mock the behavior to throw SystemException when saveToELTable is called
+        EventLedgerRequest request = createRequest();
+        EventLedgerEntity entity = new EventLedgerEntity(); // Assuming you have a suitable constructor or builder
+
+        // Mock the behavior of convert to return a valid entity
         EventLedgerServiceManager spyManager = spy(eventLedgerServiceManager);
-        doThrow(new SystemException("System error")).when(spyManager).saveToELTable(any(EventLedgerRequest.class));
+        doReturn(entity).when(spyManager).convert(request);
 
-        // Act
-        EventLedgerResponse response = spyManager.saveEventLedger(request);
+        // Mock the behavior to throw a generic Exception when save is called
+        doThrow(new RuntimeException("Database error")).when(eventLedgerRepository).save(entity);
 
-        // Assert
-        assertEquals(FAILURE_CODE, response.getStatus().getCode());
-        assertEquals("System error", response.getStatus().getMessage());
+        // Act & Assert
+        assertDoesNotThrow(() -> {
+            spyManager.saveToELTable(request);
+        });
+
+        // Verify that the error logging occurred
+        verify(spyManager, times(1)).saveToELTable(request);
+        verify(eventLedgerRepository, times(1)).save(entity);
+
+        // Here, we could assert that the log contains specific entries if we capture logs
+        // This would typically require a logging framework with capture support, such as Logback with ListAppender
     }
 
-    private EventLedgerRequest createRequest(String eventCategory, String eventChannel) {
+    private EventLedgerRequest createRequest() {
         EventLedgerAttributes attributes = new EventLedgerAttributes();
-        attributes.setEventCategory(eventCategory);
-        attributes.setEventChannel(eventChannel);
+        attributes.setEventCategory("someCategory");
+        attributes.setEventChannel("someChannel");
 
         EventLedgerRequest request = new EventLedgerRequest();
         request.setKeyAttributes(attributes);
@@ -63,8 +71,10 @@ class EventLedgerServiceManagerTest {
 }
 ```
 
-### Key Changes:
-- **Spy on `EventLedgerServiceManager`**: We spy on the `EventLedgerServiceManager` to intercept calls to `saveToELTable`.
-- **Throw `SystemException` from `saveToELTable`**: We mock `saveToELTable` directly to throw a `SystemException`. This is a valid approach if the `saveToELTable` method can be modified or is part of your testable API.
+### Explanation:
+- **Spy on `EventLedgerServiceManager`**: We spy on the `EventLedgerServiceManager` instance to mock the `convert` method, ensuring it returns a valid `EventLedgerEntity`.
+- **Mock Exception**: We use `doThrow` to simulate a `RuntimeException` when the `eventLedgerRepository.save(entity)` method is called. This allows us to enter the `catch (Exception ex)` block.
+- **Assertions**: We assert that no exceptions are thrown up to the test level with `assertDoesNotThrow`, indicating that the exception was caught and handled internally.
+- **Verification**: We verify that the `saveToELTable` and `eventLedgerRepository.save` methods were called.
 
-If you are unable to modify the actual code to facilitate this kind of testing, you’ll need to look for other points in your logic where it's appropriate to inject exceptions for testing purposes. This might involve refactoring or adjusting your methods' visibility just for testing (e.g., package-private methods).
+This test ensures that the `catch (Exception ex)` block is executed and that any generic exception is handled correctly by the method. If you want to assert the message logged, additional setup is needed to capture and verify log outputs.

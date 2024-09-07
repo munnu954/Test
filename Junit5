@@ -1,6 +1,8 @@
-To test the `catch(SystemException e)` block in the `saveEventLedger` method of the `EventLedgerServiceManager` class, we need to simulate a scenario where a `SystemException` is thrown during the execution of the `saveToELTable` method. We can achieve this by using Mockito to mock the behavior of the `eventLedgerRepository` or any other method that might throw a `SystemException`.
+The error you're encountering is due to the fact that Mockito's `doThrow` is used to throw checked exceptions from methods that don't declare such exceptions in their `throws` clause. Since `eventLedgerRepository.insert(...)` doesn't declare throwing `SystemException`, we need to adjust our approach.
 
-Here's an example of how you might write the JUnit 5 test case for this scenario:
+One way to handle this is to mock the `convert` method to throw a `SystemException` since it is internal and can be made to throw exceptions for testing purposes. If you have control over the `EventLedgerServiceManager` class, you might consider making `convert` a separate method or mocking a different area that can simulate this exception.
+
+Here's the updated test case code:
 
 ```java
 import static org.mockito.Mockito.*;
@@ -31,15 +33,16 @@ class EventLedgerServiceManagerTest {
     }
 
     @Test
-    void testSaveEventLedger_throwsSystemException() throws Exception {
+    void testSaveEventLedger_throwsSystemExceptionInConvert() throws Exception {
         // Arrange
         EventLedgerRequest request = createRequest(EventLedgerConstants.EVENT_CATEGORY_INTERACTIONS, EventLedgerConstants.EVENT_CHANNEL_MYBIZ);
         
-        // Mock the behavior to throw SystemException when saveToELTable is called
-        doThrow(new SystemException("System error")).when(eventLedgerRepository).insert(any(EventLedgerEntity.class));
+        // Mock the convert method to throw SystemException
+        EventLedgerServiceManager spyManager = spy(eventLedgerServiceManager);
+        doThrow(new SystemException("System error")).when(spyManager).convert(any(EventLedgerRequest.class));
 
         // Act
-        EventLedgerResponse response = eventLedgerServiceManager.saveEventLedger(request);
+        EventLedgerResponse response = spyManager.saveEventLedger(request);
 
         // Assert
         assertEquals(FAILURE_CODE, response.getStatus().getCode());
@@ -59,8 +62,8 @@ class EventLedgerServiceManagerTest {
 ```
 
 ### Explanation:
-- **Mocking**: We use Mockito to mock the behavior of the `eventLedgerRepository`. Specifically, we simulate a `SystemException` being thrown when the `insert` method is called.
-- **Test Case `testSaveEventLedger_throwsSystemException`**: This test case sets up the request and then triggers the `saveEventLedger` method. The catch block for `SystemException` should be executed because of the mocked exception.
-- **Assertion**: We verify that the response's status code matches `FAILURE_CODE` and that the message matches "System error", which is the message we used for the `SystemException`.
+- **Spying**: We use `spy` on `eventLedgerServiceManager` to mock the `convert` method. This allows us to simulate an exception during the conversion process.
+- **Mock Exception**: We use `doThrow` to simulate the `SystemException` being thrown from the `convert` method.
+- **Assertions**: We ensure that the `FAILURE_CODE` and the appropriate error message are returned when the exception is thrown.
 
-This test case ensures that the `catch(SystemException e)` block is executed and that the method handles the exception as expected.
+This approach requires that you have access to mock methods like `convert`. If you cannot mock `convert` or it is not a method you control, you might need to adjust which methods can be mocked to throw exceptions fitting within your test framework.

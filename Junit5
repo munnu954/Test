@@ -1,72 +1,116 @@
-WITH CIRCUIT_ALTERNATE_RANKED AS (
-    SELECT 
-        'CROSS_PROV_CIRCUITS' AS namex,
-        NVL(LISTAGG(cai.ALTERNATE_CIRCUIT_ID, ',') WITHIN GROUP (ORDER BY cai.ALTERNATE_CIRCUIT_ID), '') AS valuex,
-        ROW_NUMBER() OVER (PARTITION BY c.circuit_key ORDER BY cai.ALTERNATE_CIRCUIT_ID) AS rn
-    FROM 
-        caps_trid.circuit c
-    JOIN 
-        caps_trid.CIRCUIT_ALTERNATE_ID cai ON cai.circuit_key = c.circuit_key
-    WHERE 
-        cai.alternate_circuit_id_type <> 'stg'
-        AND c.circuit_status IN ('a', 'p')
-        AND (c.circuit_id = :cktId OR c.circuit_key = :circuitKey)
-    GROUP BY 
-        c.circuit_key
-),
-CUS_ORDER_CIRCUIT_END_RANKED AS (
-    SELECT 
-        'CROSS_PROV_CIRCUITS' AS namex,
-        NVL(LISTAGG(coce.customer_circuit_id, ',') WITHIN GROUP (ORDER BY coce.customer_circuit_id), '') AS valuex,
-        ROW_NUMBER() OVER (PARTITION BY c.circuit_key ORDER BY coce.customer_circuit_id) AS rn
-    FROM 
-        caps_trid.circuit c
-    JOIN 
-        caps_trid.cus_order_circuit_end coce ON coce.order_key = coc.order_key
-    JOIN 
-        caps_trid.cus_order_circuit coc ON coce.order_key = coc.order_key AND coce.order_item_number = coc.order_item_number
-    WHERE 
-        coc.circuit_key = c.circuit_key
-        AND coc.order_key = c.last_order_key
-        AND coce.customer_circuit_id IS NOT NULL 
-        AND coce.customer_circuit_id > ' '
-        AND c.circuit_status IN ('a', 'p')
-        AND (c.circuit_id = :cktId OR c.circuit_key = :circuitKey)
-    GROUP BY 
-        c.circuit_key
-),
-UNIONED_CIRCUITS AS (
-    SELECT namex, valuex, rn
-    FROM CIRCUIT_ALTERNATE_RANKED
-    WHERE rn = 1
+To write JUnit 5 test cases for the `convertToMtnInsights` method of the `MtnInsightsManager` class, we will need to mock the dependencies and create different scenarios that cover all the `if` statements within the `if(set.getKey().equals(INSIGHT_CATEGORY_NETWORK_OUTAGE))` block. Here's an example of how you could write these test cases:
 
-    UNION ALL
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-    SELECT namex, valuex, rn
-    FROM CUS_ORDER_CIRCUIT_END_RANKED
-    WHERE rn = 1
-)
+import java.util.ArrayList;
+import java.util.List;
 
-SELECT namex, valuex
-FROM (
-    SELECT namex, valuex, ROW_NUMBER() OVER (PARTITION BY namex ORDER BY rn) AS rn
-    FROM UNIONED_CIRCUITS
-)
-WHERE rn = 2
-UNION ALL
-SELECT namex, valuex
-FROM (
-    SELECT namex, valuex, ROW_NUMBER() OVER (PARTITION BY namex ORDER BY rn) AS rn
-    FROM UNIONED_CIRCUITS
-)
-WHERE rn = 1
-AND NOT EXISTS (
-    SELECT 1
-    FROM (
-        SELECT namex
-        FROM UNIONED_CIRCUITS
-        GROUP BY namex
-        HAVING COUNT(*) > 1
-    )
-    WHERE namex = 'CROSS_PROV_CIRCUITS'
-);
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+public class MtnInsightsManagerTest {
+
+    @InjectMocks
+    private MtnInsightsManager mtnInsightsManager;
+
+    @Mock
+    private MtnInsightsRepository insightsRepository;
+
+    @Mock
+    private AggregateInsightsRepository aggrInsightRepository;
+
+    @Mock
+    private EcpdByKeyRepository ecpdByKeyRepository;
+
+    @Mock
+    private MtnInsightsValidator validator;
+
+    private List<MtnInsightsEntity> entities;
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+        entities = new ArrayList<>();
+        // Setup initial test data
+    }
+
+    @Test
+    public void testConvertToMtnInsights_Scenario1() {
+        // Scenario where INSIGHT_CATEGORY_NETWORK_OUTAGE with MTNOUTAGE
+        MtnInsightsEntity entity = new MtnInsightsEntity();
+        MtnInsightsPK pk = new MtnInsightsPK();
+        pk.setInsightName("MTNOUTAGE");
+        entity.setPk(pk);
+        entity.setCatagory("INSIGHT_CATEGORY_NETWORK_OUTAGE");
+        entity.setInsightValues("EVENT_CUSTOMER_STATUS");
+        entities.add(entity);
+
+        when(aggrInsightRepository.findByPkAggrCategoryAndPkAggrProdId(anyString(), anyString()))
+                .thenReturn(mock(AggregateInsightsEntity.class));
+
+        InsightsMtn insightsMtn = mtnInsightsManager.convertToMtnInsights(entities, true);
+
+        // Add assertions to validate the results
+        assertNotNull(insightsMtn);
+        assertEquals(1, insightsMtn.getCategoryInsights().length);
+    }
+
+    @Test
+    public void testConvertToMtnInsights_Scenario2() {
+        // Scenario where INSIGHT_CATEGORY_NETWORK_OUTAGE with MTNOUTAGECASE
+        MtnInsightsEntity entity = new MtnInsightsEntity();
+        MtnInsightsPK pk = new MtnInsightsPK();
+        pk.setInsightName("MTNOUTAGECASE");
+        entity.setPk(pk);
+        entity.setCatagory("INSIGHT_CATEGORY_NETWORK_OUTAGE");
+        entity.setInsightValues("Some Values");
+        entities.add(entity);
+
+        when(insightsRepository.findBuPkEcpdIdAndPkMtnAndProdIdAndPkInsightCategoryInAndPkInsightNameIn(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(entity);
+
+        InsightsMtn insightsMtn = mtnInsightsManager.convertToMtnInsights(entities, true);
+
+        // Add assertions to validate the results
+        assertNotNull(insightsMtn);
+        assertEquals(1, insightsMtn.getCategoryInsights().length);
+    }
+
+    @Test
+    public void testConvertToMtnInsights_Scenario3() {
+        // Scenario with no matching outage
+        MtnInsightsEntity entity = new MtnInsightsEntity();
+        MtnInsightsPK pk = new MtnInsightsPK();
+        pk.setInsightName("OTHER_INSIGHT");
+        entity.setPk(pk);
+        entity.setCatagory("INSIGHT_CATEGORY_NETWORK_OUTAGE");
+        entity.setInsightValues("Some Other Values");
+        entities.add(entity);
+
+        InsightsMtn insightsMtn = mtnInsightsManager.convertToMtnInsights(entities, false);
+
+        // Add assertions to validate the results
+        assertNotNull(insightsMtn);
+        assertEquals(1, insightsMtn.getCategoryInsights().length);
+    }
+
+    // Add more test scenarios as needed to fully cover all branches
+}
+```
+
+### Key Points:
+
+1. **Mocks and Spies:** Use Mockito to mock dependencies such as repositories to isolate the method being tested.
+2. **Test Scenarios:** Each test method should cover a specific scenario of the `if` conditions within your method.
+3. **Assertions:** Validate the output to ensure the method behaves as expected under different conditions.
+4. **Setup:** Initialize data in the `setUp` method to be reused across different tests.
+
+Ensure that you have the necessary configurations for JUnit 5 and Mockito in your project to run these test cases.

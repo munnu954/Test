@@ -1,1 +1,72 @@
-SELECT switch.switch_name AS tid, site.clli_code AS clli, site.site_name FROM gdnm_switch switch LEFT JOIN gdnm_hardware hardware ON switch.hardware_id= hardware.id LEFT JOIN gdnm_site site ON switch.site_id = site.id WHERE switch.switch_name =lower(:tid) OR switch.switch_name = upper(:tid)
+WITH CIRCUIT_ALTERNATE_RANKED AS (
+    SELECT 
+        'CROSS_PROV_CIRCUITS' AS namex,
+        NVL(LISTAGG(cai.ALTERNATE_CIRCUIT_ID, ',') WITHIN GROUP (ORDER BY cai.ALTERNATE_CIRCUIT_ID), '') AS valuex,
+        ROW_NUMBER() OVER (PARTITION BY c.circuit_key ORDER BY cai.ALTERNATE_CIRCUIT_ID) AS rn
+    FROM 
+        caps_trid.circuit c
+    JOIN 
+        caps_trid.CIRCUIT_ALTERNATE_ID cai ON cai.circuit_key = c.circuit_key
+    WHERE 
+        cai.alternate_circuit_id_type <> 'stg'
+        AND c.circuit_status IN ('a', 'p')
+        AND (c.circuit_id = :cktId OR c.circuit_key = :circuitKey)
+    GROUP BY 
+        c.circuit_key
+),
+CUS_ORDER_CIRCUIT_END_RANKED AS (
+    SELECT 
+        'CROSS_PROV_CIRCUITS' AS namex,
+        NVL(LISTAGG(coce.customer_circuit_id, ',') WITHIN GROUP (ORDER BY coce.customer_circuit_id), '') AS valuex,
+        ROW_NUMBER() OVER (PARTITION BY c.circuit_key ORDER BY coce.customer_circuit_id) AS rn
+    FROM 
+        caps_trid.circuit c
+    JOIN 
+        caps_trid.cus_order_circuit_end coce ON coce.order_key = coc.order_key
+    JOIN 
+        caps_trid.cus_order_circuit coc ON coce.order_key = coc.order_key AND coce.order_item_number = coc.order_item_number
+    WHERE 
+        coc.circuit_key = c.circuit_key
+        AND coc.order_key = c.last_order_key
+        AND coce.customer_circuit_id IS NOT NULL 
+        AND coce.customer_circuit_id > ' '
+        AND c.circuit_status IN ('a', 'p')
+        AND (c.circuit_id = :cktId OR c.circuit_key = :circuitKey)
+    GROUP BY 
+        c.circuit_key
+),
+UNIONED_CIRCUITS AS (
+    SELECT namex, valuex, rn
+    FROM CIRCUIT_ALTERNATE_RANKED
+    WHERE rn = 1
+
+    UNION ALL
+
+    SELECT namex, valuex, rn
+    FROM CUS_ORDER_CIRCUIT_END_RANKED
+    WHERE rn = 1
+)
+
+SELECT namex, valuex
+FROM (
+    SELECT namex, valuex, ROW_NUMBER() OVER (PARTITION BY namex ORDER BY rn) AS rn
+    FROM UNIONED_CIRCUITS
+)
+WHERE rn = 2
+UNION ALL
+SELECT namex, valuex
+FROM (
+    SELECT namex, valuex, ROW_NUMBER() OVER (PARTITION BY namex ORDER BY rn) AS rn
+    FROM UNIONED_CIRCUITS
+)
+WHERE rn = 1
+AND NOT EXISTS (
+    SELECT 1
+    FROM (
+        SELECT namex
+        FROM UNIONED_CIRCUITS
+        GROUP BY namex
+        HAVING COUNT(*) > 1
+    )
+    WHERE namex = 'CROSS_PROV_CIRCUITS'
+);

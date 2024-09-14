@@ -1,4 +1,4 @@
-To achieve 100% code coverage for the `convertToMtnInsights(List<MtnInsightsEntity> entities, boolean flag)` method in the `MtnInsightsManager` class, you need to write comprehensive JUnit 5 test cases. These test cases should cover all branches, conditions, and potential exceptions within the method. Here's a sample test class that aims to cover all the branches and exception scenarios:
+To achieve 100% code coverage of the `convertToMtnInsights` method, we need to ensure that all branches, including the various `if-else` statements and potential exceptions, are thoroughly tested. Here’s an extended version of the test cases to cover more scenarios:
 
 ```java
 import static org.junit.jupiter.api.Assertions.*;
@@ -6,7 +6,6 @@ import static org.mockito.Mockito.*;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,20 +35,24 @@ public class MtnInsightsManagerTest {
     @BeforeEach
     public void setUp() {
         entities = new ArrayList<>();
+    }
 
-        // Setting up mock data and entities for testing.
+    private MtnInsightsEntity createEntity(String category, String insightName, String insightValues, String prodId) {
         MtnInsightsEntity entity = new MtnInsightsEntity();
         MtnInsightsPK pk = new MtnInsightsPK();
-        pk.setInsightCategory("NETWORK_OUTAGE");
-        pk.setInsightName("MTNOUTAGE");
+        pk.setInsightCategory(category);
+        pk.setInsightName(insightName);
         entity.setPk(pk);
-        entity.setInsightValues("someValue");
-        entity.setProdId("1234");
-        entities.add(entity);
+        entity.setInsightValues(insightValues);
+        entity.setProdId(prodId);
+        return entity;
     }
 
     @Test
-    public void testConvertToMtnInsights_NetworkOutage_WithFlag() {
+    public void testConvertToMtnInsights_NetworkOutage_WithFlag_EligibleData() {
+        MtnInsightsEntity networkOutageEntity = createEntity("NETWORK_OUTAGE", "MTNOUTAGE", "EVENT_CUSTOMER_STATUS", "1234");
+        entities.add(networkOutageEntity);
+
         AggregateInsightsEntity aggregateEntity = new AggregateInsightsEntity();
         aggregateEntity.setAggrValue("OUTAGE_ID1234,");
 
@@ -64,12 +67,41 @@ public class MtnInsightsManagerTest {
     }
 
     @Test
-    public void testConvertToMtnInsights_NetworkOutage_WithoutFlag() {
+    public void testConvertToMtnInsights_NetworkOutage_WithoutEligibleData() {
+        MtnInsightsEntity networkOutageEntity = createEntity("NETWORK_OUTAGE", "MTNOUTAGE", "someValue", "1234");
+        entities.add(networkOutageEntity);
+
         AggregateInsightsEntity aggregateEntity = new AggregateInsightsEntity();
         aggregateEntity.setAggrValue("OUTAGE_ID1234,");
 
         when(aggrInsightRepository.findByPkAggrCategoryAndPkAggrProdId("NETWORK_OUTAGE", "1234"))
             .thenReturn(aggregateEntity);
+
+        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(entities, true);
+
+        assertNotNull(result);
+        assertEquals(1, result.getCategoryInsights().length);
+        assertEquals("NETWORK_OUTAGE", result.getCategoryInsights()[0].getCategory());
+    }
+
+    @Test
+    public void testConvertToMtnInsights_DifferentCategory() {
+        MtnInsightsEntity otherCategoryEntity = createEntity("OTHER_CATEGORY", "OTHER_INSIGHT", "value", "4321");
+        entities.add(otherCategoryEntity);
+
+        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(entities, true);
+
+        assertNotNull(result);
+        assertEquals(1, result.getCategoryInsights().length);
+        assertEquals("OTHER_CATEGORY", result.getCategoryInsights()[0].getCategory());
+    }
+
+    @Test
+    public void testConvertToMtnInsights_MultipleEntities() {
+        MtnInsightsEntity networkOutageEntity1 = createEntity("NETWORK_OUTAGE", "MTNOUTAGE", "value1", "1234");
+        MtnInsightsEntity networkOutageEntity2 = createEntity("NETWORK_OUTAGE", "MTNOUTAGECASE", "value2", "1234");
+        entities.add(networkOutageEntity1);
+        entities.add(networkOutageEntity2);
 
         InsightsMtn result = mtnInsightsManager.convertToMtnInsights(entities, false);
 
@@ -79,32 +111,9 @@ public class MtnInsightsManagerTest {
     }
 
     @Test
-    public void testConvertToMtnInsights_NoEligibleData() {
-        MtnInsightsEntity entity = new MtnInsightsEntity();
-        MtnInsightsPK pk = new MtnInsightsPK();
-        pk.setInsightCategory("NETWORK_OUTAGE");
-        pk.setInsightName("MTNOUTAGE");
-        entity.setPk(pk);
-        entity.setInsightValues("EVENT_CUSTOMER_STATUS");
-        entity.setProdId("1234");
-        entities.add(entity);
-
-        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(entities, true);
-
-        assertNotNull(result);
-        assertEquals(1, result.getCategoryInsights().length);
-    }
-
-    @Test
-    public void testConvertToMtnInsights_ExceptionHandling() {
-        MtnInsightsEntity entity = new MtnInsightsEntity();
-        MtnInsightsPK pk = new MtnInsightsPK();
-        pk.setInsightCategory("NETWORK_OUTAGE");
-        pk.setInsightName("MTNOUTAGE");
-        entity.setPk(pk);
-        entity.setInsightValues("someInvalidValue");
-        entity.setProdId("invalid_id");
-        entities.add(entity);
+    public void testConvertToMtnInsights_WithException() {
+        MtnInsightsEntity networkOutageEntity = createEntity("NETWORK_OUTAGE", "MTNOUTAGE", "value", "invalid_id");
+        entities.add(networkOutageEntity);
 
         when(aggrInsightRepository.findByPkAggrCategoryAndPkAggrProdId(anyString(), anyString()))
             .thenThrow(new RuntimeException("Database error"));
@@ -115,14 +124,21 @@ public class MtnInsightsManagerTest {
 
         assertEquals("Database error", exception.getMessage());
     }
+
+    @Test
+    public void testConvertToMtnInsights_EmptyEntities() {
+        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(new ArrayList<>(), true);
+
+        assertNotNull(result);
+        assertEquals(0, result.getCategoryInsights().length);
+    }
 }
 ```
 
-### Explanation:
-- **Setup**: The `setUp` method initializes mock data and entities required for testing.
-- **Tests**:
-  - **Network Outage With and Without Flag**: Tests scenarios where the flag is `true` and `false`.
-  - **No Eligible Data**: Tests the condition where no eligible data is available.
-  - **Exception Handling**: Tests the exception scenario by mocking a repository method to throw an exception.
+### Additional Test Cases Explanation:
+- **Different Category**: Tests entities belonging to a category other than "NETWORK_OUTAGE".
+- **Multiple Entities**: Tests multiple entities within the same category.
+- **Exception Handling**: Confirms that exceptions are properly caught and handled.
+- **Empty Entities**: Ensures that the method can handle an empty list of entities without error.
 
-These tests aim to cover all logical branches and potential exceptions in the method, ensuring thorough coverage. Adjust the mock data and expected results as necessary based on your actual logic and requirements.
+These additional tests should cover all logical paths and ensure robust testing of the method. Adjust mock responses and assertions as necessary to match the actual logic and data structures in your implementation.

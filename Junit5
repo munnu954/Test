@@ -1,114 +1,136 @@
+To write JUnit 5 test cases for the `convertToMtnInsights` method in the `MtnInsightsManager` class, we'll need to set up mock data and dependencies to cover all the if, else if, and else statements within the specified block. Here's a sample test class using Mockito to mock dependencies like `MtnInsightsRepository` and `AggregateInsightsRepository`.
+
 ```java
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.cassandra.core.query.Query;
 
 @ExtendWith(MockitoExtension.class)
-class MtnInsightsManagerTest {
+public class MtnInsightsManagerTest {
+
+    @Mock
+    private MtnInsightsRepository insightsRepository;
+
+    @Mock
+    private AggregateInsightsRepository aggrInsightRepository;
 
     @InjectMocks
     private MtnInsightsManager mtnInsightsManager;
 
-    @Mock
-    private MtnInsightsRepository mtnInsightsRepository;
-    @Mock
-    private AggregateInsightsRepository aggregateInsightsRepository;
+    private static final String INSIGHT_CATEGORY_NETWORK_OUTAGE = "NetworkOutage";
+    private static final String MTNOUTAGE = "MtnOutage";
+    private static final String MTNOUTAGECASE = "MtnOutageCase";
+    private static final String EVENT_CUSTOMER_STATUS = "CustomerStatus";
+    private static final String EVENT_CUSTOMER_SPACE_STATUS = "CustomerSpaceStatus";
+    private static final String OUTAGE_ID = "OutageId";
+    private static final String COMMA_SEPARATOR = ",";
 
-    @Mock
-    private EcpdByKeyRepository ecpdByKeyRepository;
-
-    @Mock
-    private MtnInsightsValidator validator;
+    private List<MtnInsightsEntity> mockEntities;
+    private MtnInsightsPK mockPk;
 
     @BeforeEach
     void setUp() {
-        mtnInsightsManager.obj = new ObjectMapper();
+        mockPk = new MtnInsightsPK();
+        mockPk.setInsightName(MTNOUTAGE);
+        mockPk.setEcpdId("ecpdId");
+        mockPk.setMtn("mtn");
+
+        MtnInsightsEntity mockEntity = new MtnInsightsEntity();
+        mockEntity.setPk(mockPk);
+        mockEntity.setCatagory(INSIGHT_CATEGORY_NETWORK_OUTAGE);
+        mockEntity.setInsightValues("Value with " + EVENT_CUSTOMER_STATUS);
+        
+        mockEntities = Arrays.asList(mockEntity);
     }
 
     @Test
-    void convertToMtnInsights_shouldAddInsightsList_whenAggregateInsightsEntityNotNullAndAppendOutagePresent() {
-        // Given
-        MtnInsightsEntity mtnInsightsEntity = new MtnInsightsEntity();
-        List<MtnInsightsEntity> entities = new ArrayList<>();
-        entities.add(mtnInsightsEntity);
-        MtnInsightsPK pk = new MtnInsightsPK();
-        pk.setInsightName("TEST");
-        pk.setInsightCategory(INSIGHT_CATEGORY_NETWORK_OUTAGE);
-        mtnInsightsEntity.setPk(pk);
-        mtnInsightsEntity.setProdId("1");
-        String outageId = "1";
+    void testConvertToMtnInsights_withNetworkOutageCategory() {
+        // Mock the repository responses
+        AggregateInsightsEntity mockAggrEntity = new AggregateInsightsEntity();
+        mockAggrEntity.setAggrValue(OUTAGE_ID + "prodId" + COMMA_SEPARATOR);
+        
+        when(aggrInsightRepository.findByPkAggrCategoryAndPkAggrProdId(anyString(), anyString()))
+            .thenReturn(mockAggrEntity);
 
-        AggregateInsightsEntity aggregateInsightsEntity = new AggregateInsightsEntity();
-        aggregateInsightsEntity.setAggrValue("OUTAGE_ID1,2,");
-        when(aggregateInsightsRepository.findByPkAggrCategoryAndPkAggrProdId(INSIGHT_CATEGORY_NETWORK_OUTAGE, "1"))
-                .thenReturn(aggregateInsightsEntity);
+        // Call the method
+        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(mockEntities, true);
 
-        // When
-        mtnInsightsManager.convertToMtnInsights(entities, true);
-
-        // Then
-        assertEquals("2", aggregateInsightsEntity.getAggrValue());
+        // Assert the results
+        assertNotNull(result);
+        assertEquals(1, result.getCategoryInsights().length);
+        assertEquals(INSIGHT_CATEGORY_NETWORK_OUTAGE, result.getCategoryInsights()[0].getCategory());
     }
 
     @Test
-    void convertToMtnInsights_shouldAddInsightsList_whenAggregateInsightsEntityNotNullAndAppendOutageSpacePresent() {
-        // Given
-        MtnInsightsEntity mtnInsightsEntity = new MtnInsightsEntity();
-        List<MtnInsightsEntity> entities = new ArrayList<>();
-        entities.add(mtnInsightsEntity);
-        MtnInsightsPK pk = new MtnInsightsPK();
-        pk.setInsightName("TEST");
-        pk.setInsightCategory(INSIGHT_CATEGORY_NETWORK_OUTAGE);
-        mtnInsightsEntity.setPk(pk);
-        mtnInsightsEntity.setProdId("1");
-        String outageId = "1";
+    void testConvertToMtnInsights_withMtnOutageCase() {
+        // Modify mock data for the case block
+        mockPk.setInsightName(MTNOUTAGECASE);
+        
+        MtnInsightsEntity mockEntity = new MtnInsightsEntity();
+        mockEntity.setPk(mockPk);
+        mockEntity.setCatagory(INSIGHT_CATEGORY_NETWORK_OUTAGE);
+        mockEntity.setInsightValues("Some case values");
 
-        AggregateInsightsEntity aggregateInsightsEntity = new AggregateInsightsEntity();
-        aggregateInsightsEntity.setAggrValue("OUTAGE_ID_SPACE1,2,");
-        when(aggregateInsightsRepository.findByPkAggrCategoryAndPkAggrProdId(INSIGHT_CATEGORY_NETWORK_OUTAGE, "1"))
-                .thenReturn(aggregateInsightsEntity);
+        mockEntities = Arrays.asList(mockEntity);
 
-        // When
-        mtnInsightsManager.convertToMtnInsights(entities, true);
+        // Mock the repository response
+        when(insightsRepository.findByPkEcpdIdAndPkMtnAndProdIdAndPkInsightCategoryInAndPkInsightNameIn(anyString(), anyString(), anyString(), anyString(), anyString()))
+            .thenReturn(mockEntity);
 
-        // Then
-        assertEquals("2", aggregateInsightsEntity.getAggrValue());
+        // Call the method
+        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(mockEntities, true);
+
+        // Assert the results
+        assertNotNull(result);
+        assertEquals(1, result.getCategoryInsights().length);
+        assertEquals(INSIGHT_CATEGORY_NETWORK_OUTAGE, result.getCategoryInsights()[0].getCategory());
     }
 
     @Test
-    void convertToMtnInsights_shouldNotAddInsightsList_whenAggregateInsightsEntityNull() {
-        // Given
-        MtnInsightsEntity mtnInsightsEntity = new MtnInsightsEntity();
-        List<MtnInsightsEntity> entities = new ArrayList<>();
-        entities.add(mtnInsightsEntity);
-        MtnInsightsPK pk = new MtnInsightsPK();
-        pk.setInsightName("TEST");
-        pk.setInsightCategory(INSIGHT_CATEGORY_NETWORK_OUTAGE);
-        mtnInsightsEntity.setPk(pk);
-        mtnInsightsEntity.setProdId("1");
-        String outageId = "1";
+    void testConvertToMtnInsights_withoutEligibleData() {
+        // Modify mock data for the case with no eligible data
+        mockPk.setInsightName("OtherInsight");
 
-        when(aggregateInsightsRepository.findByPkAggrCategoryAndPkAggrProdId(INSIGHT_CATEGORY_NETWORK_OUTAGE, "1"))
-                .thenReturn(null);
+        MtnInsightsEntity mockEntity = new MtnInsightsEntity();
+        mockEntity.setPk(mockPk);
+        mockEntity.setCatagory(INSIGHT_CATEGORY_NETWORK_OUTAGE);
+        mockEntity.setInsightValues("Value");
 
-        // When
-        mtnInsightsManager.convertToMtnInsights(entities, true);
+        mockEntities = Arrays.asList(mockEntity);
 
-        // Then
-        assertNull(aggregateInsightsEntity);
+        // Call the method
+        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(mockEntities, true);
+
+        // Assert the results
+        assertNotNull(result);
+        assertEquals(1, result.getCategoryInsights().length);
+        assertEquals(INSIGHT_CATEGORY_NETWORK_OUTAGE, result.getCategoryInsights()[0].getCategory());
+    }
+
+    @Test
+    void testConvertToMtnInsights_withErrorHandling() {
+        // Throw exception when repository method is called
+        when(aggrInsightRepository.findByPkAggrCategoryAndPkAggrProdId(anyString(), anyString()))
+            .thenThrow(new RuntimeException("Database error"));
+
+        // Call the method and handle exception
+        try {
+            mtnInsightsManager.convertToMtnInsights(mockEntities, true);
+            fail("Expected exception to be thrown");
+        } catch (Exception e) {
+            assertTrue(e instanceof RuntimeException);
+            assertEquals("Database error", e.getMessage());
+        }
     }
 }
 ```
+
+This test class covers the main branches and conditions within the specified block of the `convertToMtnInsights` method. It uses Mockito to mock the dependencies and simulate different scenarios, including error handling. Adjust the mock data and assertions as needed to fit your specific use case and data structures.

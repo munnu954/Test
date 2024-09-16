@@ -1,120 +1,9 @@
-To write JUnit 5 test cases for the specific `if` statements in the `convertToMtnInsights` method, we need to create mock data that will trigger these conditions. We'll use mock repositories to return expected results and check the logic inside the method.
-
-Below is an example of how you might structure your JUnit 5 test cases:
-
-```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import java.util.*;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.test.util.ReflectionTestUtils;
-
-public class MtnInsightsManagerTest {
-
-    @Mock
-    private MtnInsightsRepository insightsRepository;
-
-    @Mock
-    private AggregateInsightsRepository aggrInsightRepository;
-
-    @InjectMocks
-    private MtnInsightsManager mtnInsightsManager;
-
-    @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
-        ReflectionTestUtils.setField(mtnInsightsManager, "requested_by", "testUser");
-    }
-
-    @Test
-    public void testConvertToMtnInsights_insightsCaseEntitiesNotEmpty() {
-        // Arrange
-        MtnInsightsEntity entity = new MtnInsightsEntity();
-        MtnInsightsPK pk = new MtnInsightsPK();
-        pk.setEcpdId("ecpd1");
-        pk.setMtn("mtn1");
-        pk.setInsightCategory(EventLedgerConstants.INSIGHT_CATEGORY_NETWORK_OUTAGE);
-        pk.setInsightName(EventLedgerConstants.MTNOUTAGECASE);
-        entity.setPk(pk);
-        entity.setProdId("outage1");
-        entity.setInsightValues("Value1");
-
-        List<MtnInsightsEntity> entities = Collections.singletonList(entity);
-
-        when(insightsRepository.findByPkEcpdIdAndPkMtnAndProdIdAndPkInsightCategoryInAndPkInsightNameIn(
-            eq("ecpd1"), eq("mtn1"), eq("outage1"), anyString(), eq(EventLedgerConstants.MTNOUTAGECASE)))
-            .thenReturn(entity);
-
-        // Act
-        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(entities, true);
-
-        // Assert
-        assertNotNull(result);
-        assertEquals(1, result.getCategoryInsights().length);
-    }
-
-    @Test
-    public void testConvertToMtnInsights_aggregateValueContainsOutage() {
-        // Arrange
-        MtnInsightsEntity entity = new MtnInsightsEntity();
-        MtnInsightsPK pk = new MtnInsightsPK();
-        pk.setEcpdId("ecpd1");
-        pk.setMtn("mtn1");
-        pk.setInsightCategory(EventLedgerConstants.INSIGHT_CATEGORY_NETWORK_OUTAGE);
-        pk.setInsightName(EventLedgerConstants.MTNOUTAGE);
-        entity.setPk(pk);
-        entity.setProdId("outage1");
-        entity.setInsightValues("Value1");
-
-        AggregateInsightsEntity aggregateEntity = new AggregateInsightsEntity();
-        aggregateEntity.setAggrValue("\"outage_id\":\"outage1\",");
-
-        List<MtnInsightsEntity> entities = Collections.singletonList(entity);
-
-        when(aggrInsightRepository.findByPkAggrCategoryAndPkAggrProdId(
-            eq(EventLedgerConstants.INSIGHT_CATEGORY_NETWORK_OUTAGE), eq("outage1")))
-            .thenReturn(aggregateEntity);
-
-        // Act
-        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(entities, true);
-
-        // Assert
-        assertNotNull(result);
-        assertEquals(1, result.getCategoryInsights().length);
-    }
-}
-```
-
-### Explanation
-
-1. **Initialization**:
-   - Use `@Mock` to create mock instances of the repositories.
-   - Use `@InjectMocks` to inject these mock instances into the `MtnInsightsManager`.
-   - `MockitoAnnotations.openMocks(this)` initializes the mocks.
-
-2. **Setting Fields**:
-   - Use `ReflectionTestUtils.setField` to set the `requested_by` field in the `MtnInsightsManager`.
-
-3. **Test Cases**:
-   - `testConvertToMtnInsights_insightsCaseEntitiesNotEmpty`: This test sets up a mock repository to return an `MtnInsightsEntity` when the method is called with specific parameters. It checks if the method processes this entity correctly.
-   - `testConvertToMtnInsights_aggregateValueContainsOutage`: This test sets up a mock `AggregateInsightsEntity` and checks if the `convertToMtnInsights` method processes it correctly when its `aggrValue` contains a specific string.
-
-These tests aim to cover the specific conditions you're interested in and validate that the method behaves correctly when these conditions are met.
-
-
-
-
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.stubbing.Answer;
 
 import com.insights.mapper.EventLedgerConstants;
 import com.insights.manager.MtnInsightsManager;
@@ -128,7 +17,7 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -149,14 +38,20 @@ public class MtnInsightsManagerUnitTest {
     @Test
     public void testConvertWithJsonProcessingException() {
         MtnInsightsAttributes attr = new MtnInsightsAttributes();
-        when(insightsManager.convert(new MtnInsightsAttributes[]{attr})).thenThrow(new IllegalArgumentException());
+        when(insightsRepository.findAll()).thenReturn(Collections.emptyList());
+        when(insightsManager.convert(any(MtnInsightsAttributes[].class))).thenAnswer((Answer<List<MtnInsightsEntity>>) invocation -> {
+            throw new IllegalArgumentException();
+        });
         assertThatThrownBy(() -> insightsManager.convert(new MtnInsightsAttributes[]{attr})).isInstanceOf(SystemException.class);
     }
 
     @Test
     public void testConvertEcpdWithJsonProcessingException() {
         MtnInsightsAttributes attr = new MtnInsightsAttributes();
-        when(insightsManager.convertEcpd(attr)).thenThrow(new IllegalArgumentException());
+        when(ecpdByKeyRepository.findAll()).thenReturn(Collections.emptyList());
+        when(insightsManager.convertEcpd(any(MtnInsightsAttributes.class))).thenAnswer((Answer<EcpdByKeyEntity>) invocation -> {
+            throw new IllegalArgumentException();
+        });
         assertThatThrownBy(() -> insightsManager.convertEcpd(attr)).isInstanceOf(SystemException.class);
     }
 }

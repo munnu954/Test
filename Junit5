@@ -1,83 +1,108 @@
-To cover the catch blocks in the `convert(MtnInsightsAttributes[] listKeyAttributes)` and `convertEcpd(MtnInsightsAttributes attr)` methods, you need to simulate scenarios where exceptions are thrown. This typically involves mocking or manipulating data to trigger exceptions like `JsonProcessingException`.
+To write JUnit 5 test cases for the specific `if` statements in the `convertToMtnInsights` method, we need to create mock data that will trigger these conditions. We'll use mock repositories to return expected results and check the logic inside the method.
 
-Here are the JUnit 5 test cases designed to cover the catch blocks:
+Below is an example of how you might structure your JUnit 5 test cases:
 
 ```java
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.*;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.test.util.ReflectionTestUtils;
 
 public class MtnInsightsManagerTest {
+
+    @Mock
+    private MtnInsightsRepository insightsRepository;
+
+    @Mock
+    private AggregateInsightsRepository aggrInsightRepository;
 
     @InjectMocks
     private MtnInsightsManager mtnInsightsManager;
 
-    @Mock
-    private ObjectMapper objectMapper;
-
     @BeforeEach
     public void setUp() {
         MockitoAnnotations.openMocks(this);
+        ReflectionTestUtils.setField(mtnInsightsManager, "requested_by", "testUser");
     }
 
     @Test
-    public void testConvert_withJsonProcessingException() {
+    public void testConvertToMtnInsights_insightsCaseEntitiesNotEmpty() {
         // Arrange
-        MtnInsightsAttributes[] attributes = { createAttributes() };
-        doThrow(new JsonProcessingException("Test Exception") {}).when(objectMapper).writeValueAsString(any());
+        MtnInsightsEntity entity = new MtnInsightsEntity();
+        MtnInsightsPK pk = new MtnInsightsPK();
+        pk.setEcpdId("ecpd1");
+        pk.setMtn("mtn1");
+        pk.setInsightCategory(EventLedgerConstants.INSIGHT_CATEGORY_NETWORK_OUTAGE);
+        pk.setInsightName(EventLedgerConstants.MTNOUTAGECASE);
+        entity.setPk(pk);
+        entity.setProdId("outage1");
+        entity.setInsightValues("Value1");
 
-        // Act & Assert
-        Exception exception = assertThrows(SystemException.class, () -> {
-            mtnInsightsManager.convert(attributes);
-        });
+        List<MtnInsightsEntity> entities = Collections.singletonList(entity);
 
-        assertEquals("Test Exception", exception.getMessage());
+        when(insightsRepository.findByPkEcpdIdAndPkMtnAndProdIdAndPkInsightCategoryInAndPkInsightNameIn(
+            eq("ecpd1"), eq("mtn1"), eq("outage1"), anyString(), eq(EventLedgerConstants.MTNOUTAGECASE)))
+            .thenReturn(entity);
+
+        // Act
+        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(entities, true);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(1, result.getCategoryInsights().length);
     }
 
     @Test
-    public void testConvertEcpd_withJsonProcessingException() {
+    public void testConvertToMtnInsights_aggregateValueContainsOutage() {
         // Arrange
-        MtnInsightsAttributes attr = createAttributes();
-        doThrow(new JsonProcessingException("Test Exception") {}).when(objectMapper).writeValueAsString(any());
+        MtnInsightsEntity entity = new MtnInsightsEntity();
+        MtnInsightsPK pk = new MtnInsightsPK();
+        pk.setEcpdId("ecpd1");
+        pk.setMtn("mtn1");
+        pk.setInsightCategory(EventLedgerConstants.INSIGHT_CATEGORY_NETWORK_OUTAGE);
+        pk.setInsightName(EventLedgerConstants.MTNOUTAGE);
+        entity.setPk(pk);
+        entity.setProdId("outage1");
+        entity.setInsightValues("Value1");
 
-        // Act & Assert
-        Exception exception = assertThrows(SystemException.class, () -> {
-            mtnInsightsManager.convertEcpd(attr);
-        });
+        AggregateInsightsEntity aggregateEntity = new AggregateInsightsEntity();
+        aggregateEntity.setAggrValue("\"outage_id\":\"outage1\",");
 
-        assertEquals("Test Exception", exception.getMessage());
-    }
+        List<MtnInsightsEntity> entities = Collections.singletonList(entity);
 
-    private MtnInsightsAttributes createAttributes() {
-        MtnInsightsAttributes attr = new MtnInsightsAttributes();
-        attr.setEcpdId("ecpdId");
-        attr.setMtn("mtn");
-        attr.setInsightCategory("category");
-        attr.setInsightName("insightName");
-        attr.setOutageId("outageId");
-        attr.setUpdateBy("updateBy");
-        attr.setUpdateTs(new Date());
-        attr.setInsightValues("someValue");
-        return attr;
+        when(aggrInsightRepository.findByPkAggrCategoryAndPkAggrProdId(
+            eq(EventLedgerConstants.INSIGHT_CATEGORY_NETWORK_OUTAGE), eq("outage1")))
+            .thenReturn(aggregateEntity);
+
+        // Act
+        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(entities, true);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(1, result.getCategoryInsights().length);
     }
 }
 ```
 
 ### Explanation
 
-1. **Test Case for `convert` Method**:
-   - Simulates a `JsonProcessingException` by mocking `ObjectMapper`'s `writeValueAsString` method to throw an exception.
-   - Verifies that a `SystemException` is thrown with the expected message.
+1. **Initialization**:
+   - Use `@Mock` to create mock instances of the repositories.
+   - Use `@InjectMocks` to inject these mock instances into the `MtnInsightsManager`.
+   - `MockitoAnnotations.openMocks(this)` initializes the mocks.
 
-2. **Test Case for `convertEcpd` Method**:
-   - Also simulates a `JsonProcessingException` using the same mocking strategy.
-   - Verifies that a `SystemException` is thrown with the expected message.
+2. **Setting Fields**:
+   - Use `ReflectionTestUtils.setField` to set the `requested_by` field in the `MtnInsightsManager`.
 
-These test cases ensure that the catch blocks in both methods are executed, covering scenarios where JSON processing fails.
+3. **Test Cases**:
+   - `testConvertToMtnInsights_insightsCaseEntitiesNotEmpty`: This test sets up a mock repository to return an `MtnInsightsEntity` when the method is called with specific parameters. It checks if the method processes this entity correctly.
+   - `testConvertToMtnInsights_aggregateValueContainsOutage`: This test sets up a mock `AggregateInsightsEntity` and checks if the `convertToMtnInsights` method processes it correctly when its `aggrValue` contains a specific string.
+
+These tests aim to cover the specific conditions you're interested in and validate that the method behaves correctly when these conditions are met.

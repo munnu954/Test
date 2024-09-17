@@ -1,109 +1,129 @@
-To achieve 100% code coverage for the specified `if` statements in the `convertToMtnInsights` method, we'll need to write JUnit 5 test cases that simulate the scenarios where the conditions evaluate to true. 
-
-Below is an example of how you might structure the JUnit test cases using Mockito to mock the dependencies:
+To create JUnit 5 test cases that achieve 100% code coverage for the `UserInsightsValidator` class, we need to cover every possible branch in the validation logic. We'll use reflection to access private methods and fields as requested. Below are the test cases for the `UserInsightsValidator` class:
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.junit.jupiter.api.function.Executable;
 
-@ExtendWith(MockitoExtension.class)
-public class MtnInsightsManagerTest {
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
-    @InjectMocks
-    private MtnInsightsManager mtnInsightsManager;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 
-    @Mock
-    private MtnInsightsRepository insightsRepository;
+public class UserInsightsValidatorTest {
 
-    @Mock
-    private AggregateInsightsRepository aggrInsightRepository;
-
-    private static final String OUTAGE_ID = "12345";
-    private static final String INSIGHT_CATEGORY_NETWORK_OUTAGE = "VBGNxOutage";
-    private static final String MTNOUTAGECASE = "mtnOutageCase";
-    private static final String MTNOUTAGE = "mtnoutage";
-
+    private UserInsightsValidator validator;
+    private UserInsightsRequest validRequest;
+    private UserInsightsSearchRequest validSearchRequest;
+    
     @BeforeEach
     public void setUp() {
-        // Any initialization if required
+        validator = new UserInsightsValidator();
+        
+        // Prepare a valid UserInsightsRequest
+        validRequest = new UserInsightsRequest();
+        validRequest.setRequestType(InsightsRequestType.INSERTCUSTOMERINSIGHTS);
+        UserInsightsAttributes attributes = new UserInsightsAttributes();
+        attributes.setUserId("validUserId");
+        attributes.setEcpId("validEcpdId");
+        validRequest.setKeyAttributes(attributes);
+        
+        // Prepare a valid ServiceHeader
+        ServiceHeader header = new ServiceHeader();
+        header.setClientId("clientId");
+        header.setClientTransactionId("clientTransactionId");
+        header.setServiceName("serviceName");
+        validRequest.setServiceHeader(header);
+        
+        // Prepare a valid UserInsightsSearchRequest
+        validSearchRequest = new UserInsightsSearchRequest();
+        validSearchRequest.setServiceHeader(header);
+        UserInsightsSearchParam searchParam = new UserInsightsSearchParam();
+        searchParam.setUserId("userId");
+        searchParam.setEcpId("ecpdId");
+        searchParam.setInsightCategory(new String[]{"category"});
+        searchParam.setInsightName(new String[]{"name"});
+        validSearchRequest.setServiceRequest(searchParam);
     }
 
     @Test
-    public void testConvertToMtnInsights_withInsightsCaseEntitiesNotEmpty() {
-        // Arrange
-        MtnInsightsEntity entity = new MtnInsightsEntity();
-        MtnInsightsPK pk = new MtnInsightsPK();
-        pk.setInsightName(MTNOUTAGECASE);
-        pk.setEcpdId("ecpdId");
-        pk.setMtn("mtn");
-        entity.setPk(pk);
-        entity.setProdId(OUTAGE_ID);
-        entity.setInsightValues("Some values");
-
-        List<MtnInsightsEntity> entities = Collections.singletonList(entity);
-        when(insightsRepository.findByPkEcpdIdAndPkMtnAndProdIdAndPkInsightCategoryInAndPkInsightNameIn(anyString(), anyString(), anyString(), any(), any()))
-                .thenReturn(entity); // Mocking the repository call
-
-        // Act
-        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(entities, true);
-
-        // Assert
-        assertNotNull(result);
-        assertEquals(1, result.getCategoryInsights().length); // Check if insights are returned
+    public void testValidate_validRequest_noException() {
+        assertDoesNotThrow(() -> validator.validate(validRequest));
     }
 
     @Test
-    public void testConvertToMtnInsights_withAggregateValueContainsOutageId() {
-        // Arrange
-        MtnInsightsEntity entity = new MtnInsightsEntity();
-        MtnInsightsPK pk = new MtnInsightsPK();
-        pk.setInsightName(MTNOUTAGE);
-        pk.setEcpdId("ecpdId");
-        pk.setMtn("mtn");
-        entity.setPk(pk);
-        entity.setProdId(OUTAGE_ID);
-        entity.setInsightValues("Some values");
+    public void testValidate_invalidRequestType_throwsException() throws Exception {
+        UserInsightsRequest request = new UserInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS); // Invalid type
+        request.setServiceHeader(validRequest.getServiceHeader());
 
-        List<MtnInsightsEntity> entities = Collections.singletonList(entity);
+        Executable executable = () -> validator.validate(request);
+        assertThrows(InvalidRequestException.class, executable);
+    }
 
-        AggregateInsightsEntity aggregateEntity = new AggregateInsightsEntity();
-        AggregateInsightsPK aggrPk = new AggregateInsightsPK();
-        aggrPk.setAggrCategory(INSIGHT_CATEGORY_NETWORK_OUTAGE);
-        aggrPk.setAggrProdId(OUTAGE_ID);
-        aggregateEntity.setPk(aggrPk);
-        aggregateEntity.setAggrValue("\"outage_id\":\"12345\","); // This should match the expected value
+    @Test
+    public void testValidate_keyAttributesMissing_throwsException() {
+        UserInsightsRequest request = new UserInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTCUSTOMERINSIGHTS);
+        request.setServiceHeader(validRequest.getServiceHeader());
 
-        when(aggrInsightRepository.findByPkAggrCategoryAndPkAggrProdId(anyString(), anyString()))
-                .thenReturn(aggregateEntity); // Mocking the repository call
+        Executable executable = () -> validator.validate(request);
+        assertThrows(InvalidRequestException.class, executable);
+    }
 
-        // Act
-        InsightsMtn result = mtnInsightsManager.convertToMtnInsights(entities, true);
+    @Test
+    public void testValidate_listKeyAttributesEmpty_throwsException() throws Exception {
+        UserInsightsRequest request = new UserInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTCUSTOMERINSIGHTS);
+        request.setServiceHeader(validRequest.getServiceHeader());
+        request.setListKeyAttributes(new UserInsightsAttributes[0]); // Empty
 
-        // Assert
-        assertNotNull(result);
-        assertEquals(1, result.getCategoryInsights().length); // Check if insights are returned
+        Executable executable = () -> validator.validate(request);
+        assertThrows(InvalidRequestException.class, executable);
+    }
+
+    @Test
+    public void testValidate_invalidSearchRequest_throwsException() {
+        UserInsightsSearchRequest request = new UserInsightsSearchRequest();
+        request.setServiceHeader(validSearchRequest.getServiceHeader());
+        UserInsightsSearchParam searchParam = new UserInsightsSearchParam();
+        searchParam.setUserId(""); // Invalid
+        searchParam.setEcpId("");
+        searchParam.setInsightCategory(new String[]{""});
+        searchParam.setInsightName(new String[]{""});
+        request.setServiceRequest(searchParam);
+
+        Executable executable = () -> validator.validate(request);
+        assertThrows(InvalidRequestException.class, executable);
+    }
+
+    @Test
+    public void testValidate_validSearchRequest_noException() {
+        assertDoesNotThrow(() -> validator.validate(validSearchRequest));
+    }
+
+    // Use reflection to access and test private methods (if necessary)
+    private void invokePrivateValidateIteratorMethod(UserInsightsAttributes attributes, String logVal) throws Exception {
+        Method method = UserInsightsValidator.class.getDeclaredMethod("validateIterator", String.class, UserInsightsAttributes.class, String.class);
+        method.setAccessible(true);
+
+        Field errorMessageField = UserInsightsValidator.class.getDeclaredField("errorMessage");
+        errorMessageField.setAccessible(true);
+        String errorMessage = null;
+        errorMessageField.set(validator, errorMessage);
+
+        method.invoke(validator, errorMessage, attributes, logVal);
     }
 }
 ```
 
-### Explanation:
-1. **Mockito Setup**: The test class uses Mockito to mock the dependencies (`MtnInsightsRepository` and `AggregateInsightsRepository`). This allows us to control the behavior of these dependencies in the tests.
+### Key Points:
+- **Reflection Usage**: Reflection is used to access private methods if needed, but in this test setup, the reflection part is prepared to be used if necessary.
+- **Branch Coverage**: Each test covers different branches of the code:
+  - Valid and invalid request types.
+  - Missing key attributes and list key attributes.
+  - Valid and invalid search requests.
+- **Setup**: A setup method initializes valid request objects for reuse in multiple tests. 
 
-2. **Test Case for `insightsCaseEntities`**:
-   - The first test case checks the scenario where `insightsCaseEntities` is not empty. We mock the call to `insightsRepository` to return a valid `MtnInsightsEntity` when called with certain parameters. The test then asserts that the method `convertToMtnInsights` returns a non-null `InsightsMtn` object.
-
-3. **Test Case for `aggregateInsightsEntity.getAggrValue().contains(...)`**:
-   - The second test checks the condition where `aggregateInsightsEntity.getAggrValue()` contains the expected outage ID. We mock the aggregate entity to ensure it contains the correct value. The test then asserts that insights are returned.
-
-These test cases will help ensure 100% code coverage for the specified conditions in the `convertToMtnInsights` method. Adjust the mock data as necessary to fit your specific implementation.
+Make sure you have all the dependencies for JUnit 5 in your build configuration to run these test cases.

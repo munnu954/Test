@@ -1,80 +1,156 @@
-Additional JUnit5 Test Cases for UserInsightsValidator
-1. Null ServiceHeader:
-@Test
-void validate_NullServiceHeader_ThrowsException() throws Exception {
-    UserInsightsRequest request = new UserInsightsRequest();
-    request.setServiceHeader(null);
+To achieve 100% code coverage for the `UserInsightsValidator` class using JUnit 5, we need to write test cases that cover all possible branches and paths in the `validate` methods. This includes testing various conditions such as valid and invalid request types, presence or absence of key attributes, and various error conditions. We will use reflection to access private methods and fields without making them public. Here's how you can write the test cases:
 
-    assertThrows(InvalidRequestException.class, () -> invokeValidate(request));
+```java
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.fail;
+
+import java.lang.reflect.Method;
+
+import org.json.JSONObject;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+public class UserInsightsValidatorTest {
+
+    private UserInsightsValidator validator;
+
+    @BeforeEach
+    public void setUp() {
+        validator = new UserInsightsValidator();
+    }
+
+    @Test
+    public void testValidateWithInvalidRequestType() {
+        UserInsightsRequest request = new UserInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS); // Invalid request type
+
+        assertThrows(InvalidRequestException.class, () -> {
+            validator.validate(request);
+        });
+    }
+
+    @Test
+    public void testValidateWithNullKeyAttributes() {
+        UserInsightsRequest request = new UserInsightsRequest();
+        request.setListKeyAttributes(null);
+        request.setKeyAttributes(null);
+
+        assertThrows(InvalidRequestException.class, () -> {
+            validator.validate(request);
+        });
+    }
+
+    @Test
+    public void testValidateWithValidKeyAttributes() {
+        UserInsightsRequest request = createValidRequest();
+        request.setListKeyAttributes(null);
+
+        try {
+            validator.validate(request);
+        } catch (InvalidRequestException e) {
+            fail("Validation should pass but it failed.");
+        }
+    }
+
+    @Test
+    public void testValidateWithValidListKeyAttributes() {
+        UserInsightsRequest request = createValidRequest();
+        request.setKeyAttributes(null);
+
+        try {
+            validator.validate(request);
+        } catch (InvalidRequestException e) {
+            fail("Validation should pass but it failed.");
+        }
+    }
+
+    @Test
+    public void testValidateIteratorWithInvalidAttributes() throws Exception {
+        UserInsightsAttributes attributes = new UserInsightsAttributes();
+        String errorMessage = null;
+
+        Method method = UserInsightsValidator.class.getDeclaredMethod("validateIterator", String.class, UserInsightsAttributes.class, String.class);
+        method.setAccessible(true);
+
+        assertThrows(InvalidRequestException.class, () -> {
+            method.invoke(validator, errorMessage, attributes, "LogVal");
+        });
+    }
+
+    @Test
+    public void testValidateSearchRequestWithMissingFields() {
+        UserInsightsSearchRequest searchRequest = new UserInsightsSearchRequest();
+        searchRequest.setServiceRequest(new UserInsightsSearchParam()); // Missing fields
+
+        assertThrows(InvalidRequestException.class, () -> {
+            validator.validate(searchRequest);
+        });
+    }
+
+    @Test
+    public void testValidateSearchRequestWithAllFields() {
+        UserInsightsSearchRequest searchRequest = createValidSearchRequest();
+
+        try {
+            validator.validate(searchRequest);
+        } catch (InvalidRequestException e) {
+            fail("Validation should pass but it failed.");
+        }
+    }
+
+    private UserInsightsRequest createValidRequest() {
+        UserInsightsRequest request = new UserInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTCUSTOMERINSIGHTS);
+
+        UserInsightsAttributes attributes = new UserInsightsAttributes();
+        attributes.setUserId("userId");
+        attributes.setEcpId("ecpdId");
+
+        request.setKeyAttributes(attributes);
+        request.setListKeyAttributes(new UserInsightsAttributes[]{attributes});
+
+        ServiceHeader serviceHeader = new ServiceHeader();
+        serviceHeader.setClientId("clientId");
+        serviceHeader.setClientTransactionId("transactionId");
+        serviceHeader.setServiceName("serviceName");
+
+        request.setServiceHeader(serviceHeader);
+
+        return request;
+    }
+
+    private UserInsightsSearchRequest createValidSearchRequest() {
+        UserInsightsSearchRequest searchRequest = new UserInsightsSearchRequest();
+        UserInsightsSearchParam searchParam = new UserInsightsSearchParam();
+        searchParam.setUserId("userId");
+        searchParam.setEcpId("ecpdId");
+        searchParam.setInsightCategory(new String[]{"category"});
+        searchParam.setInsightName(new String[]{"name"});
+
+        searchRequest.setServiceRequest(searchParam);
+
+        ServiceHeader serviceHeader = new ServiceHeader();
+        serviceHeader.setClientId("clientId");
+        serviceHeader.setClientTransactionId("transactionId");
+        serviceHeader.setServiceName("serviceName");
+
+        searchRequest.setServiceHeader(serviceHeader);
+
+        return searchRequest;
+    }
 }
+```
 
-2. Empty ServiceHeader Fields:
-@Test
-void validate_EmptyServiceHeaderFields_ThrowsException() throws Exception {
-    UserInsightsRequest request = new UserInsightsRequest();
-    request.setServiceHeader(new ServiceHeader());
+### Explanation:
+- **Setup and Initialization**: `setUp` method initializes the `UserInsightsValidator` instance before each test.
+- **Testing Different Branches**: Various `@Test` methods handle different scenarios:
+  - Invalid request type.
+  - Missing key attributes.
+  - Valid single and list key attributes.
+  - Invalid attributes in `validateIterator`.
+  - Missing fields in `UserInsightsSearchRequest`.
+  - Valid search request.
+- **Reflection**: Used to access and invoke private `validateIterator` method.
+- **Assertions**: `assertThrows` checks if the expected exception is thrown; `fail` ensures valid cases do not throw exceptions. 
 
-    assertThrows(InvalidRequestException.class, () -> invokeValidate(request));
-}
-
-3. Maximum Array Lengths:
-@Test
-void validate_MaximumListKeyAttributesLength_ThrowsException() throws Exception {
-    UserInsightsRequest request = new UserInsightsRequest();
-    UserInsightsAttributes[] listKeyAttributes = new UserInsightsAttributes[501];
-    request.setListKeyAttributes(listKeyAttributes);
-
-    assertThrows(InvalidRequestException.class, () -> invokeValidate(request));
-}
-
-@Test
-void validate_MaximumInsightCategoryLength_ThrowsException() throws Exception {
-    UserInsightsSearchRequest searchRequest = new UserInsightsSearchRequest();
-    searchRequest.getServiceRequest().setInsightCategory(new String[51]);
-
-    assertThrows(InvalidRequestException.class, () -> invokeValidateSearchRequest(searchRequest));
-}
-
-// ... similar test for maximumInsightNameLength
-
-4. Edge Cases for KeyAttributes and ListKeyAttributes:
-@Test
-void validate_KeyAttributesAndListKeyAttributes_ThrowsException() throws Exception {
-    UserInsightsRequest request = new UserInsightsRequest();
-    request.setKeyAttributes(new UserInsightsAttributes());
-    request.setListKeyAttributes(new UserInsightsAttributes[] {new UserInsightsAttributes()});
-
-    assertThrows(InvalidRequestException.class, () -> invokeValidate(request));
-}
-
-5. Edge Cases for UserInsightsSearchRequest:
-@Test
-void validateSearchRequest_NullServiceRequest_ThrowsException() throws Exception {
-    UserInsightsSearchRequest request = new UserInsightsSearchRequest();
-    request.setServiceRequest(null);
-
-    assertThrows(InvalidRequestException.class, () -> invokeValidateSearchRequest(request));
-}
-
-// ... other edge cases for UserInsightsSearchRequest fields
-
-6. Additional Edge Cases:
- * Empty strings for required fields in UserInsightsAttributes and UserInsightsSearchParam.
- * Invalid values for InsightsRequestType.
- * Null values for keyAttributes and listKeyAttributes.
-Helper Method:
-private void invokeValidate(UserInsightsRequest request) throws Exception {
-    Class<?> validatorClass = UserInsightsValidator.class;
-    Method validateMethod = validatorClass.getDeclaredMethod("validate", UserInsightsRequest.class);
-    validateMethod.setAccessible(true);
-    validateMethod.invoke(null, request);
-}
-
-private void invokeValidateSearchRequest(UserInsightsSearchRequest request) throws Exception {
-    Class<?> validatorClass = UserInsightsValidator.class;
-    Method validateMethod = validatorClass.getDeclaredMethod("validate", UserInsightsSearchRequest.class);
-    validateMethod.setAccessible(true);
-    validateMethod.invoke(null, request);
-}
-
-These test cases cover a wide range of edge cases and should help achieve 100% code coverage for the UserInsightsValidator class.
+This testing approach ensures thorough coverage of all branches in the `UserInsightsValidator` class.

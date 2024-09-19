@@ -1,91 +1,130 @@
-To achieve 100% code coverage for the `ApplicationContextProvider` class using JUnit 5 and Reflection APIs, you need to test both the `setApplicationContext` method and the `getBean` methods. Below is a sample implementation of the test cases:
+To achieve 100% code coverage for the `JsonConverter` class using JUnit 5 and Reflection APIs, including coverage for the try-catch block, we need to create test cases for both the `convert` and `convertAsString` methods. Below is an example implementation of the test cases:
 
 ```java
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.springframework.context.ApplicationContext;
 
 import java.lang.reflect.Field;
 
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.Mockito.mock;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
-class ApplicationContextProviderTest {
+class JsonConverterTest {
 
-    private ApplicationContextProvider applicationContextProvider;
+    private JsonConverter jsonConverter;
 
     @BeforeEach
     void setUp() {
-        applicationContextProvider = new ApplicationContextProvider();
+        jsonConverter = new JsonConverter();
     }
 
     @Test
-    void testSetApplicationContext() throws Exception {
-        // Create a mock ApplicationContext
-        ApplicationContext mockContext = mock(ApplicationContext.class);
+    void testConvert() throws Exception {
+        // Prepare a JSON string and a class type
+        String json = "{\"name\":\"John\", \"age\":30}";
+        Class<Person> clazz = Person.class;
 
-        // Invoke the setApplicationContext method using reflection
-        applicationContextProvider.setApplicationContext(mockContext);
+        // Call the convert method
+        Object result = jsonConverter.convert(json, clazz);
 
-        // Use reflection to access the private CONTEXT field
-        Field contextField = ApplicationContextProvider.class.getDeclaredField("CONTEXT");
-        contextField.setAccessible(true);
-        ApplicationContext context = (ApplicationContext) contextField.get(applicationContextProvider);
-
-        // Verify that the CONTEXT field is set
-        assertNotNull(context);
+        // Verify the result
+        assertEquals("John", ((Person) result).getName());
+        assertEquals(30, ((Person) result).getAge());
     }
 
     @Test
-    void testGetBeanByClass() throws Exception {
-        // Create a mock ApplicationContext
-        ApplicationContext mockContext = mock(ApplicationContext.class);
-        Object mockBean = new Object();
-        
-        // Set the mock context using reflection
-        applicationContextProvider.setApplicationContext(mockContext);
-        
-        // Define behavior for getBean method
-        Mockito.when(mockContext.getBean(Object.class)).thenReturn(mockBean);
+    void testConvertWithInvalidJson() {
+        // Prepare an invalid JSON string
+        String invalidJson = "{\"name\":\"John\", \"age\":}"; // Invalid JSON
 
-        // Call getBean method
-        Object bean = applicationContextProvider.getBean(Object.class);
-
-        // Verify that the returned bean is the same as the mockBean
-        assertNotNull(bean);
-        assertSame(mockBean, bean);
+        // Assert that JsonMappingException is thrown
+        assertThrows(JsonMappingException.class, () -> {
+            jsonConverter.convert(invalidJson, Person.class);
+        });
     }
 
     @Test
-    void testGetBeanByName() throws Exception {
-        // Create a mock ApplicationContext
-        ApplicationContext mockContext = mock(ApplicationContext.class);
-        Object mockBean = new Object();
-        
-        // Set the mock context using reflection
-        applicationContextProvider.setApplicationContext(mockContext);
-        
-        // Define behavior for getBean method by name
-        Mockito.when(mockContext.getBean("mockBean")).thenReturn(mockBean);
+    void testConvertAsString() throws JsonProcessingException {
+        // Prepare a Person object
+        Person person = new Person("Jane", 25);
 
-        // Call getBean method
-        Object bean = applicationContextProvider.getBean("mockBean");
+        // Call the convertAsString method
+        String jsonString = jsonConverter.convertAsString(person);
 
-        // Verify that the returned bean is the same as the mockBean
-        assertNotNull(bean);
-        assertSame(mockBean, bean);
+        // Verify the JSON string
+        assertEquals("{\"name\":\"Jane\",\"age\":25}", jsonString);
+    }
+
+    @Test
+    void testConvertAsStringWithNull() {
+        // Call convertAsString with null
+        String jsonString = jsonConverter.convertAsString(null);
+        assertEquals("null", jsonString);
+    }
+
+    @Test
+    void testConvertAsStringWithException() throws Exception {
+        // Use reflection to access the private ThreadLocal<ObjectMapper>
+        Field omField = JsonConverter.class.getDeclaredField("om");
+        omField.setAccessible(true);
+        
+        // Get the current ObjectMapper instance
+        ObjectMapper objectMapper = (ObjectMapper) omField.get(jsonConverter);
+        
+        // Create a mock ObjectMapper that throws JsonProcessingException
+        ObjectMapper mockObjectMapper = Mockito.mock(ObjectMapper.class);
+        Mockito.when(mockObjectMapper.writeValueAsString(Mockito.any())).thenThrow(new JsonProcessingException("Error") {});
+
+        // Set the mock ObjectMapper into the ThreadLocal
+        omField.set(jsonConverter, new ThreadLocal<ObjectMapper>() {
+            @Override
+            protected ObjectMapper initialValue() {
+                return mockObjectMapper;
+            }
+        });
+
+        // Call convertAsString and verify it returns null
+        String jsonString = jsonConverter.convertAsString(new Person("Error", 0));
+        assertNull(jsonString);
+    }
+
+    // Sample Person class for testing
+    static class Person {
+        private String name;
+        private int age;
+
+        public Person() {
+        }
+
+        public Person(String name, int age) {
+            this.name = name;
+            this.age = age;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public int getAge() {
+            return age;
+        }
     }
 }
 ```
 
 ### Explanation:
-1. **Mocking**: We use Mockito to create a mock `ApplicationContext` and define the behavior for the `getBean` methods.
-2. **Reflection**: We use Java Reflection to access the private static `CONTEXT` field to verify that it was set correctly.
+1. **Mocking**: We use Mockito to create a mock `ObjectMapper` that simulates throwing a `JsonProcessingException` in the `convertAsString` method.
+2. **Reflection**: We use Java Reflection to access the private static `ThreadLocal<ObjectMapper>` field to set our mock implementation.
 3. **Tests**:
-   - `testSetApplicationContext()`: Tests that the `setApplicationContext` method sets the `CONTEXT` correctly.
-   - `testGetBeanByClass()`: Tests the `getBean(Class<T> beanClass)` method.
-   - `testGetBeanByName()`: Tests the `getBean(String beanName)` method.
+   - `testConvert()`: Tests the `convert` method with valid JSON.
+   - `testConvertWithInvalidJson()`: Tests the `convert` method with invalid JSON to ensure it throws `JsonMappingException`.
+   - `testConvertAsString()`: Tests the `convertAsString` method with a valid object.
+   - `testConvertAsStringWithNull()`: Tests the `convertAsString` method with a null input to ensure it returns null.
+   - `testConvertAsStringWithException()`: Tests the scenario where `JsonProcessingException` is thrown in the `convertAsString` method.
 
 ### Note:
-- Make sure you have the necessary dependencies for JUnit 5 and Mockito in your project to run these tests.
+Make sure to include necessary dependencies for JUnit 5 and Mockito in your project to run these tests.

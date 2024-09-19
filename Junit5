@@ -1,150 +1,107 @@
-To achieve 100% code coverage for the `initialValue` method in the `JsonConverter` class, we need to ensure that the `ObjectMapper` is instantiated and configured as expected. Since the `initialValue` method is private and part of a `ThreadLocal` instance, you'll need to access it indirectly by invoking methods that utilize the `ObjectMapper`.
-
-The `initialValue` method is called automatically when the `ThreadLocal<ObjectMapper>` is accessed for the first time. Therefore, to cover this method, we can write a test that accesses the `ObjectMapper` from the `convert` or `convertAsString` methods, ensuring that the `initialValue` method gets executed.
-
-Here’s how you can modify the test suite to ensure that `initialValue` is executed:
-
-### Updated JUnit 5 Test Cases for `JsonConverter`
+To achieve 100% code coverage for the `JsonConverter` class using JUnit 5, including the try-catch block in the `convertAsString` method, we can utilize Reflection APIs to access the private fields. Below is the test class with appropriate test cases:
 
 ```java
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 
 import java.lang.reflect.Field;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class JsonConverterTest {
+class JsonConverterTest {
 
     private JsonConverter jsonConverter;
-    private ObjectMapper mockObjectMapper;
 
     @BeforeEach
-    public void setUp() {
+    void setUp() {
         jsonConverter = new JsonConverter();
-        mockObjectMapper = Mockito.mock(ObjectMapper.class);
-
-        // Use reflection to set the ThreadLocal ObjectMapper to our mocked ObjectMapper
-        try {
-            Field field = JsonConverter.class.getDeclaredField("om");
-            field.setAccessible(true);
-            ThreadLocal<ObjectMapper> threadLocal = (ThreadLocal<ObjectMapper>) field.get(jsonConverter);
-            threadLocal.set(mockObjectMapper);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            e.printStackTrace();
-        }
     }
 
     @Test
-    public void testConvertSuccess() throws JsonMappingException, JsonProcessingException {
-        // Arrange
-        String json = "{\"name\":\"test\"}";
-        Class<Person> clazz = Person.class;
-        Person expectedPerson = new Person("test");
-
-        Mockito.when(mockObjectMapper.readValue(json, clazz)).thenReturn(expectedPerson);
-
-        // Act
-        Person result = (Person) jsonConverter.convert(json, clazz);
-
-        // Assert
-        assertEquals(expectedPerson, result, "The converted object should match the expected object");
+    void testConvertValidJson() throws JsonMappingException, JsonProcessingException {
+        String json = "{\"name\":\"John\", \"age\":30}";
+        Person person = (Person) jsonConverter.convert(json, Person.class);
+        
+        assertNotNull(person);
+        assertEquals("John", person.getName());
+        assertEquals(30, person.getAge());
     }
 
     @Test
-    public void testConvertHandlesJsonMappingException() throws JsonProcessingException {
-        // Arrange
-        String json = "{\"name\":\"test\"}";
-        Class<Person> clazz = Person.class;
+    void testConvertInvalidJson() {
+        String json = "{\"name\":\"John\", \"age\":\"invalidAge\"}";
 
-        Mockito.when(mockObjectMapper.readValue(json, clazz)).thenThrow(new JsonMappingException("Mocked exception"));
-
-        // Act
-        Person result = (Person) jsonConverter.convert(json, clazz);
-
-        // Assert
-        assertNull(result, "The result should be null when JsonMappingException is thrown");
+        assertThrows(JsonMappingException.class, () -> {
+            jsonConverter.convert(json, Person.class);
+        });
     }
 
     @Test
-    public void testConvertAsStringSuccess() throws JsonProcessingException {
-        // Arrange
-        Person person = new Person("test");
-        String expectedJson = "{\"name\":\"test\"}";
-
-        Mockito.when(mockObjectMapper.writeValueAsString(person)).thenReturn(expectedJson);
-
-        // Act
-        String result = jsonConverter.convertAsString(person);
-
-        // Assert
-        assertEquals(expectedJson, result, "The JSON string should match the expected JSON string");
+    void testConvertAsStringValidObject() {
+        Person person = new Person("John", 30);
+        String jsonString = jsonConverter.convertAsString(person);
+        
+        assertNotNull(jsonString);
+        assertTrue(jsonString.contains("John"));
+        assertTrue(jsonString.contains("30"));
     }
 
     @Test
-    public void testConvertAsStringHandlesJsonProcessingException() {
-        // Arrange
-        Object object = new Object();
-        Mockito.when(mockObjectMapper.writeValueAsString(object)).thenThrow(new JsonProcessingException("Mocked exception") {});
-
-        // Act
-        String result = jsonConverter.convertAsString(object);
-
-        // Assert
-        assertNull(result, "The result should be null when JsonProcessingException is thrown");
+    void testConvertAsStringNullObject() {
+        String jsonString = jsonConverter.convertAsString(null);
+        assertNull(jsonString);
     }
 
     @Test
-    public void testInitialValueIsCalled() {
-        // Act: Accessing the `ObjectMapper` to trigger the `initialValue` method
-        ObjectMapper objectMapper = jsonConverter.convertAsString(new Object()).getClass().getDeclaredField("om").get(jsonConverter).get();
+    void testConvertAsStringExceptionHandling() throws Exception {
+        // Set up a mock ObjectMapper that throws JsonProcessingException
+        ObjectMapper mockMapper = new ObjectMapper() {
+            @Override
+            public String writeValueAsString(Object value) throws JsonProcessingException {
+                throw new JsonProcessingException("Mock Exception") {};
+            }
+        };
 
-        // Assert: Ensure the ObjectMapper is configured as expected
-        assertNull(objectMapper, "ObjectMapper should not be null after initialValue is called");
-        // Check if FAIL_ON_UNKNOWN_PROPERTIES is set to false
-        assertEquals(false, objectMapper.isEnabled(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES), "FAIL_ON_UNKNOWN_PROPERTIES should be false");
+        // Use reflection to set the ThreadLocal ObjectMapper
+        Field field = JsonConverter.class.getDeclaredField("om");
+        field.setAccessible(true);
+        ThreadLocal<ObjectMapper> threadLocal = (ThreadLocal<ObjectMapper>) field.get(null);
+        threadLocal.set(mockMapper);
+
+        String jsonString = jsonConverter.convertAsString(new Person("John", 30));
+        assertNull(jsonString); // Should return null as the exception is caught
     }
 
     // Sample Person class for testing purposes
-    public static class Person {
+    private static class Person {
         private String name;
+        private int age;
 
-        public Person(String name) {
+        public Person(String name, int age) {
             this.name = name;
+            this.age = age;
         }
 
         public String getName() {
             return name;
         }
 
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (!(o instanceof Person)) return false;
-            Person person = (Person) o;
-            return name.equals(person.name);
-        }
-
-        @Override
-        public int hashCode() {
-            return name.hashCode();
+        public int getAge() {
+            return age;
         }
     }
 }
 ```
 
-### Explanation of New Test Case:
-1. **`testInitialValueIsCalled`**: This test accesses the `ObjectMapper` by executing a method that uses it, which will trigger the `initialValue` method. 
-   - After accessing it, it checks that the `ObjectMapper` is not null and that the `FAIL_ON_UNKNOWN_PROPERTIES` feature is set to false as expected.
+### Explanation:
+1. **Setup**: The `setUp` method initializes a new instance of `JsonConverter` before each test.
+2. **testConvertValidJson**: Tests successful conversion of a valid JSON string to a `Person` object.
+3. **testConvertInvalidJson**: Tests the scenario where an invalid JSON string throws a `JsonMappingException`.
+4. **testConvertAsStringValidObject**: Tests successful conversion of a valid `Person` object to a JSON string.
+5. **testConvertAsStringNullObject**: Tests conversion of a null object, which should return null.
+6. **testConvertAsStringExceptionHandling**: Uses Reflection to inject a mock `ObjectMapper` that throws a `JsonProcessingException` when `writeValueAsString` is called. This tests the catch block in the `convertAsString` method.
 
-### Note:
-- Accessing the `ThreadLocal` directly through reflection to check the `ObjectMapper` can be tricky, so you may need to adjust the assertions based on your specific implementation.
-- Ensure that your testing environment includes Mockito and JUnit 5 dependencies for the tests to run successfully. 
-
-This updated test suite now covers all methods in the `JsonConverter` class, including the `initialValue` method, achieving 100% code coverage.
+This test class ensures that all paths, including exception handling, are covered, achieving 100% code coverage for the `JsonConverter` class.

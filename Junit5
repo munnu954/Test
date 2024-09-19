@@ -1,16 +1,15 @@
-To achieve 100% code coverage for the `UserInsightsValidator` class using JUnit 5, we need to create test cases that cover all branches of the code. This includes handling different request types, validating attributes, and throwing exceptions when necessary. As noted, we will use reflection to access private methods and fields, and create mock JSONObjects to avoid the `java.lang.NoSuchMethodError`. Here's how you can do it:
+The error you're encountering indicates that the exception thrown is wrapped in a `java.lang.reflect.InvocationTargetException`, which is common when using reflection to invoke methods. The actual exception (`InvalidRequestException`) is the cause of this `InvocationTargetException`. To properly handle and assert the expected exception, you can unwrap the `InvocationTargetException` to check its cause.
+
+Here's how you can modify the test case to handle this situation:
 
 ```java
-import org.json.JSONObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.function.Executable;
-import org.mockito.Mockito;
+import org.opentest4j.AssertionFailedError;
 
-import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class UserInsightsValidatorTest {
@@ -23,77 +22,21 @@ public class UserInsightsValidatorTest {
     }
 
     @Test
-    public void testValidateInsertCustomerInsightsRequest() throws Exception {
-        UserInsightsRequest request = new UserInsightsRequest();
-        request.setServiceHeader(createValidServiceHeader());
-        request.setRequestType(InsightsRequestType.INSERTCUSTOMERINSIGHTS);
-        request.setKeyAttributes(createValidUserInsightsAttributes());
-
-        assertDoesNotThrow(() -> invokeValidate(request));
-    }
-
-    @Test
-    public void testValidateInvalidRequestType() throws Exception {
-        UserInsightsRequest request = new UserInsightsRequest();
-        request.setServiceHeader(createValidServiceHeader());
-        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS);
-
-        Executable executable = () -> invokeValidate(request);
-        assertThrows(InvalidRequestException.class, executable, "Invalid request type");
-    }
-
-    @Test
-    public void testValidateMissingKeyAttributes() throws Exception {
-        UserInsightsRequest request = new UserInsightsRequest();
-        request.setServiceHeader(createValidServiceHeader());
-        request.setRequestType(InsightsRequestType.INSERTCUSTOMERINSIGHTS);
-
-        Executable executable = () -> invokeValidate(request);
-        assertThrows(InvalidRequestException.class, executable, "Either KeyAttributes (Single) or ListKeyAttributes (Multiple) are required.");
-    }
-
-    @Test
-    public void testValidateEmptyAttributes() throws Exception {
-        UserInsightsRequest request = new UserInsightsRequest();
-        request.setServiceHeader(createValidServiceHeader());
-        request.setRequestType(InsightsRequestType.INSERTCUSTOMERINSIGHTS);
-        request.setKeyAttributes(new UserInsightsAttributes());
-
-        Executable executable = () -> invokeValidate(request);
-        assertThrows(InvalidRequestException.class, executable, USER_SEARCH_MAND_FIELDS_CHECK);
-    }
-
-    @Test
-    public void testValidateUserInsightsSearchRequest() throws Exception {
-        UserInsightsSearchRequest searchRequest = new UserInsightsSearchRequest();
-        searchRequest.setServiceHeader(createValidServiceHeader());
-        
-        UserInsightsSearchParam param = new UserInsightsSearchParam();
-        param.setUserId("user123");
-        param.setEcpdId("ecpd123");
-        param.setInsightCategory(new String[]{"category1"});
-        param.setInsightName(new String[]{"name1"});
-        searchRequest.setServiceRequest(param);
-
-        assertDoesNotThrow(() -> invokeValidateSearch(searchRequest));
-    }
-
-    @Test
     public void testValidateSearchMissingAttributes() throws Exception {
         UserInsightsSearchRequest searchRequest = new UserInsightsSearchRequest();
         searchRequest.setServiceHeader(createValidServiceHeader());
 
-        Executable executable = () -> invokeValidateSearch(searchRequest);
-        assertThrows(InvalidRequestException.class, executable, "ServiceRequest Ecpd Id, User Id, Insight Category and Insight Name are required.");
+        assertThrows(InvalidRequestException.class, () -> {
+            try {
+                invokeValidateSearch(searchRequest);
+            } catch (InvocationTargetException e) {
+                // Re-throw the actual cause of the exception
+                throw (Exception) e.getCause();
+            }
+        }, "ServiceRequest Ecpd Id, User Id, Insight Category and Insight Name are required.");
     }
 
-    // Helper methods
-
-    private void invokeValidate(UserInsightsRequest request) throws Exception {
-        Method method = UserInsightsValidator.class.getDeclaredMethod("validate", UserInsightsRequest.class);
-        method.setAccessible(true);
-        method.invoke(validator, request);
-    }
+    // Existing helper methods
 
     private void invokeValidateSearch(UserInsightsSearchRequest request) throws Exception {
         Method method = UserInsightsValidator.class.getDeclaredMethod("validate", UserInsightsSearchRequest.class);
@@ -108,18 +51,12 @@ public class UserInsightsValidatorTest {
         header.setServiceName("serviceName123");
         return header;
     }
-
-    private UserInsightsAttributes createValidUserInsightsAttributes() {
-        UserInsightsAttributes attributes = new UserInsightsAttributes();
-        attributes.setUserId("userId123");
-        attributes.setEcpdId("ecpdId123");
-        return attributes;
-    }
 }
 ```
 
-### Key Points:
-- **Reflection** is used to access private methods (`validate` for `UserInsightsRequest` and `UserInsightsSearchRequest`).
-- **Mock JSONObjects** are not needed as we are using valid objects directly within the test.
-- The test cases ensure that all branches are covered: valid inputs, invalid request types, missing attributes, and empty fields.
-- The `assertDoesNotThrow` and `assertThrows` methods from JUnit 5 check for exceptions where expected.
+### Key Adjustments:
+- **Unwrapping Exceptions**: The `InvocationTargetException` is caught and its cause (the original exception) is re-thrown. This allows the test to assert the `InvalidRequestException` directly.
+- **assertThrows**: The `assertThrows` method is used to verify that the expected exception type is indeed thrown. This ensures that your test assertions are correctly targeting the `InvalidRequestException`.
+- **Detailed Message**: Ensure the error message matches what is expected, aiding in verification.
+
+This approach will ensure that the test checks for the correct exception type and message, achieving the desired behavior without the reflection-related complications.

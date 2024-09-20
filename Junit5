@@ -1,62 +1,93 @@
-The error you're encountering indicates that the exception thrown is wrapped in a `java.lang.reflect.InvocationTargetException`, which is common when using reflection to invoke methods. The actual exception (`InvalidRequestException`) is the cause of this `InvocationTargetException`. To properly handle and assert the expected exception, you can unwrap the `InvocationTargetException` to check its cause.
+The `NoSuchMethodError` you're encountering typically indicates that the classpath contains an incompatible version of a library that doesn't have the expected method. In this case, the method `new JSONObject(Object)` isn't found, which means the version of the `json` library you are using does not support creating a `JSONObject` directly from an object. 
 
-Here's how you can modify the test case to handle this situation:
+To fix this error, you need to ensure that the version of the `org.json` library you are using indeed supports this constructor, or you need to manually convert the object to a `Map` or `String` that can be used to create a `JSONObject`. 
+
+Let's update the `UserInsightsValidator` class to handle the conversion manually:
 
 ```java
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.opentest4j.AssertionFailedError;
+import org.json.JSONObject;
+import java.util.HashMap;
+import java.util.Map;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+@Component
+public class UserInsightsValidator extends AbstractInsightsValidator {
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
-public class UserInsightsValidatorTest {
-
-    private UserInsightsValidator validator;
-
-    @BeforeEach
-    public void setup() {
-        validator = new UserInsightsValidator();
-    }
-
-    @Test
-    public void testValidateSearchMissingAttributes() throws Exception {
-        UserInsightsSearchRequest searchRequest = new UserInsightsSearchRequest();
-        searchRequest.setServiceHeader(createValidServiceHeader());
-
-        assertThrows(InvalidRequestException.class, () -> {
-            try {
-                invokeValidateSearch(searchRequest);
-            } catch (InvocationTargetException e) {
-                // Re-throw the actual cause of the exception
-                throw (Exception) e.getCause();
+    public void validate(UserInsightsRequest request) throws InvalidRequestException {
+        validate(request.getServiceHeader());
+        String errorMessage = null;
+        if (!request.getRequestType().equals(InsightsRequestType.INSERTCUSTOMERINSIGHTS)) {
+            errorMessage = "Invalid request type ";
+        }
+        if (request.getKeyAttributes() == null && request.getListKeyAttributes() == null) {
+            errorMessage = "Either KeyAttributes (Single) or ListKeyAttributes (Multiple) are required.";
+        } else if (request.getKeyAttributes() != null) {
+            validateIterator(errorMessage, request.getKeyAttributes(), "KeyAttributes");
+        } else if (request.getListKeyAttributes() != null) {
+            for (int i = 0; i < request.getListKeyAttributes().length; i++) {
+                validateIterator(errorMessage, request.getListKeyAttributes()[i], "ListKeyAttributes");
             }
-        }, "ServiceRequest Ecpd Id, User Id, Insight Category and Insight Name are required.");
+        }
+        if (errorMessage != null) {
+            throw new InvalidRequestException(errorMessage);
+        }
     }
 
-    // Existing helper methods
+    void validateIterator(String errorMessage, UserInsightsAttributes userInsightsAttributes, String logVal) throws InvalidRequestException {
+        Map<String, Object> attributesMap = new HashMap<>();
+        attributesMap.put("userId", userInsightsAttributes.getUserId());
+        attributesMap.put("ecpdId", userInsightsAttributes.getEcpdId());
+        attributesMap.put("insightCategory", userInsightsAttributes.getInsightCategory());
+        attributesMap.put("insightName", userInsightsAttributes.getInsightName());
 
-    private void invokeValidateSearch(UserInsightsSearchRequest request) throws Exception {
-        Method method = UserInsightsValidator.class.getDeclaredMethod("validate", UserInsightsSearchRequest.class);
-        method.setAccessible(true);
-        method.invoke(validator, request);
+        JSONObject jsonObject = new JSONObject(attributesMap);
+
+        if (jsonObject.has("userId") && jsonObject.has("ecpdId") && jsonObject.has("insightCategory")
+                && jsonObject.has("insightName")) {
+            if (isEmpty(userInsightsAttributes.getUserId()) || isEmpty(userInsightsAttributes.getEcpdId())
+                    || isEmpty(userInsightsAttributes.getInsightCategory()) || isEmpty(userInsightsAttributes.getInsightName())) {
+                errorMessage = USER_SEARCH_MAND_FIELDS_CHECK;
+            }
+        } else {
+            errorMessage = logVal + LOGGER_MESSAGE_USER_INSIGHTS;
+        }
+        if (errorMessage != null) {
+            throw new InvalidRequestException(errorMessage);
+        }
     }
 
-    private ServiceHeader createValidServiceHeader() {
-        ServiceHeader header = new ServiceHeader();
-        header.setClientId("clientId123");
-        header.setClientTransactionId("transactionId123");
-        header.setServiceName("serviceName123");
-        return header;
+    public void validate(UserInsightsSearchRequest request) throws InvalidRequestException {
+        validate(request.getServiceHeader());
+
+        Map<String, Object> requestMap = new HashMap<>();
+        requestMap.put("userId", request.getServiceRequest().getUserId());
+        requestMap.put("ecpdId", request.getServiceRequest().getEcpdId());
+        requestMap.put("insightCategory", request.getServiceRequest().getInsightCategory());
+        requestMap.put("insightName", request.getServiceRequest().getInsightName());
+
+        JSONObject jsonObject = new JSONObject(requestMap);
+
+        String errorMessage = null;
+        if (jsonObject.has("userId") && jsonObject.has("ecpdId") && jsonObject.has("insightCategory")
+                && jsonObject.has("insightName")) {
+            if (request.getServiceRequest().getUserId().isEmpty() || request.getServiceRequest().getEcpdId().isEmpty()
+                    || request.getServiceRequest().getInsightCategory()[0].isEmpty()
+                    || request.getServiceRequest().getInsightName()[0].isEmpty()) {
+                errorMessage = USER_SEARCH_MAND_FIELDS_CHECK;
+            }
+        } else {
+            errorMessage = "ServiceRequest Ecpd Id, User Id, Insight Category and Insight Name are required.";
+        }
+        if (errorMessage != null) {
+            throw new InvalidRequestException(errorMessage);
+        }
     }
 }
 ```
 
-### Key Adjustments:
-- **Unwrapping Exceptions**: The `InvocationTargetException` is caught and its cause (the original exception) is re-thrown. This allows the test to assert the `InvalidRequestException` directly.
-- **assertThrows**: The `assertThrows` method is used to verify that the expected exception type is indeed thrown. This ensures that your test assertions are correctly targeting the `InvalidRequestException`.
-- **Detailed Message**: Ensure the error message matches what is expected, aiding in verification.
+### Explanation:
 
-This approach will ensure that the test checks for the correct exception type and message, achieving the desired behavior without the reflection-related complications.
+1. **Manual Map Creation**: Instead of directly passing an object to the `JSONObject` constructor, a `Map` is created and populated with the necessary fields. This map is then used to create the `JSONObject`.
+
+2. **Error Handling**: The error handling logic remains the same, but now it's compatible with versions of the `org.json` library that don't support object-based construction.
+
+Ensure that your `pom.xml` contains the correct version of the library that supports the features you need. If the issue persists, consider using a different JSON library such as Jackson or Gson that might better suit your needs.

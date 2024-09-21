@@ -1,50 +1,111 @@
+Here's an example of how you can write JUnit 5 test cases for the `MtnInsightsValidator` class to achieve 100% code coverage:
+
+```
 import org.junit.jupiter.api.Test;
-import static org.junit.jupiter.api.Assertions.*;
-import org.mockito.Mockito;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class MtnInsightsValidatorTest {
 
+    private MtnInsightsValidator validator = new MtnInsightsValidator();
+
     @Test
-    public void testValidate_InsertMtnInsights() {
-        MtnInsightsValidator mtnInsightsValidator = new MtnInsightsValidator();
-        MtnInsightsRequest request = Mockito.mock(MtnInsightsRequest.class);
-        ServiceHeader serviceHeader = Mockito.mock(ServiceHeader.class);
-        
-        Mockito.when(request.getServiceHeader()).thenReturn(serviceHeader);
-        Mockito.when(request.getRequestType()).thenReturn(InsightsRequestType.INSERTMTNINSIGHTS);
-        
-        assertDoesNotThrow(() -> mtnInsightsValidator.validate(request));
+    public void testValidate_MandatoryFieldsPresent() {
+        MtnInsightsRequest request = new MtnInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS);
+        MtnInsightsAttributes attributes = new MtnInsightsAttributes();
+        attributes.setMtn("123");
+        attributes.setInsightCategory("category");
+        attributes.setInsightName("name");
+        attributes.setEcpdId("ecpdId");
+        attributes.setOutageId("outageId");
+        request.setKeyAttributes(attributes);
+        ServiceHeader serviceHeader = new ServiceHeader();
+        serviceHeader.setClientId("client");
+        serviceHeader.setClientTransactionId("transaction");
+        serviceHeader.setServiceName("service");
+        request.setServiceHeader(serviceHeader);
+
+        assertDoesNotThrow(() -> validator.validate(request));
     }
 
     @Test
-    public void testValidateIterator_KeyAttributes() {
-        MtnInsightsValidator mtnInsightsValidator = new MtnInsightsValidator();
-        MtnInsightsAttributes mtnInsightsAttributes = Mockito.mock(MtnInsightsAttributes.class);
-        
-        Mockito.when(mtnInsightsAttributes.getMtn()).thenReturn("12345");
-        Mockito.when(mtnInsightsAttributes.getInsightCategory()).thenReturn("Category");
-        Mockito.when(mtnInsightsAttributes.getInsightName()).thenReturn("Name");
-        Mockito.when(mtnInsightsAttributes.getOutageId()).thenReturn("Outage123");
-        Mockito.when(mtnInsightsAttributes.getEcpdId()).thenReturn("Ecpd123");
-        
-        assertDoesNotThrow(() -> mtnInsightsValidator.validateIterator(null, mtnInsightsAttributes, "KeyAttributes"));
+    public void testValidate_InvalidRequestType() {
+        MtnInsightsRequest request = new MtnInsightsRequest();
+        request.setRequestType(InsightsRequestType.INVALID);
+        ServiceHeader serviceHeader = new ServiceHeader();
+        serviceHeader.setClientId("client");
+        serviceHeader.setClientTransactionId("transaction");
+        serviceHeader.setServiceName("service");
+        request.setServiceHeader(serviceHeader);
+
+        assertThrows(InvalidRequestException.class, () -> validator.validate(request));
     }
 
     @Test
-    public void testValidate_SearchRequest() {
-        MtnInsightsValidator mtnInsightsValidator = new MtnInsightsValidator();
-        MtnInsightsSearchRequest searchRequest = Mockito.mock(MtnInsightsSearchRequest.class);
-        ServiceHeader serviceHeader = Mockito.mock(ServiceHeader.class);
-        MtnInsightsSearchParam searchParam = Mockito.mock(MtnInsightsSearchParam.class);
-        
-        Mockito.when(searchRequest.getServiceHeader()).thenReturn(serviceHeader);
-        Mockito.when(searchRequest.getServiceRequest()).thenReturn(searchParam);
-        Mockito.when(serviceHeader.getClientId()).thenReturn("12345");
-        Mockito.when(searchParam.getMtn()).thenReturn("Mtn123");
-        Mockito.when(searchParam.getEcpdId()).thenReturn("Ecpd123");
-        Mockito.when(searchParam.getInsightCategory()).thenReturn(new String[]{"Category"});
-        Mockito.when(searchParam.getInsightName()).thenReturn(new String[]{"Name"});
-        
-        assertDoesNotThrow(() -> mtnInsightsValidator.validate(searchRequest));
+    public void testValidate_MissingKeyAttributes() {
+        MtnInsightsRequest request = new MtnInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS);
+        ServiceHeader serviceHeader = new ServiceHeader();
+        serviceHeader.setClientId("client");
+        serviceHeader.setClientTransactionId("transaction");
+        serviceHeader.setServiceName("service");
+        request.setServiceHeader(serviceHeader);
+
+        assertThrows(InvalidRequestException.class, () -> validator.validate(request));
     }
-}
+
+    @ParameterizedTest
+    @MethodSource("provideMyBizScenarios")
+    public void testValidate_MyBizScenarios(String mtn, String insightCategory, String insightName, String expectedErrorMessage) {
+        MtnInsightsRequest request = new MtnInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS);
+        MtnInsightsAttributes attributes = new MtnInsightsAttributes();
+        attributes.setMtn(mtn);
+        attributes.setInsightCategory(insightCategory);
+        attributes.setInsightName(insightName);
+        attributes.setEcpdId("ecpdId");
+        attributes.setOutageId("outageId");
+        request.setKeyAttributes(attributes);
+        ServiceHeader serviceHeader = new ServiceHeader();
+        serviceHeader.setClientId("client");
+        serviceHeader.setClientTransactionId("transaction");
+        serviceHeader.setServiceName("service");
+        request.setServiceHeader(serviceHeader);
+
+        if (expectedErrorMessage != null) {
+            assertThrows(InvalidRequestException.class, () -> validator.validate(request));
+        } else {
+            assertDoesNotThrow(() -> validator.validate(request));
+        }
+    }
+
+    private static Stream<Arguments> provideMyBizScenarios() {
+        return Stream.of(
+                Arguments.of("123", "", "", EventLedgerConstants.LOGGER_MESSAGE_MYBIZ),
+                Arguments.of("", "category", "name", EventLedgerConstants.LOGGER_MESSAGE_MYBIZ),
+                Arguments.of("123", "category", "", EventLedgerConstants.LOGGER_MESSAGE_MYBIZ),
+                Arguments.of("", "", "", EventLedgerConstants.LOGGER_MESSAGE_MYBIZ),
+                Arguments.of("123", EventLedgerConstants.INSIGHT_CATEGORY_MYBIZZ, EventLedgerConstants.INSIGHT_NAME_MYBIZZ.get(0), null)
+        );
+    }
+
+    @Test
+    public void testValidateSearch_MandatoryFieldsPresent() {
+        MtnInsightsSearchRequest request = new MtnInsightsSearchRequest();
+        MtnInsightsSearchParam searchParam = new MtnInsightsSearchParam();
+        searchParam.setMtn("123");
+        searchParam.setEcpdId("ecpdId");
+        searchParam.setInsightCategory(new String[]{"category"});
+        searchParam.setInsightName(new String[]{"name"});
+        request.setServiceRequest(searchParam);
+        ServiceHeader serviceHeader = new ServiceHeader();
+        serviceHeader.setClientId("client");
+        serviceHeader.setClientTransactionId("transaction");
+        serviceHeader.setServiceName("service");
+        request.set
+```

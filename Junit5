@@ -1,118 +1,100 @@
-The error you're encountering, `java.lang.NoSuchMethodError`, often suggests that the JVM is trying to call a method that doesn't exist in the version of the library you have included. This could be due to a mismatch between compile-time and runtime dependencies, or an incorrect version of the library.
+The `java.lang.NoSuchMethodError` indicates that the method `JSONObject(Object)` is not available in the `org.json` package. This method was introduced in `org.json` version `20201115`.
 
-The `JSONObject` class from the `org.json` library does not have a constructor that takes an `Object` directly. Instead, you should use a `Map` or a JSON string as an argument. Here's how you can fix the `MtnInsightsValidator` class:
+Since you are using version `20240303`, which is newer, the issue is likely due to a conflicting dependency or an older version of the `org.json` library being used.
 
-1. Convert `MtnInsightsAttributes` and `MtnInsightsSearchRequest` objects to a `Map` or a JSON string before using them in the `JSONObject` constructor.
+Here are some steps to resolve the issue:
 
-2. Update the code to handle these conversions correctly.
+*1. Check for conflicting dependencies:*
 
-Here's the updated code for the `MtnInsightsValidator` class:
+Run the following command in your terminal:
 
-```java
-import org.json.JSONObject;
+```
+bash
+mvn dependency:tree
+```
 
-@Component
-public class MtnInsightsValidator extends AbstractInsightsValidator {
+This will display the dependency tree of your project. Look for any other dependencies that might be including an older version of `org.json`.
 
-    public void validate(MtnInsightsRequest request) throws InvalidRequestException {
-        validate(request.getServiceHeader());
-        String errorMessage = null;
-        if (!request.getRequestType().equals(InsightsRequestType.INSERTMTNINSIGHTS)) {
-            errorMessage = "Invalid request type ";
-        }
-        if (request.getKeyAttributes() == null && request.getListKeyAttributes() == null) {
-            errorMessage = "Either KeyAttributes (Single) or ListKeyAttributes (Multiple) are required.";
-        } else if (request.getKeyAttributes() != null) {
-            validateIterator(errorMessage, request.getKeyAttributes(), "KeyAttributes");
-        } else if (request.getListKeyAttributes() != null) {
-            for (MtnInsightsAttributes attributes : request.getListKeyAttributes()) {
-                validateIterator(errorMessage, attributes, "ListKeyAttributes");
-            }
-        }
-        if (errorMessage != null) {
-            throw new InvalidRequestException(errorMessage);
-        }
+*2. Exclude transitive dependencies:*
+
+If you find any conflicting dependencies, exclude them by adding the following configuration to your `pom.xml`:
+
+```
+<dependency>
+    <groupId>conflicting-dependency-group-id</groupId>
+    <artifactId>conflicting-dependency-artifact-id</artifactId>
+    <version>conflicting-dependency-version</version>
+    <exclusions>
+        <exclusion>
+            <groupId>org.json</groupId>
+            <artifactId>json</artifactId>
+        </exclusion>
+    </exclusions>
+</dependency>
+```
+
+*3. Ensure correct dependency version:*
+
+Verify that the `org.json` dependency is correctly defined in your `pom.xml`:
+
+```
+<dependency>
+    <groupId>org.json</groupId>
+    <artifactId>json</artifactId>
+    <version>20240303</version>
+</dependency>
+```
+
+*4. Clean and rebuild the project:*
+
+Run the following commands:
+
+```
+bash
+mvn clean
+mvn install
+```
+
+If the issue persists, consider upgrading to a newer version of the `org.json` library or using an alternative JSON library like Jackson.
+
+As for the `MtnInsightsValidator` class, here's an updated version using Jackson's `ObjectMapper` instead of `org.json`:
+
+```
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+// ...
+
+private final ObjectMapper objectMapper = new ObjectMapper();
+
+public void validate(MtnInsightsRequest request) throws InvalidRequestException {
+    // ...
+    try {
+        JsonNode jsonObject = objectMapper.valueToTree(mtnInsightsAttributes);
+        // Use jsonObject instead of JSONObject
+        // ...
+    } catch (IllegalArgumentException e) {
+        // Handle exception
     }
+}
 
-    public void validateIterator(String errorMessage, MtnInsightsAttributes mtnInsightsAttributes, String logVal)
-            throws InvalidRequestException {
-        JSONObject jsonObject = new JSONObject(mtnInsightsAttributes.toMap());
-        if (jsonObject.has("ecpdId") && jsonObject.has("mtn") && jsonObject.has("insightCategory")
-                && jsonObject.has("insightName") && jsonObject.has("outageId")) {
-            // Your validation logic with corrected error message handling
-        }
-        if (errorMessage != null) {
-            throw new InvalidRequestException(errorMessage);
-        }
-    }
-
-    public void validate(MtnInsightsSearchRequest request) throws InvalidRequestException {
-        validate(request.getServiceHeader());
-        String errorMessage = null;
-        JSONObject jsonObject = new JSONObject(request.getServiceRequest().toMap());
-        if (jsonObject.has("ecpdId") && jsonObject.has("mtn") && jsonObject.has("insightCategory")
-                && jsonObject.has("insightName")) {
-            if (isEmpty(request.getServiceRequest().getMtn())
-                    || isEmpty(request.getServiceRequest().getInsightCategory()[0])
-                    || isEmpty(request.getServiceRequest().getInsightName()[0])
-                    || isEmpty(request.getServiceRequest().getEcpdId())) {
-                errorMessage = MTN_SEARCH_MAND_FIELDS_CHECK;
-            }
-        } else {
-            errorMessage = "ServiceRequest with Insight Category and Insight Name, MTN, ECPD id are required.";
-        }
-        if (errorMessage != null) {
-            throw new InvalidRequestException(errorMessage);
-        }
+public void validate(MtnInsightsSearchRequest request) throws InvalidRequestException {
+    // ...
+    try {
+        JsonNode jsonObject = objectMapper.valueToTree(request.getServiceRequest());
+        // Use jsonObject instead of JSONObject
+        // ...
+    } catch (IllegalArgumentException e) {
+        // Handle exception
     }
 }
 ```
 
-### Note:
-1. **Convert Objects to Map:** Ensure your `MtnInsightsAttributes` and `MtnInsightsSearchParam` classes have a method like `toMap()` that converts the object to a `Map<String, Object>`. This will help in creating a JSON object from them.
+Add the following dependency to your `pom.xml`:
 
-2. **Dependency Version:** Ensure your dependency version is correct and matches the methods you are using. If you continue to face issues, consider using a different version of the `org.json` library that supports the methods you are calling.
-
-### JUnit5 Test Cases:
-
-Here's a basic structure for writing JUnit5 test cases for the `MtnInsightsValidator` class:
-
-```java
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
-public class MtnInsightsValidatorTest {
-
-    private MtnInsightsValidator validator;
-
-    @BeforeEach
-    public void setUp() {
-        validator = new MtnInsightsValidator();
-    }
-
-    @Test
-    public void testInvalidRequestType() {
-        MtnInsightsRequest request = new MtnInsightsRequest();
-        request.setRequestType(InsightsRequestType.INVALID_TYPE); // Set invalid type
-
-        assertThrows(InvalidRequestException.class, () -> {
-            validator.validate(request);
-        });
-    }
-
-    @Test
-    public void testMissingKeyAttributes() {
-        MtnInsightsRequest request = new MtnInsightsRequest();
-        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS);
-
-        assertThrows(InvalidRequestException.class, () -> {
-            validator.validate(request);
-        });
-    }
-
-    // Add more test methods to cover all branches and scenarios
-}
 ```
-
-Make sure you adjust the test cases to cover all code paths and handle different scenarios as needed.
+<dependency>
+    <groupId>com.fasterxml.jackson.core</groupId>
+    <artifactId>jackson-databind</artifactId>
+    <version>2.14.2</version>
+</dependency>
+```

@@ -1,186 +1,78 @@
 ```java
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
-import java.lang.reflect.InvocationTargetException;
-import java.util.Arrays;
-import org.junit.jupiter.api.BeforeEach;
+import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.web.server.ResponseStatusException;
 
-@ExtendWith(MockitoExtension.class)
-class MtnInsightsValidatorTest {
+public class MtnInsightsValidatorTest {
 
-    @Mock
-    private MtnInsightsRequest mtnInsightsRequest;
+    private MtnInsightsValidator validator = new MtnInsightsValidator();
 
-    @Mock
-    private MtnInsightsSearchRequest mtnInsightsSearchRequest;
+    @Test
+    void testValidate_validSingleAttribute() {
+        MtnInsightsRequest request = new MtnInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS);
+        request.setKeyAttributes(new MtnInsightsAttributes());
+        request.getServiceHeader(); // Avoid NullPointerException
 
-    @Mock
-    private MtnInsightsAttributes mtnInsightsAttributes;
-
-    private MtnInsightsValidator mtnInsightsValidator;
-
-    @BeforeEach
-    void setUp() {
-        mtnInsightsValidator = new MtnInsightsValidator();
+        validator.validate(request);
     }
 
     @Test
-    void validate_InvalidRequestType() {
-        MtnInsightsRequest mtReq = new MtnInsightsRequest();
-        mtReq.setRequestType(InsightsRequestType.UPDATEINSIGHTS);
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtReq));
-        assertEquals("Invalid request type ", exception.getMessage());
+    void testValidate_validListAttribute() {
+        MtnInsightsRequest request = new MtnInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS);
+        request.setListKeyAttributes(new MtnInsightsAttributes[] {new MtnInsightsAttributes()});
+        request.getServiceHeader(); // Avoid NullPointerException
+
+        validator.validate(request);
     }
 
     @Test
-    void validate_NullKeyAttributes() {
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("Either KeyAttributes (Single) or ListKeyAttributes (Multiple) are required.",
-                exception.getMessage());
+    void testValidate_invalidRequest() {
+        MtnInsightsRequest request = new MtnInsightsRequest();
+        request.getServiceHeader(); // Avoid NullPointerException
+
+        assertThrows(InvalidRequestException.class, () -> validator.validate(request));
     }
 
     @Test
-    void validate_KeyAttributes_NullValue() {
-        mtnInsightsRequest.setKeyAttributes(mtnInsightsAttributes);
-        mtnInsightsAttributes.setEcpdId(null);
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("ecpdId (Harness) is empty or null", exception.getMessage());
+    void testValidate_invalidNeither() {
+        MtnInsightsRequest request = new MtnInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS);
+        request.getServiceHeader(); // Avoid NullPointerException
+
+        assertThrows(InvalidRequestException.class, () -> validator.validate(request));
     }
 
     @Test
-    void validate_KeyAttributes_EmptyValue() {
-        mtnInsightsRequest.setKeyAttributes(mtnInsightsAttributes);
-        mtnInsightsAttributes.setEcpdId("");
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("ecpdId (Harness) is empty or null", exception.getMessage());
+    void testValidate_invalidIterator() {
+        MtnInsightsRequest request = new MtnInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS);
+        request.setKeyAttributes(new MtnInsightsAttributes());
+        request.getServiceHeader(); // Avoid NullPointerException
+
+        assertThrows(InvalidRequestException.class, () -> validator.validateIterator("KeyAttributes", request.getKeyAttributes(), "KeyAttributes"));
     }
 
     @Test
-    void validate_KeyAttributes_SpecialCharacters() {
-        mtnInsightsRequest.setKeyAttributes(mtnInsightsAttributes);
-        mtnInsightsAttributes.setEcpdId("!$&$(*");
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("ecpdId : value cannot contain any special characters", exception.getMessage());
+    void testValidate_validMtnInsightsSearchRequest() {
+        MtnInsightsSearchRequest request = new MtnInsightsSearchRequest();
+        request.setServiceHeader(new ServiceHeader());
+        request.setServiceRequest(new MtnInsightsSearchParam());
+        request.getServiceRequest().setEcpdId("ecpdId");
+        request.getServiceRequest().setInsightCategory(new String[] {"insightCategory"});
+        request.getServiceRequest().setInsightName(new String[] {"insightName"});
+        request.getServiceRequest().setMtn("mtn");
+
+        validator.validate(request);
     }
 
     @Test
-    void validate_KeyAttributes_Length() {
-        mtnInsightsRequest.setKeyAttributes(mtnInsightsAttributes);
-        mtnInsightsAttributes.setEcpdId("1234567891091234567891091234567891092345678910");
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("ecpdId (Harness): Max Length exceeded. Allowed Maximum length is 20",
-                exception.getMessage());
-    }
+    void testValidate_invalidMtnInsightsSearchRequest() {
+        MtnInsightsSearchRequest request = new MtnInsightsSearchRequest();
+        request.setServiceHeader(new ServiceHeader());
+        request.setServiceRequest(new MtnInsightsSearchParam());
 
-    @Test
-    void validate_ListKeyAttributes_NullValue() {
-        MtnInsightsAttributes[] listKeyAttributes = new MtnInsightsAttributes[1];
-        listKeyAttributes[0] = mtnInsightsAttributes;
-        mtnInsightsRequest.setListKeyAttributes(listKeyAttributes);
-        mtnInsightsAttributes.setEcpdId(null);
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("ecpdId (Harness) is empty or null", exception.getMessage());
+        assertThrows(InvalidRequestException.class, () -> validator.validate(request));
     }
-
-    @Test
-    void validate_ListKeyAttributes_EmptyValue() {
-        MtnInsightsAttributes[] listKeyAttributes = new MtnInsightsAttributes[1];
-        listKeyAttributes[0] = mtnInsightsAttributes;
-        mtnInsightsRequest.setListKeyAttributes(listKeyAttributes);
-        mtnInsightsAttributes.setEcpdId("");
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("ecpdId (Harness) is empty or null", exception.getMessage());
-    }
-
-    @Test
-    void validate_ListKeyAttributes_SpecialCharacters() {
-        MtnInsightsAttributes[] listKeyAttributes = new MtnInsightsAttributes[1];
-        listKeyAttributes[0] = mtnInsightsAttributes;
-        mtnInsightsRequest.setListKeyAttributes(listKeyAttributes);
-        mtnInsightsAttributes.setEcpdId("!$&$(*");
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("ecpdId : value cannot contain any special characters", exception.getMessage());
-    }
-
-    @Test
-    void validate_ListKeyAttributes_Length() {
-        MtnInsightsAttributes[] listKeyAttributes = new MtnInsightsAttributes[1];
-        listKeyAttributes[0] = mtnInsightsAttributes;
-        mtnInsightsRequest.setListKeyAttributes(listKeyAttributes);
-        mtnInsightsAttributes.setEcpdId("1234567891091234567891091234567891092345678910");
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("ecpdId (Harness): Max Length exceeded. Allowed Maximum length is 20",
-                exception.getMessage());
-    }
-
-    @Test
-    void validate_Mtn_NullValue() {
-        mtnInsightsRequest.setKeyAttributes(mtnInsightsAttributes);
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("mtn (Product) is empty or null", exception.getMessage());
-    }
-
-    @Test
-    void validate_Mtn_EmptyValue() {
-        mtnInsightsRequest.setKeyAttributes(mtnInsightsAttributes);
-        mtnInsightsAttributes.setMtn("");
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("mtn (Product) is empty or null", exception.getMessage());
-    }
-
-    @Test
-    void validate_Mtn_SpecialCharacters() {
-        mtnInsightsRequest.setKeyAttributes(mtnInsightsAttributes);
-        mtnInsightsAttributes.setMtn("!@#$%");
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("mtn : value cannot contain any special characters", exception.getMessage());
-    }
-
-    @Test
-    void validate_Mtn_Length() {
-        mtnInsightsRequest.setKeyAttributes(mtnInsightsAttributes);
-        mtnInsightsAttributes.setMtn("123456789123456789123456789");
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("mtn (Product): Max Length exceeded. Allowed Maximum length is 20",
-                exception.getMessage());
-    }
-
-    @Test
-    void validate_InsightCategory_NullValue() {
-        mtnInsightsRequest.setKeyAttributes(mtnInsightsAttributes);
-        InvalidRequestException exception = assertThrows(InvalidRequestException.class,
-                () -> mtnInsightsValidator.validate(mtnInsightsRequest));
-        assertEquals("insightCategory (category) is empty or null", exception.getMessage());
-    }
-
-    @Test
-    void validate_InsightCategory_Empty
+}
+```

@@ -1,85 +1,118 @@
-import static org.junit.jupiter.api.Assertions.*;
-import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.Spy;
-import org.springframework.boot.test.context.SpringBootTest;
+The error you're encountering, `java.lang.NoSuchMethodError`, often suggests that the JVM is trying to call a method that doesn't exist in the version of the library you have included. This could be due to a mismatch between compile-time and runtime dependencies, or an incorrect version of the library.
 
-@SpringBootTest
-public class MtnInsightsValidatorTest {
+The `JSONObject` class from the `org.json` library does not have a constructor that takes an `Object` directly. Instead, you should use a `Map` or a JSON string as an argument. Here's how you can fix the `MtnInsightsValidator` class:
 
-    @InjectMocks
-    private MtnInsightsValidator mtnInsightsValidator;
+1. Convert `MtnInsightsAttributes` and `MtnInsightsSearchRequest` objects to a `Map` or a JSON string before using them in the `JSONObject` constructor.
 
-    @Spy
-    private MtnInsightsAttributes mtnInsightsAttributes;
+2. Update the code to handle these conversions correctly.
 
-    @Test
-    public void testValidate_InsertMtnInsights() {
-        MtnInsightsRequest request = new MtnInsightsRequest();
-        request.setRequestType(InsightSRequestType.INSERTMTNINSIGHTS);
-        ServiceHeader serviceHeader = new ServiceHeader();
-        request.setServiceHeader(serviceHeader);
+Here's the updated code for the `MtnInsightsValidator` class:
 
-        assertDoesNotThrow(() -> mtnInsightsValidator.validate(request));
+```java
+import org.json.JSONObject;
+
+@Component
+public class MtnInsightsValidator extends AbstractInsightsValidator {
+
+    public void validate(MtnInsightsRequest request) throws InvalidRequestException {
+        validate(request.getServiceHeader());
+        String errorMessage = null;
+        if (!request.getRequestType().equals(InsightsRequestType.INSERTMTNINSIGHTS)) {
+            errorMessage = "Invalid request type ";
+        }
+        if (request.getKeyAttributes() == null && request.getListKeyAttributes() == null) {
+            errorMessage = "Either KeyAttributes (Single) or ListKeyAttributes (Multiple) are required.";
+        } else if (request.getKeyAttributes() != null) {
+            validateIterator(errorMessage, request.getKeyAttributes(), "KeyAttributes");
+        } else if (request.getListKeyAttributes() != null) {
+            for (MtnInsightsAttributes attributes : request.getListKeyAttributes()) {
+                validateIterator(errorMessage, attributes, "ListKeyAttributes");
+            }
+        }
+        if (errorMessage != null) {
+            throw new InvalidRequestException(errorMessage);
+        }
     }
 
-    @Test
-    public void testValidate_InsertMtnInsights_InvalidRequestType() {
-        MtnInsightsRequest request = new MtnInsightsRequest();
-        request.setRequestType(InsightSRequestType.UPDATEMTNINSIGHTS);
-        ServiceHeader serviceHeader = new ServiceHeader();
-        request.setServiceHeader(serviceHeader);
-
-        assertThrows(InvalidRequestException.class, () -> mtnInsightsValidator.validate(request));
+    public void validateIterator(String errorMessage, MtnInsightsAttributes mtnInsightsAttributes, String logVal)
+            throws InvalidRequestException {
+        JSONObject jsonObject = new JSONObject(mtnInsightsAttributes.toMap());
+        if (jsonObject.has("ecpdId") && jsonObject.has("mtn") && jsonObject.has("insightCategory")
+                && jsonObject.has("insightName") && jsonObject.has("outageId")) {
+            // Your validation logic with corrected error message handling
+        }
+        if (errorMessage != null) {
+            throw new InvalidRequestException(errorMessage);
+        }
     }
 
-    // Add more test cases for other scenarios 
-
-    @Test
-    public void testValidateIterator_Valid() {
-        // Mock MtnInsightsAttributes
-        mtnInsightsAttributes.setMtn("123456");
-        mtnInsightsAttributes.setInsightCategory("TestCategory");
-        mtnInsightsAttributes.setInsightName("TestName");
-
-        assertDoesNotThrow(() -> mtnInsightsValidator.validateIterator(null, mtnInsightsAttributes, "KeyAttributes"));
-    }
-
-    @Test
-    public void testValidateIterator_Invalid() {
-        // Mock MtnInsightsAttributes with missing fields
-        mtnInsightsAttributes.setMtn("");
-        mtnInsightsAttributes.setInsightCategory("");
-        mtnInsightsAttributes.setInsightName("");
-
-        assertThrows(InvalidRequestException.class, () -> mtnInsightsValidator.validateIterator(null, mtnInsightsAttributes, "KeyAttributes"));
-    }
-
-    @Test
-    public void testValidateSearchRequest_Valid() {
-        MtnInsightsSearchRequest searchRequest = new MtnInsightsSearchRequest();
-        ServiceHeader serviceHeader = new ServiceHeader();
-        MtnInsightsSearchParam searchParam = new MtnInsightsSearchParam();
-        searchParam.setMtn("123456");
-        searchParam.setEcpdId("7890");
-        searchParam.setInsightCategory(new String[]{"Category"});
-        searchParam.setInsightName(new String[]{"Name"});
-        searchRequest.setServiceHeader(serviceHeader);
-        searchRequest.setServiceRequest(searchParam);
-
-        assertDoesNotThrow(() -> mtnInsightsValidator.validate(searchRequest));
-    }
-
-    @Test
-    public void testValidateSearchRequest_Invalid() {
-        MtnInsightsSearchRequest searchRequest = new MtnInsightsSearchRequest();
-        ServiceHeader serviceHeader = new ServiceHeader();
-        MtnInsightsSearchParam searchParam = new MtnInsightsSearchParam();
-        searchRequest.setServiceHeader(serviceHeader);
-        searchRequest.setServiceRequest(searchParam);
-
-        assertThrows(InvalidRequestException.class, () -> mtnInsightsValidator.validate(searchRequest));
+    public void validate(MtnInsightsSearchRequest request) throws InvalidRequestException {
+        validate(request.getServiceHeader());
+        String errorMessage = null;
+        JSONObject jsonObject = new JSONObject(request.getServiceRequest().toMap());
+        if (jsonObject.has("ecpdId") && jsonObject.has("mtn") && jsonObject.has("insightCategory")
+                && jsonObject.has("insightName")) {
+            if (isEmpty(request.getServiceRequest().getMtn())
+                    || isEmpty(request.getServiceRequest().getInsightCategory()[0])
+                    || isEmpty(request.getServiceRequest().getInsightName()[0])
+                    || isEmpty(request.getServiceRequest().getEcpdId())) {
+                errorMessage = MTN_SEARCH_MAND_FIELDS_CHECK;
+            }
+        } else {
+            errorMessage = "ServiceRequest with Insight Category and Insight Name, MTN, ECPD id are required.";
+        }
+        if (errorMessage != null) {
+            throw new InvalidRequestException(errorMessage);
+        }
     }
 }
+```
+
+### Note:
+1. **Convert Objects to Map:** Ensure your `MtnInsightsAttributes` and `MtnInsightsSearchParam` classes have a method like `toMap()` that converts the object to a `Map<String, Object>`. This will help in creating a JSON object from them.
+
+2. **Dependency Version:** Ensure your dependency version is correct and matches the methods you are using. If you continue to face issues, consider using a different version of the `org.json` library that supports the methods you are calling.
+
+### JUnit5 Test Cases:
+
+Here's a basic structure for writing JUnit5 test cases for the `MtnInsightsValidator` class:
+
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+public class MtnInsightsValidatorTest {
+
+    private MtnInsightsValidator validator;
+
+    @BeforeEach
+    public void setUp() {
+        validator = new MtnInsightsValidator();
+    }
+
+    @Test
+    public void testInvalidRequestType() {
+        MtnInsightsRequest request = new MtnInsightsRequest();
+        request.setRequestType(InsightsRequestType.INVALID_TYPE); // Set invalid type
+
+        assertThrows(InvalidRequestException.class, () -> {
+            validator.validate(request);
+        });
+    }
+
+    @Test
+    public void testMissingKeyAttributes() {
+        MtnInsightsRequest request = new MtnInsightsRequest();
+        request.setRequestType(InsightsRequestType.INSERTMTNINSIGHTS);
+
+        assertThrows(InvalidRequestException.class, () -> {
+            validator.validate(request);
+        });
+    }
+
+    // Add more test methods to cover all branches and scenarios
+}
+```
+
+Make sure you adjust the test cases to cover all code paths and handle different scenarios as needed.

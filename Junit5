@@ -1,4 +1,28 @@
-Here are the JUnit 5 test cases for the `saveEvents` method of the `EventManager` class, specifically targeting the `SystemException` catch block:
+The error you're encountering is due to the fact that Mockito's `doThrow()` method is used for methods that throw unchecked exceptions (`RuntimeException` and its subclasses), but `SystemException` is a checked exception. To address this, we need to modify the `convertAndSaveToEvents` method to allow us to throw a `SystemException` in a way that can be captured in our tests. Here’s how you can refactor the code:
+
+### Refactor `convertAndSaveToEvents` Method
+
+First, update the `convertAndSaveToEvents` method so that it can throw a `SystemException` directly from the test:
+
+```java
+public void convertAndSaveToEvents(EventSaveRequest request) throws SystemException {
+    try {
+        EventsEntity entity = new EventsEntity();
+        entity.convert(request);
+        eventsRepository.save(entity);
+        LOGGER.debug("EventManager Inserted events successfully");
+    } catch (Exception e) {
+        LOGGER.error("Error: {}", e.getMessage());
+        if (e instanceof SystemException) {
+            throw (SystemException) e;
+        }
+    }
+}
+```
+
+### Updated Test Case
+
+Now we need to adjust the test code to throw the `SystemException` from `convertAndSaveToEvents`:
 
 ```java
 import static org.junit.jupiter.api.Assertions.*;
@@ -10,8 +34,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @ExtendWith(MockitoExtension.class)
 public class EventManagerTest {
@@ -24,8 +46,6 @@ public class EventManagerTest {
 
     @Mock
     private EventsValidator validator;
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(EventManagerTest.class);
 
     private EventSaveRequest request;
 
@@ -40,10 +60,11 @@ public class EventManagerTest {
         // Mock the validator to do nothing
         doNothing().when(validator).validateInsert(request);
 
-        // Mock the convertAndSaveToEvents to throw SystemException
-        doThrow(new SystemException("System error occurred")).when(eventsRepository).save(any(EventsEntity.class));
+        // Use a spy to throw SystemException from the real method
+        EventManager spyEventManager = spy(eventManager);
+        doThrow(new SystemException("System error occurred")).when(spyEventManager).convertAndSaveToEvents(request);
 
-        EventResponse response = eventManager.saveEvents(request);
+        EventResponse response = spyEventManager.saveEvents(request);
 
         // Verify the status code and message in the response
         assertEquals("FAILURE_CODE", response.getStatus().getCode());
@@ -51,20 +72,17 @@ public class EventManagerTest {
 
         // Verify that the appropriate methods were called
         verify(validator).validateInsert(request);
-        verify(eventsRepository).save(any(EventsEntity.class));
+        verify(spyEventManager).convertAndSaveToEvents(request);
     }
 }
 ```
 
 ### Explanation:
 
-1. **Mocks and InjectMocks**: We use Mockito to create a mock of `EventsRepository` and `EventsValidator`, and we inject these mocks into the `EventManager` class.
+1. **Spy on EventManager**: We use `spy` to create a partial mock of `EventManager` so that we can specifically target the `convertAndSaveToEvents` method to throw a `SystemException`.
 
-2. **setUp Method**: We initialize the required test data or objects before each test.
+2. **Throw SystemException**: We use `doThrow()` on the spy object to simulate the `SystemException`.
 
-3. **Test Method**: 
-   - We mock the `validateInsert` method to do nothing so that it doesn't throw any exceptions.
-   - We simulate a `SystemException` being thrown by the `eventsRepository.save()` call.
-   - After calling `saveEvents`, we assert that the response contains the expected failure status code and message.
+3. **Assertions**: We check the response to ensure it contains the failure status and message.
 
-4. **Verify**: We ensure that the mocked methods are called as expected, helping to confirm that the test is exercising the intended code paths.
+The above changes should handle the checked exception correctly and allow the test to pass by simulating the behavior of throwing a `SystemException`.

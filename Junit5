@@ -1,88 +1,82 @@
-The error you're encountering is due to the fact that Mockito's `doThrow()` method is used for methods that throw unchecked exceptions (`RuntimeException` and its subclasses), but `SystemException` is a checked exception. To address this, we need to modify the `convertAndSaveToEvents` method to allow us to throw a `SystemException` in a way that can be captured in our tests. Here’s how you can refactor the code:
-
-### Refactor `convertAndSaveToEvents` Method
-
-First, update the `convertAndSaveToEvents` method so that it can throw a `SystemException` directly from the test:
+To achieve 100% code coverage for the `AccountEcpdStoreController` class, you need to write JUnit 5 test cases that cover all the endpoints within the controller. Since the controller relies on the `AccountEcpdService`, you can use mocking to simulate the behavior of the service. Below is an example of how you can implement these test cases using JUnit 5 and Mockito:
 
 ```java
-public void convertAndSaveToEvents(EventSaveRequest request) throws SystemException {
-    try {
-        EventsEntity entity = new EventsEntity();
-        entity.convert(request);
-        eventsRepository.save(entity);
-        LOGGER.debug("EventManager Inserted events successfully");
-    } catch (Exception e) {
-        LOGGER.error("Error: {}", e.getMessage());
-        if (e instanceof SystemException) {
-            throw (SystemException) e;
-        }
-    }
-}
-```
-
-### Updated Test Case
-
-Now we need to adjust the test code to throw the `SystemException` from `convertAndSaveToEvents`:
-
-```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.runner.RunWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.web.reactive.server.WebTestClient;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
-@ExtendWith(MockitoExtension.class)
-public class EventManagerTest {
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+
+@RunWith(MockitoExtension.class)
+public class AccountEcpdStoreControllerTest {
 
     @InjectMocks
-    private EventManager eventManager;
+    private AccountEcpdStoreController accountEcpdStoreController;
 
     @Mock
-    private EventsRepository eventsRepository;
+    private AccountEcpdService accountService;
 
-    @Mock
-    private EventsValidator validator;
-
-    private EventSaveRequest request;
+    private WebTestClient webTestClient;
 
     @BeforeEach
-    public void setUp() {
-        request = new EventSaveRequest();
-        // Initialize request object with necessary data
+    public void setup() {
+        webTestClient = WebTestClient.bindToController(accountEcpdStoreController).build();
     }
 
     @Test
-    public void testSaveEventsSystemException() throws Exception {
-        // Mock the validator to do nothing
-        doNothing().when(validator).validateInsert(request);
+    public void testGetAllAccountEcpdStore() {
+        when(accountService.getAllAccountEcpds()).thenReturn(Flux.just("Ecpd1", "Ecpd2"));
 
-        // Use a spy to throw SystemException from the real method
-        EventManager spyEventManager = spy(eventManager);
-        doThrow(new SystemException("System error occurred")).when(spyEventManager).convertAndSaveToEvents(request);
+        webTestClient.get().uri("/account-ecpd-store/all")
+                .accept(APPLICATION_JSON)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBodyList(String.class)
+                .hasSize(2)
+                .contains("Ecpd1", "Ecpd2");
+    }
 
-        EventResponse response = spyEventManager.saveEvents(request);
+    @Test
+    public void testGetEcpdByAcctId() {
+        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("Ecpd1"));
 
-        // Verify the status code and message in the response
-        assertEquals("FAILURE_CODE", response.getStatus().getCode());
-        assertEquals("System error occurred", response.getStatus().getMessage());
+        webTestClient.get().uri("/account-ecpd-store/account/{acountid}", "123")
+                .accept(APPLICATION_JSON)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class)
+                .isEqualTo("Ecpd1");
+    }
 
-        // Verify that the appropriate methods were called
-        verify(validator).validateInsert(request);
-        verify(spyEventManager).convertAndSaveToEvents(request);
+    @Test
+    public void testGetCount() {
+        when(accountService.accountEcpdStoreCount()).thenReturn(Mono.just(2L));
+
+        webTestClient.get().uri("/account-ecpd-store/count")
+                .accept(APPLICATION_JSON)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(Long.class)
+                .isEqualTo(2L);
     }
 }
 ```
 
 ### Explanation:
+1. **Setup**: The `WebTestClient` is set up to test the reactive endpoints of the `AccountEcpdStoreController`. The `accountService` is mocked using Mockito.
 
-1. **Spy on EventManager**: We use `spy` to create a partial mock of `EventManager` so that we can specifically target the `convertAndSaveToEvents` method to throw a `SystemException`.
+2. **Test `getAllAccountEcpdStore`**: This test case mocks the `getAllAccountEcpds` method of the service to return a `Flux` with two elements and verifies the response.
 
-2. **Throw SystemException**: We use `doThrow()` on the spy object to simulate the `SystemException`.
+3. **Test `getEcpdByAcctId`**: This test case mocks the `getEcpdByAcctId` method to return a `Mono` with a single element and verifies that the correct element is returned for a given account ID.
 
-3. **Assertions**: We check the response to ensure it contains the failure status and message.
+4. **Test `getCount`**: This test case mocks the `accountEcpdStoreCount` method to return a `Mono` with a count of 2 and verifies the response.
 
-The above changes should handle the checked exception correctly and allow the test to pass by simulating the behavior of throwing a `SystemException`.
+This setup ensures that all the endpoints in the `AccountEcpdStoreController` are covered, and the expected behavior is tested.

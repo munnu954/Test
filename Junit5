@@ -1,44 +1,93 @@
+To achieve 100% code coverage for the `DataSourceConfig` class in a JUnit 5 test, you need to test each method within the class. This involves mocking the dependencies and verifying the behavior of each component.
+
+Here's how you can write the JUnit 5 test cases for the `DataSourceConfig` class:
+
+```java
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.when;
+
+import javax.persistence.EntityManagerFactory;
+import javax.sql.DataSource;
+
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
+import org.springframework.boot.jdbc.DataSourceBuilder;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.orm.jpa.JpaTransactionManager;
+import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
+import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;
 
-import javax.xml.bind.JAXBContext;
-import javax.xml.bind.JAXBException;
-import javax.xml.bind.Unmarshaller;
-
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
-public class BatchLoaderUtilsTest {
+@SpringBootTest
+public class DataSourceConfigTest {
 
     @Mock
-    private JAXBContext jaxbContext;
+    private DataSourceModal dataSourceModal;
 
-    @Mock
-    private Unmarshaller jaxbUnmarshaller;
+    @InjectMocks
+    private DataSourceConfig dataSourceConfig;
 
-    @Mock
-    private Logger LOGGER;
-
-    private BatchLoaderUtils batchLoaderUtils;
-
+    @BeforeEach
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-        batchLoaderUtils = new BatchLoaderUtils();
+        MockitoAnnotations.openMocks(this);
+        when(dataSourceModal.getUrl()).thenReturn("jdbc:h2:mem:testdb");
+        when(dataSourceModal.getUsername()).thenReturn("sa");
+        when(dataSourceModal.getPassword()).thenReturn("");
+        when(dataSourceModal.getDriver()).thenReturn("org.h2.Driver");
     }
 
     @Test
-    public void testConvertToObject_JAXBException() {
-        String xml = "<xml></xml>";
-        Class<TYSConstants> clazz = TYSConstants.class;
+    public void testFalloutDataSource() {
+        DataSource dataSource = dataSourceConfig.falloutDataSource();
+        assertEquals(DriverManagerDataSource.class, dataSource.getClass());
+        DriverManagerDataSource dmDataSource = (DriverManagerDataSource) dataSource;
+        assertEquals("jdbc:h2:mem:testdb", dmDataSource.getUrl());
+        assertEquals("sa", dmDataSource.getUsername());
+        assertEquals("", dmDataSource.getPassword());
+        assertEquals("org.h2.Driver", dmDataSource.getDriverClassName());
+    }
 
-        Mockito.when(jaxbContext.createUnmarshaller()).thenThrow(new JAXBException("Unable to convert"));
+    @Test
+    public void testEntityManagerFactoryBean() {
+        DataSource dataSource = dataSourceConfig.falloutDataSource();
+        EntityManagerFactoryBuilder builder = new EntityManagerFactoryBuilder(new HibernateJpaVendorAdapter(), null, null);
+        LocalContainerEntityManagerFactoryBean emFactoryBean = dataSourceConfig.entityManagerFactoryBean(builder, dataSource);
+        assertEquals("fallout-db", emFactoryBean.getPersistenceUnitName());
+    }
 
-        Throwable exception = assertThrows(JAXBException.class, () -> {
-            batchLoaderUtils.convertToObject(xml, clazz);
-        });
-
-        Mockito.verify(LOGGER).error("Unable to convert - ", exception);
+    @Test
+    public void testFalloutTransactionManager() {
+        EntityManagerFactory entityManagerFactory = dataSourceConfig.entityManagerFactoryBean(
+                new EntityManagerFactoryBuilder(new HibernateJpaVendorAdapter(), null, null),
+                dataSourceConfig.falloutDataSource()).getObject();
+        JpaTransactionManager transactionManager = (JpaTransactionManager) dataSourceConfig.falloutTransactionManager(entityManagerFactory);
+        assertEquals(entityManagerFactory, transactionManager.getEntityManagerFactory());
     }
 }
-Please note that in this test case, the LOGGER instance is mocked using Mockito. You can replace it with the actual Logger instance in your production code. Also, this test case covers the catch block that handles JAXBException in the convertToObject method of BatchLoaderUtils class for 100% code coverage.
+```
+
+### Explanation:
+
+1. **Annotations**: 
+   - `@SpringBootTest` is used to provide a Spring context for testing.
+   - `@Mock` is used for mocking `DataSourceModal`.
+   - `@InjectMocks` is used to inject the mocked `DataSourceModal` into `DataSourceConfig`.
+
+2. **Setup**: 
+   - `setUp()` method initializes the mocks and sets up mock responses for the `DataSourceModal` fields.
+
+3. **Test Methods**:
+   - `testFalloutDataSource()`: Verifies the DataSource configuration.
+   - `testEntityManagerFactoryBean()`: Checks the creation of the `EntityManagerFactory`.
+   - `testFalloutTransactionManager()`: Ensures the `JpaTransactionManager` is properly created with the mocked `EntityManagerFactory`.
+
+This setup will test all methods in the `DataSourceConfig` class and verify that they behave as expected, achieving 100% code coverage.

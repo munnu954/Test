@@ -1,73 +1,109 @@
-Sure, here's the JUnit5 test cases for the `DataSourceConfig` class:
+To resolve the "Could not load JDBC driver class" error, you need to ensure that the H2 database driver is included in the test context and properly mocked. Here's the updated test code with necessary fixes:
 
 ```java
-import com.verizon.vbg.ledger.modal.DataSourceModal;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.springframework.orm.jpa.JpaTransactionManager;
+import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import javax.sql.DataSource;
+import javax.persistence.EntityManagerFactory;
 
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.Mockito.when;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.boot.jdbc.DataSourceBuilder;
+import org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;
+import org.springframework.orm.jpa.JpaTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
 
-@ExtendWith(MockitoExtension.class)
+import com.verizon.vbg.ledger.repository.DataSourceConfig;
+import com.verizon.vbg.ledger.repository.DataSourceModal;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.mockito.Mockito;
+
 public class DataSourceConfigTest {
 
     @Mock
     private DataSourceModal dataSourceModal;
 
     @Mock
-    private EntityManagerFactoryBuilder builder;
+    private EntityManagerFactoryBuilder entityManagerFactoryBuilder;
+
+    @Mock
+    private EntityManagerFactory entityManagerFactory;
 
     @InjectMocks
     private DataSourceConfig dataSourceConfig;
 
     @BeforeEach
-    void setup() {
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+
+        // Mock DataSourceModal properties
         when(dataSourceModal.getUrl()).thenReturn("jdbc:h2:mem:testdb");
-        when(dataSourceModal.getPassword()).thenReturn("password");
-        when(dataSourceModal.getUsername()).thenReturn("username");
+        when(dataSourceModal.getUsername()).thenReturn("sa");
+        when(dataSourceModal.getPassword()).thenReturn("");
         when(dataSourceModal.getDriver()).thenReturn("org.h2.Driver");
     }
 
     @Test
-    void testFalloutDataSource() {
+    public void testFalloutDataSource() {
         DataSource dataSource = dataSourceConfig.falloutDataSource();
-        assertNotNull(dataSource);
-        assert dataSource instanceof DriverManagerDataSource;
+        assertNotNull(dataSource, "DataSource should not be null");
+
+        // Ensure the data source is of type DriverManagerDataSource
+        assert(dataSource instanceof DriverManagerDataSource);
+        DriverManagerDataSource ds = (DriverManagerDataSource) dataSource;
+        assert(ds.getUrl().equals("jdbc:h2:mem:testdb"));
+        assert(ds.getUsername().equals("sa"));
     }
 
     @Test
-    void testEntityManagerFactoryBean() {
-        DataSource dataSource = dataSourceConfig.falloutDataSource();
-        var entityManagerFactory = dataSourceConfig.entityManagerFactoryBean(builder, dataSource);
-        assertNotNull(entityManagerFactory);
+    public void testEntityManagerFactoryBean() {
+        // Mocking the behavior of the EntityManagerFactoryBuilder
+        when(entityManagerFactoryBuilder.dataSource(Mockito.any(DataSource.class)))
+            .thenReturn(entityManagerFactoryBuilder);
+        when(entityManagerFactoryBuilder.packages("com.verizon.vbg.ledger.entity"))
+            .thenReturn(entityManagerFactoryBuilder);
+        when(entityManagerFactoryBuilder.persistenceUnit("fallout-db"))
+            .thenReturn(entityManagerFactoryBuilder);
+        when(entityManagerFactoryBuilder.build()).thenReturn(entityManagerFactory);
+
+        EntityManagerFactory result = dataSourceConfig.entityManagerFactoryBean(entityManagerFactoryBuilder, dataSourceConfig.falloutDataSource()).getObject();
+        assertNotNull(result, "EntityManagerFactory should not be null");
     }
 
     @Test
-    void testFalloutTransactionManager() {
-        DataSource dataSource = dataSourceConfig.falloutDataSource();
-        var entityManagerFactory = dataSourceConfig.entityManagerFactoryBean(builder, dataSource);
-        var transactionManager = dataSourceConfig.falloutTransactionManager(entityManagerFactory);
-        assertNotNull(transactionManager);
-        assert transactionManager instanceof JpaTransactionManager;
+    public void testFalloutTransactionManager() {
+        PlatformTransactionManager transactionManager = dataSourceConfig.falloutTransactionManager(entityManagerFactory);
+        assertNotNull(transactionManager, "TransactionManager should not be null");
+        assert(transactionManager instanceof JpaTransactionManager);
     }
 }
 ```
 
-Here's how the test cases work:
+### Key Adjustments:
+1. **DriverManagerDataSource:** I ensured that the `falloutDataSource` method returns a `DriverManagerDataSource`, and the test verifies that it's correctly configured.
 
-1. The `@ExtendWith(MockitoExtension.class)` annotation is used to enable Mockito for this test class.
-2. In the `setup()` method, we use Mockito to set up the expected behavior of the `dataSourceModal` object.
-3. The `testFalloutDataSource()` method tests the `falloutDataSource()` method of the `DataSourceConfig` class. We assert that the returned `DataSource` object is not null and is an instance of `DriverManagerDataSource`.
-4. The `testEntityManagerFactoryBean()` method tests the `entityManagerFactoryBean()` method of the `DataSourceConfig` class. We assert that the returned `LocalContainerEntityManagerFactoryBean` object is not null.
-5. The `testFalloutTransactionManager()` method tests the `falloutTransactionManager()` method of the `DataSourceConfig` class. We assert that the returned `PlatformTransactionManager` object is not null and is an instance of `JpaTransactionManager`.
+2. **Assertions:** The test now includes assertions to verify the configuration of the `DriverManagerDataSource`.
 
-By using Mockito, we can mock the `DataSourceModal` object and avoid the `java.lang.IllegalStateException: Could not load JDBC driver class [org.h2.Driver]` error. This allows us to test the `DataSourceConfig` class without the need for a real database connection.
+3. **Mocks and Entity Manager Factory Builder:** The mocking of the `EntityManagerFactoryBuilder` is detailed to simulate the expected chaining of method calls.
+
+4. **H2 Driver Dependency:** Make sure that you have the H2 database dependency in your `pom.xml` or `build.gradle` file, which is necessary for the test context.
+
+For Maven, add this to your `pom.xml`:
+```xml
+<dependency>
+    <groupId>com.h2database</groupId>
+    <artifactId>h2</artifactId>
+    <scope>test</scope>
+</dependency>
+```
+
+For Gradle, add this to your `build.gradle`:
+```groovy
+testImplementation 'com.h2database:h2'
+```
+
+These changes should help eliminate the error and allow your tests to execute successfully.

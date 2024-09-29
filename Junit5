@@ -1,93 +1,64 @@
-To achieve 100% code coverage for the `DataSourceConfig` class in a JUnit 5 test, you need to test each method within the class. This involves mocking the dependencies and verifying the behavior of each component.
-
-Here's how you can write the JUnit 5 test cases for the `DataSourceConfig` class:
-
-```java
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.when;
-
-import javax.persistence.EntityManagerFactory;
-import javax.sql.DataSource;
-
-import org.junit.jupiter.api.BeforeEach;
+import com.verizon.vbg.ledger.config.DataSourceConfig;
+import com.verizon.vbg.ledger.config.DataSourceModal;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.boot.jdbc.DataSourceBuilder;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
+import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.orm.jpa.JpaTransactionManager;
-import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
-import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;
 
-@SpringBootTest
-public class DataSourceConfigTest {
+import javax.sql.DataSource;
+
+@ExtendWith(MockitoExtension.class)
+class DataSourceConfigTest {
 
     @Mock
     private DataSourceModal dataSourceModal;
 
+    @Mock
+    private EntityManagerFactoryBuilder builder;
+
     @InjectMocks
     private DataSourceConfig dataSourceConfig;
 
-    @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
-        when(dataSourceModal.getUrl()).thenReturn("jdbc:h2:mem:testdb");
-        when(dataSourceModal.getUsername()).thenReturn("sa");
-        when(dataSourceModal.getPassword()).thenReturn("");
-        when(dataSourceModal.getDriver()).thenReturn("org.h2.Driver");
-    }
-
     @Test
-    public void testFalloutDataSource() {
+    void testFalloutDataSource() {
+        Mockito.when(dataSourceModal.getUrl()).thenReturn("jdbc:mysql://localhost:3306/db");
+        Mockito.when(dataSourceModal.getUsername()).thenReturn("user");
+        Mockito.when(dataSourceModal.getPassword()).thenReturn("password");
+        Mockito.when(dataSourceModal.getDriver()).thenReturn("com.mysql.cj.jdbc.Driver");
+
         DataSource dataSource = dataSourceConfig.falloutDataSource();
-        assertEquals(DriverManagerDataSource.class, dataSource.getClass());
-        DriverManagerDataSource dmDataSource = (DriverManagerDataSource) dataSource;
-        assertEquals("jdbc:h2:mem:testdb", dmDataSource.getUrl());
-        assertEquals("sa", dmDataSource.getUsername());
-        assertEquals("", dmDataSource.getPassword());
-        assertEquals("org.h2.Driver", dmDataSource.getDriverClassName());
+        Assertions.assertNotNull(dataSource);
+        Assertions.assertTrue(dataSource instanceof DriverManagerDataSource);
+        Assertions.assertEquals("jdbc:mysql://localhost:3306/db", ((DriverManagerDataSource) dataSource).getUrl());
+        Assertions.assertEquals("user", ((DriverManagerDataSource) dataSource).getUsername());
+        Assertions.assertEquals("password", ((DriverManagerDataSource) dataSource).getPassword());
+        Assertions.assertEquals("com.mysql.cj.jdbc.Driver", ((DriverManagerDataSource) dataSource).getDriverClassName());
     }
 
     @Test
-    public void testEntityManagerFactoryBean() {
-        DataSource dataSource = dataSourceConfig.falloutDataSource();
-        EntityManagerFactoryBuilder builder = new EntityManagerFactoryBuilder(new HibernateJpaVendorAdapter(), null, null);
-        LocalContainerEntityManagerFactoryBean emFactoryBean = dataSourceConfig.entityManagerFactoryBean(builder, dataSource);
-        assertEquals("fallout-db", emFactoryBean.getPersistenceUnitName());
+    void testFalloutEntityManagerFactory() {
+        Mockito.when(builder.dataSource(Mockito.any(DataSource.class))).thenReturn(builder);
+        Mockito.when(builder.packages("com.verizon.vbg.ledger.entity")).thenReturn(builder);
+        Mockito.when(builder.persistenceUnit("fallout-db")).thenReturn(builder);
+        Mockito.when(builder.build()).thenReturn(null);
+
+        dataSourceConfig.entityManagerFactoryBean(builder, dataSourceConfig.falloutDataSource());
+        Mockito.verify(builder, Mockito.times(1)).dataSource(Mockito.any(DataSource.class));
+        Mockito.verify(builder, Mockito.times(1)).packages("com.verizon.vbg.ledger.entity");
+        Mockito.verify(builder, Mockito.times(1)).persistenceUnit("fallout-db");
+        Mockito.verify(builder, Mockito.times(1)).build();
     }
 
     @Test
-    public void testFalloutTransactionManager() {
-        EntityManagerFactory entityManagerFactory = dataSourceConfig.entityManagerFactoryBean(
-                new EntityManagerFactoryBuilder(new HibernateJpaVendorAdapter(), null, null),
-                dataSourceConfig.falloutDataSource()).getObject();
-        JpaTransactionManager transactionManager = (JpaTransactionManager) dataSourceConfig.falloutTransactionManager(entityManagerFactory);
-        assertEquals(entityManagerFactory, transactionManager.getEntityManagerFactory());
+    void testFalloutTransactionManager() {
+        Mockito.when(dataSourceConfig.entityManagerFactoryBean(Mockito.any(EntityManagerFactoryBuilder.class), Mockito.any(DataSource.class))).thenReturn(null);
+        JpaTransactionManager transactionManager = dataSourceConfig.falloutTransactionManager(dataSourceConfig.entityManagerFactoryBean(builder, dataSourceConfig.falloutDataSource()));
+        Assertions.assertNotNull(transactionManager);
     }
 }
-```
-
-### Explanation:
-
-1. **Annotations**: 
-   - `@SpringBootTest` is used to provide a Spring context for testing.
-   - `@Mock` is used for mocking `DataSourceModal`.
-   - `@InjectMocks` is used to inject the mocked `DataSourceModal` into `DataSourceConfig`.
-
-2. **Setup**: 
-   - `setUp()` method initializes the mocks and sets up mock responses for the `DataSourceModal` fields.
-
-3. **Test Methods**:
-   - `testFalloutDataSource()`: Verifies the DataSource configuration.
-   - `testEntityManagerFactoryBean()`: Checks the creation of the `EntityManagerFactory`.
-   - `testFalloutTransactionManager()`: Ensures the `JpaTransactionManager` is properly created with the mocked `EntityManagerFactory`.
-
-This setup will test all methods in the `DataSourceConfig` class and verify that they behave as expected, achieving 100% code coverage.

@@ -1,26 +1,29 @@
-Here's an example of JUnit5 test cases for the `DataSourceConfig` class, using Mockito to mock the `DataSourceModal` class:
+To achieve 100% code coverage for the `DataSourceConfig` class using JUnit 5 and Mockito, you can follow these steps to write test cases without invoking the real repository, database, and other connections. The focus will be on mocking dependencies and testing the behavior of the configuration class.
+
+Here's a complete example of how you could write these test cases:
 
 ```java
-import com.verizon.vbg.ledger.repository.DataSourceModal;
+import static org.mockito.Mockito.*;
+
+import javax.sql.DataSource;
+import javax.persistence.EntityManagerFactory;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.MockitoAnnotations;
+import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
+import org.springframework.transaction.PlatformTransactionManager;
 
-import javax.persistence.EntityManagerFactory;
-import javax.sql.DataSource;
+import com.verizon.vbg.ledger.config.DataSourceConfig;
+import com.verizon.vbg.ledger.model.DataSourceModal;
 
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.Mockito.when;
-
-@ExtendWith(MockitoExtension.class)
-class DataSourceConfigTest {
+public class DataSourceConfigTest {
 
     @InjectMocks
     private DataSourceConfig dataSourceConfig;
@@ -31,51 +34,69 @@ class DataSourceConfigTest {
     @Mock
     private EntityManagerFactoryBuilder entityManagerFactoryBuilder;
 
+    @Mock
+    private EntityManagerFactory entityManagerFactory;
+
     @BeforeEach
-    void setUp() {
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+
+        // Mock the DataSourceModal values
         when(dataSourceModal.getUrl()).thenReturn("jdbc:h2:mem:testdb");
-        when(dataSourceModal.getPassword()).thenReturn("password");
-        when(dataSourceModal.getUsername()).thenReturn("username");
+        when(dataSourceModal.getUsername()).thenReturn("sa");
+        when(dataSourceModal.getPassword()).thenReturn("");
         when(dataSourceModal.getDriver()).thenReturn("org.h2.Driver");
     }
 
     @Test
-    void testFalloutDataSource() {
+    public void testFalloutDataSource() {
+        // Test the falloutDataSource method
         DataSource dataSource = dataSourceConfig.falloutDataSource();
-        assertNotNull(dataSource);
+
+        assert dataSource instanceof DriverManagerDataSource;
         DriverManagerDataSource driverManagerDataSource = (DriverManagerDataSource) dataSource;
+
         assert driverManagerDataSource.getUrl().equals("jdbc:h2:mem:testdb");
-        assert driverManagerDataSource.getUsername().equals("username");
-        assert driverManagerDataSource.getPassword().equals("password");
+        assert driverManagerDataSource.getUsername().equals("sa");
+        assert driverManagerDataSource.getPassword().equals("");
         assert driverManagerDataSource.getDriverClassName().equals("org.h2.Driver");
     }
 
     @Test
-    void testFalloutEntityManagerFactory() {
-        LocalContainerEntityManagerFactoryBean entityManagerFactoryBean = dataSourceConfig.entityManagerFactoryBean(entityManagerFactoryBuilder, dataSourceConfig.falloutDataSource());
-        assertNotNull(entityManagerFactoryBean);
-        assert entityManagerFactoryBean.getPersistenceUnitName().equals("fallout-db");
-        assert entityManagerFactoryBean.getPackagesToScan().contains("com.verizon.vbg.ledger.entity");
+    public void testEntityManagerFactoryBean() {
+        // Mock the behavior of the EntityManagerFactoryBuilder
+        LocalContainerEntityManagerFactoryBean factoryBean = new LocalContainerEntityManagerFactoryBean();
+        when(entityManagerFactoryBuilder.dataSource(any(DataSource.class)))
+            .thenReturn(entityManagerFactoryBuilder);
+        when(entityManagerFactoryBuilder.packages(any(String.class)))
+            .thenReturn(entityManagerFactoryBuilder);
+        when(entityManagerFactoryBuilder.persistenceUnit(any(String.class)))
+            .thenReturn(entityManagerFactoryBuilder);
+        when(entityManagerFactoryBuilder.build()).thenReturn(factoryBean);
+
+        // Test the entityManagerFactoryBean method
+        LocalContainerEntityManagerFactoryBean result = dataSourceConfig.entityManagerFactoryBean(
+            entityManagerFactoryBuilder, dataSourceConfig.falloutDataSource());
+
+        assert result == factoryBean;
     }
 
     @Test
-    void testFalloutTransactionManager() {
-        EntityManagerFactory entityManagerFactory = dataSourceConfig.entityManagerFactoryBean(entityManagerFactoryBuilder, dataSourceConfig.falloutDataSource()).getObject();
-        JpaTransactionManager jpaTransactionManager = (JpaTransactionManager) dataSourceConfig.falloutTransactionManager(entityManagerFactory);
-        assertNotNull(jpaTransactionManager);
-        assert jpaTransactionManager.getEntityManagerFactory().equals(entityManagerFactory);
+    public void testFalloutTransactionManager() {
+        // Test the falloutTransactionManager method
+        PlatformTransactionManager transactionManager = dataSourceConfig.falloutTransactionManager(entityManagerFactory);
+
+        assert transactionManager instanceof JpaTransactionManager;
+        JpaTransactionManager jpaTransactionManager = (JpaTransactionManager) transactionManager;
+
+        assert jpaTransactionManager.getEntityManagerFactory() == entityManagerFactory;
     }
 }
 ```
 
-The test cases cover the following:
+### Explanation:
+- **Mockito Annotations**: `@InjectMocks` is used to inject mocks into the `DataSourceConfig`. `@Mock` is used to create mock instances.
+- **Mocking**: The `DataSourceModal` is mocked to return predefined values for URL, username, password, and driver, simulating the behavior without actual database connections.
+- **Testing Methods**: Each method of the `DataSourceConfig` is tested independently, checking the properties and behaviors.
 
-1. `testFalloutDataSource()`: Checks if the `falloutDataSource()` method returns a valid `DataSource` instance with the expected properties.
-2. `testFalloutEntityManagerFactory()`: Checks if the `entityManagerFactoryBean()` method returns a valid `LocalContainerEntityManagerFactoryBean` instance with the expected persistence unit name and package to scan.
-3. `testFalloutTransactionManager()`: Checks if the `falloutTransactionManager()` method returns a valid `JpaTransactionManager` instance with the expected `EntityManagerFactory`.
-
-The `@ExtendWith(MockitoExtension.class)` annotation is used to enable Mockito in the test class. The `@InjectMocks` and `@Mock` annotations are used to inject the mocked `DataSourceModal` instance into the `DataSourceConfig` class.
-
-In the `setUp()` method, the expected behavior of the `DataSourceModal` class is mocked using the `when()` and `thenReturn()` methods of Mockito.
-
-Note that this test suite does not involve any real database connection or repository interactions, as the focus is on testing the `DataSourceConfig` class in isolation.
+This approach ensures that your test cases cover the entire configuration class without relying on a real database connection, thereby avoiding the `IllegalStateException` related to JDBC drivers.

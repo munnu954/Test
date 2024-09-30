@@ -1,111 +1,121 @@
-To create comprehensive test cases for the `FalloutJobExecutionListener` class, you will want to cover both positive and negative scenarios. Below are JUnit test cases that aim to cover all branches of the code, ensuring that each line is executed during the tests.
+To write unit tests for the `KafkaFalloutScheduler` class, you'll want to cover both positive and negative scenarios to ensure comprehensive coverage of all branches and lines. Here's how you can achieve this using JUnit and Mockito:
 
-**Dependencies**: Make sure you have the necessary dependencies for JUnit and Mockito in your `pom.xml` or build configuration.
+### Test Class for KafkaFalloutScheduler
 
 ```java
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-import org.springframework.batch.core.BatchStatus;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.batch.core.Job;
 import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobInstance;
-import org.springframework.batch.core.ExitStatus;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.batch.core.repository.JobExecutionAlreadyRunningException;
+import org.springframework.batch.core.repository.JobRestartException;
+import org.springframework.batch.core.repository.JobInstanceAlreadyCompleteException;
 
-import java.time.LocalDateTime;
+import java.util.Calendar;
 
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-public class FalloutJobExecutionListenerTest {
+@ExtendWith(MockitoExtension.class)
+public class KafkaFalloutSchedulerTest {
 
-    private FalloutJobExecutionListener listener;
+    @InjectMocks
+    private KafkaFalloutScheduler kafkaFalloutScheduler;
+
+    @Mock
+    private JobLauncher jobLauncher;
+
+    @Mock
+    private KafkaFalloutService kafkaFalloutService;
+
+    @Mock
+    private Job job;
+
+    @Mock
     private JobExecution jobExecution;
-    private JobInstance jobInstance;
 
     @BeforeEach
     public void setUp() {
-        listener = new FalloutJobExecutionListener();
-        jobExecution = Mockito.mock(JobExecution.class);
-        jobInstance = Mockito.mock(JobInstance.class);
+        MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    public void testBeforeJob() {
-        when(jobExecution.getJobInstance()).thenReturn(jobInstance);
-        when(jobInstance.getJobName()).thenReturn("TestJob");
+    public void testScheduleBatchJob_WhenRecordsExist_ShouldRunJob() throws Exception {
+        // Arrange
+        when(kafkaFalloutService.hasRecords()).thenReturn(true);
+        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
+        when(jobExecution.getStartTime()).thenReturn(Calendar.getInstance().getTime());
+        when(jobExecution.getEndTime()).thenReturn(Calendar.getInstance().getTime());
 
-        listener.beforeJob(jobExecution);
+        // Act
+        kafkaFalloutScheduler.scheduleBatchJob();
 
-        // Verify that the info log was called with the correct parameters
-        // Here you can use a logging framework to check that the log was created
+        // Assert
+        verify(kafkaFalloutService).hasRecords();
+        verify(jobLauncher).run(any(Job.class), any(JobParameters.class));
     }
 
     @Test
-    public void testAfterJob_SuccessfulExecution() {
-        when(jobExecution.getStartTime()).thenReturn(LocalDateTime.now().minusSeconds(10));
-        when(jobExecution.getEndTime()).thenReturn(LocalDateTime.now());
-        when(jobExecution.getStatus()).thenReturn(BatchStatus.COMPLETED);
-        when(jobExecution.getJobInstance()).thenReturn(jobInstance);
-        when(jobInstance.getJobName()).thenReturn("TestJob");
-        when(jobExecution.getExitStatus()).thenReturn(ExitStatus.COMPLETED);
+    public void testScheduleBatchJob_WhenNoRecords_ShouldNotRunJob() throws Exception {
+        // Arrange
+        when(kafkaFalloutService.hasRecords()).thenReturn(false);
 
-        listener.afterJob(jobExecution);
+        // Act
+        kafkaFalloutScheduler.scheduleBatchJob();
 
-        // Verify that the job status remains completed
-        verify(jobExecution, times(1)).getStatus();
+        // Assert
+        verify(kafkaFalloutService).hasRecords();
+        verify(jobLauncher, never()).run(any(Job.class), any(JobParameters.class));
     }
 
     @Test
-    public void testAfterJob_UnsuccessfulExecution() {
-        when(jobExecution.getStartTime()).thenReturn(LocalDateTime.now().minusSeconds(10));
-        when(jobExecution.getEndTime()).thenReturn(LocalDateTime.now());
-        when(jobExecution.getStatus()).thenReturn(BatchStatus.FAILED);
-        when(jobExecution.getJobInstance()).thenReturn(jobInstance);
-        when(jobInstance.getJobName()).thenReturn("TestJob");
-        when(jobExecution.getExitStatus()).thenReturn(ExitStatus.FAILED);
-
-        listener.afterJob(jobExecution);
-
-        // Verify that the job status is set to STOPPED
-        verify(jobExecution, times(1)).setStatus(BatchStatus.STOPPED);
-    }
-
-    @Test
-    public void testAfterJob_NullStartTime() {
+    public void testScheduleBatchJob_WhenJobExecutionTimesAreNull_ShouldThrowException() throws Exception {
+        // Arrange
+        when(kafkaFalloutService.hasRecords()).thenReturn(true);
+        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
         when(jobExecution.getStartTime()).thenReturn(null);
-        when(jobExecution.getEndTime()).thenReturn(LocalDateTime.now());
-
-        try {
-            listener.afterJob(jobExecution);
-        } catch (IllegalArgumentException e) {
-            // Expected exception
-        }
-    }
-
-    @Test
-    public void testAfterJob_NullEndTime() {
-        when(jobExecution.getStartTime()).thenReturn(LocalDateTime.now().minusSeconds(10));
         when(jobExecution.getEndTime()).thenReturn(null);
 
-        try {
-            listener.afterJob(jobExecution);
-        } catch (IllegalArgumentException e) {
-            // Expected exception
-        }
+        // Act & Assert
+        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
+            kafkaFalloutScheduler.scheduleBatchJob();
+        });
+        assertEquals("Job Execution Start or End time is null", exception.getMessage());
     }
+
+    // Additional tests for edge cases can be added here
 }
 ```
 
-### Explanation of Test Cases:
+### Explanation of the Test Cases
 
-1. **`testBeforeJob`**: Tests the `beforeJob` method to ensure it logs the job name correctly.
+1. **testScheduleBatchJob_WhenRecordsExist_ShouldRunJob**:
+   - This test checks if the batch job is executed when records exist in the `KafkaFalloutService`.
+   - Mocks `hasRecords()` to return `true` and verifies that the `run()` method of `jobLauncher` is called.
 
-2. **`testAfterJob_SuccessfulExecution`**: Tests the `afterJob` method for a successful job execution where the job status is `COMPLETED`.
+2. **testScheduleBatchJob_WhenNoRecords_ShouldNotRunJob**:
+   - This test verifies that the batch job is not executed when there are no records.
+   - Mocks `hasRecords()` to return `false` and confirms that `run()` is not invoked.
 
-3. **`testAfterJob_UnsuccessfulExecution`**: Tests the `afterJob` method for an unsuccessful job execution where the job status is `FAILED`, verifying that it sets the job status to `STOPPED`.
+3. **testScheduleBatchJob_WhenJobExecutionTimesAreNull_ShouldThrowException**:
+   - This test checks if an `IllegalArgumentException` is thrown when the job execution times are null.
+   - It mocks the job execution to return null for both the start and end times.
 
-4. **`testAfterJob_NullStartTime`**: Tests the `afterJob` method when the start time is null, expecting an `IllegalArgumentException`.
+### Additional Considerations
 
-5. **`testAfterJob_NullEndTime`**: Tests the `afterJob` method when the end time is null, also expecting an `IllegalArgumentException`.
+- **Mocking Dependencies**: The tests utilize Mockito to mock dependencies, ensuring that we isolate the behavior of the `KafkaFalloutScheduler`.
+  
+- **Branch Coverage**: Each test case aims to cover different branches and conditions within the `scheduleBatchJob` method.
 
-These test cases should comprehensively cover the branches of the `FalloutJobExecutionListener` class while ensuring that all lines of code are executed during testing. Adjust logging verification to fit your logging framework if needed.
+- **Further Tests**: You can expand test coverage further by adding more cases, such as testing exception handling for the `jobLauncher.run()` method (e.g., `JobExecutionAlreadyRunningException`, `JobInstanceAlreadyCompleteException`, etc.).
+
+Using this approach, you can ensure that your scheduler's functionality is thoroughly tested, covering positive and negative scenarios effectively.

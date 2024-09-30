@@ -1,18 +1,59 @@
-@Test
-void testConvertToObjectJAXBException() throws JsonProcessingException, JAXBException {
-    // Create invalid XML input
-    String invalidXml = "<invalid></invalid>";
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-    // Mock JAXBContext and Unmarshaller to throw JAXBException
-    JAXBContext jaxbContextMock = Mockito.mock(JAXBContext.class);
-    Unmarshaller jaxbUnmarshallerMock = Mockito.mock(Unmarshaller.class);
-    Mockito.when(jaxbContextMock.createUnmarshaller()).thenThrow(new JAXBException("Mock JAXBException"));
-    Mockito.when(jaxbContextMock.newInstance(TYSConstants.class)).thenReturn(jaxbContextMock);
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-    // Set up BatchLoaderUtils with mocked JAXBContext and Unmarshaller
-    BatchLoaderUtils batchLoaderUtils = new BatchLoaderUtils();
-    ReflectionTestUtils.setField(batchLoaderUtils, "jaxbContext", jaxbContextMock);
+import javax.xml.bind.JAXBException;
+import javax.xml.bind.JAXBContext;
+import javax.xml.bind.Unmarshaller;
+import java.io.StringReader;
 
-    // Call the method and assert the catch block is covered
-    assertThrows(JAXBException.class, () -> batchLoaderUtils.convertToObject(invalidXml, TYSConstants.class));
+@ExtendWith(MockitoExtension.class)
+public class BatchLoaderUtilsTest {
+
+    @InjectMocks
+    private BatchLoaderUtils batchLoaderUtils;
+
+    @Mock
+    private Logger logger;
+
+    @BeforeEach
+    public void setUp() {
+        logger = LoggerFactory.getLogger(BatchLoaderUtils.class);
+    }
+
+    @Test
+    public void testConvertToObject_JAXBException() throws Exception {
+        String invalidXml = "<invalid><xml></invalid>"; // Invalid XML to trigger JAXBException
+        Class<TYSConstants> clazz = TYSConstants.class;
+
+        // Mock JAXBContext and Unmarshaller to throw JAXBException
+        JAXBContext jaxbContext = mock(JAXBContext.class);
+        Unmarshaller unmarshaller = mock(Unmarshaller.class);
+        when(jaxbContext.createUnmarshaller()).thenReturn(unmarshaller);
+        when(unmarshaller.unmarshal(any(StringReader.class))).thenThrow(new JAXBException("Mock JAXBException"));
+
+        // Inject mocks into BatchLoaderUtils
+        batchLoaderUtils = new BatchLoaderUtils() {
+            @Override
+            protected JAXBContext createJAXBContext(Class<?> clazz) throws JAXBException {
+                return jaxbContext;
+            }
+        };
+
+        // Call the method and verify the catch block is executed
+        assertThrows(JAXBException.class, () -> {
+            batchLoaderUtils.convertToObject(invalidXml, clazz);
+        });
+
+        // Verify that the logger.error method was called
+        verify(logger).error(eq("Unable to convert - "), any(JAXBException.class));
+    }
 }

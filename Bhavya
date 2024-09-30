@@ -1,12 +1,106 @@
-<dependency>
-    <groupId>org.mockito</groupId>
-    <artifactId>mockito-core</artifactId>
-    <version>4.0.0</version> <!-- Use the latest version -->
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.junit.jupiter</groupId>
-    <artifactId>junit-jupiter</artifactId>
-    <version>5.7.0</version> <!-- Use the latest version -->
-    <scope>test</scope>
-</dependency>
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.batch.core.repository.JobRepository;
+import org.slf4j.Logger;
+
+import java.util.Calendar;
+import java.util.Date;
+
+@ExtendWith(MockitoExtension.class)
+public class KafkaFalloutSchedulerTest {
+
+    @InjectMocks
+    private KafkaFalloutScheduler kafkaFalloutScheduler;
+
+    @Mock
+    private JobLauncher jobLauncher;
+
+    @Mock
+    private KafkaFalloutService sqlservice;
+
+    @Mock
+    private Job job;
+
+    @Mock
+    private Logger logger;
+
+    @BeforeEach
+    public void setUp() {
+        // Set up any necessary configurations or mocks
+    }
+
+    @Test
+    public void testScheduleBatchJob_WithRecords() throws Exception {
+        // Arrange
+        when(sqlservice.hasRecords()).thenReturn(true);
+        JobExecution jobExecution = mock(JobExecution.class);
+        Date startTime = Calendar.getInstance().getTime();
+        Date endTime = Calendar.getInstance().getTime();
+        
+        // Mocking the JobExecution behavior
+        when(jobExecution.getStartTime()).thenReturn(startTime);
+        when(jobExecution.getEndTime()).thenReturn(endTime);
+        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
+
+        // Act
+        kafkaFalloutScheduler.scheduleBatchJob();
+
+        // Assert
+        verify(logger).info("KafkaFalloutScheduler::Batch job starting");
+        verify(jobLauncher).run(any(Job.class), any(JobParameters.class));
+        verify(logger).info(contains("Batch job ending with Id:"));
+    }
+
+    @Test
+    public void testScheduleBatchJob_NoRecords() throws Exception {
+        // Arrange
+        when(sqlservice.hasRecords()).thenReturn(false);
+
+        // Act
+        kafkaFalloutScheduler.scheduleBatchJob();
+
+        // Assert
+        verify(logger).info("Unable to start batch job");
+    }
+
+    @Test
+    public void testScheduleBatchJob_JobExecutionStartTimeNull() throws Exception {
+        // Arrange
+        when(sqlservice.hasRecords()).thenReturn(true);
+        JobExecution jobExecution = mock(JobExecution.class);
+        when(jobExecution.getStartTime()).thenReturn(null);
+        when(jobExecution.getEndTime()).thenReturn(Calendar.getInstance().getTime());
+        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
+
+        // Act & Assert
+        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
+            kafkaFalloutScheduler.scheduleBatchJob();
+        });
+        assertEquals("Job Execution Start or End time is null", exception.getMessage());
+    }
+
+    @Test
+    public void testScheduleBatchJob_JobExecutionEndTimeNull() throws Exception {
+        // Arrange
+        when(sqlservice.hasRecords()).thenReturn(true);
+        JobExecution jobExecution = mock(JobExecution.class);
+        when(jobExecution.getStartTime()).thenReturn(Calendar.getInstance().getTime());
+        when(jobExecution.getEndTime()).thenReturn(null);
+        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
+
+        // Act & Assert
+        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
+            kafkaFalloutScheduler.scheduleBatchJob();
+        });
+        assertEquals("Job Execution Start or End time is null", exception.getMessage());
+    }
+}

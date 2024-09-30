@@ -1,58 +1,110 @@
-To write JUnit5 test cases for the `entityManagerFactoryBean` method in the `DataSourceConfig` class, we will need to use the `SpringExtension` and mock some of the dependencies. Below is an example of how you can achieve this:
+Certainly! To update the test cases for an Oracle database driver, you'll need to ensure that the Oracle JDBC driver is mocked appropriately, just like we did with H2. Here's how you can update the test cases:
 
 ```java
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
+import javax.sql.DataSource;
+import javax.persistence.EntityManagerFactory;
+
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.springframework.beans.factory.annotation.Qualifier;
+import org.mockito.MockitoAnnotations;
 import org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;
-import org.springframework.data.repository.query.spi.EvaluationContextExtension;
-import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
+import org.springframework.orm.jpa.JpaTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
 
-@ExtendWith(SpringExtension.class)
+import com.verizon.vbg.ledger.repository.DataSourceConfig;
+import com.verizon.vbg.ledger.repository.DataSourceModal;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.mockito.Mockito;
+
 public class DataSourceConfigTest {
 
-    @InjectMocks
-    private DataSourceConfig dataSourceConfig;
+    @Mock
+    private DataSourceModal dataSourceModal;
 
     @Mock
     private EntityManagerFactoryBuilder entityManagerFactoryBuilder;
 
     @Mock
-    @Qualifier("falloutDataSource")
-    private DataSource dataSource;
+    private EntityManagerFactory entityManagerFactory;
+
+    @InjectMocks
+    private DataSourceConfig dataSourceConfig;
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+
+        // Mock DataSourceModal properties for Oracle
+        when(dataSourceModal.getUrl()).thenReturn("jdbc:oracle:thin:@localhost:1521:xe");
+        when(dataSourceModal.getUsername()).thenReturn("oracle_user");
+        when(dataSourceModal.getPassword()).thenReturn("oracle_password");
+        when(dataSourceModal.getDriver()).thenReturn("oracle.jdbc.OracleDriver");
+    }
+
+    @Test
+    public void testFalloutDataSource() {
+        DataSource dataSource = dataSourceConfig.falloutDataSource();
+        assertNotNull(dataSource, "DataSource should not be null");
+
+        // Ensure the data source is of type DriverManagerDataSource
+        assert(dataSource instanceof DriverManagerDataSource);
+        DriverManagerDataSource ds = (DriverManagerDataSource) dataSource;
+        assert(ds.getUrl().equals("jdbc:oracle:thin:@localhost:1521:xe"));
+        assert(ds.getUsername().equals("oracle_user"));
+    }
 
     @Test
     public void testEntityManagerFactoryBean() {
-        // Mocking DataSourceModal
-        DataSourceModal dataSourceModal = new DataSourceModal();
-        dataSourceModal.setUrl("jdbc:h2:mem:testdb");
-        dataSourceModal.setUsername("test");
-        dataSourceModal.setPassword("password");
-        dataSourceModal.setDriver("org.h2.Driver");
+        // Mocking the behavior of the EntityManagerFactoryBuilder
+        when(entityManagerFactoryBuilder.dataSource(Mockito.any(DataSource.class)))
+            .thenReturn(entityManagerFactoryBuilder);
+        when(entityManagerFactoryBuilder.packages("com.verizon.vbg.ledger.entity"))
+            .thenReturn(entityManagerFactoryBuilder);
+        when(entityManagerFactoryBuilder.persistenceUnit("fallout-db"))
+            .thenReturn(entityManagerFactoryBuilder);
+        when(entityManagerFactoryBuilder.build()).thenReturn(entityManagerFactory);
 
-        // Mocking behavior of dataSource
-        when(dataSourceModal.getUrl()).thenReturn("jdbc:h2:mem:testdb");
-        when(dataSourceModal.getUsername()).thenReturn("test");
-        when(dataSourceModal.getPassword()).thenReturn("password");
-        when(dataSourceModal.getDriver()).thenReturn("org.h2.Driver");
+        EntityManagerFactory result = dataSourceConfig.entityManagerFactoryBean(entityManagerFactoryBuilder, dataSourceConfig.falloutDataSource()).getObject();
+        assertNotNull(result, "EntityManagerFactory should not be null");
+    }
 
-        when(dataSourceConfig.entityManagerFactoryBean(entityManagerFactoryBuilder, dataSource)).thenCallRealMethod();
-        
-        // Call the method under test
-        LocalContainerEntityManagerFactoryBean factoryBean = dataSourceConfig.entityManagerFactoryBean(entityManagerFactoryBuilder, dataSource);
-
-        // Assertion
-        assertNotNull(factoryBean);
+    @Test
+    public void testFalloutTransactionManager() {
+        PlatformTransactionManager transactionManager = dataSourceConfig.falloutTransactionManager(entityManagerFactory);
+        assertNotNull(transactionManager, "TransactionManager should not be null");
+        assert(transactionManager instanceof JpaTransactionManager);
     }
 }
 ```
 
-In this test case, we are mocking the dependencies such as `DataSourceModal`, `EntityManagerFactoryBuilder`, and `DataSource` to test the behavior of the `entityManagerFactoryBean` method. 
+### Key Adjustments:
+1. **Oracle JDBC Driver:** The `getDriver()` method in the `DataSourceModal` mock now returns `oracle.jdbc.OracleDriver`, corresponding to the Oracle JDBC driver.
 
-You may need to adjust this code based on the actual behavior of your application and dependencies. Please make sure to add the necessary imports and adjust the test case accordingly.
+2. **Oracle URL:** The mock URL is set to a typical Oracle JDBC connection string, like `jdbc:oracle:thin:@localhost:1521:xe`.
+
+3. **Dependencies:**
+   - Ensure the Oracle JDBC driver dependency is correctly specified in your `pom.xml` or `build.gradle`.
+
+For Maven:
+```xml
+<dependency>
+    <groupId>com.oracle.database.jdbc</groupId>
+    <artifactId>ojdbc10</artifactId>
+    <version>${oracle-jdbc.version}</version>
+    <scope>test</scope>
+</dependency>
+```
+
+For Gradle:
+```groovy
+testImplementation 'com.oracle.database.jdbc:ojdbc10:${oracle-jdbc.version}'
+```
+
+### Note:
+- Make sure the Oracle JDBC driver is available in your local Maven repository or set up your project to fetch it from an appropriate repository.
+- Adjust the URL, username, and password in the test setup as needed to match your project's configuration.

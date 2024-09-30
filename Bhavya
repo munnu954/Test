@@ -1,35 +1,82 @@
-The `UnnecessaryStubbingException` you're encountering in Mockito typically occurs when you've defined a stub for a method that is never actually called during the test execution. To resolve this issue, we need to ensure that the stubs we create are necessary for the execution of the test.
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.batch.core.BatchStatus;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.ExitStatus;
 
-In your scenario, it seems that the stubbing for `jobExecution.getStartTime()` and `jobExecution.getEndTime()` might not be required depending on how the `scheduleBatchJob` method is implemented. If it leads to those methods not being called due to an early return or other control flow, Mockito will flag them as unnecessary stubbings.
+import java.time.LocalDateTime;
 
-To fix this, we can simplify the test case and ensure that only the necessary stubs are created. Here’s a modified version of your test case:
+import static org.mockito.Mockito.*;
 
-### Modified Test Case
+public class FalloutJobExecutionListenerTest {
 
-```java
-@Test
-public void testScheduleBatchJob_WhenJobExecutionTimesAreNull_ShouldThrowException() throws Exception {
-    // Arrange
-    when(kafkaFalloutService.hasRecords()).thenReturn(true);
-    when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
-    
-    // Stubbing to return null for start and end time
-    when(jobExecution.getStartTime()).thenReturn(null);
-    when(jobExecution.getEndTime()).thenReturn(null);
+    private FalloutJobExecutionListener listener;
+    private JobExecution jobExecution;
 
-    // Act & Assert
-    IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-        kafkaFalloutScheduler.scheduleBatchJob();
-    });
-    assertEquals("Job Execution Start or End time is null", exception.getMessage());
+    @BeforeEach
+    public void setUp() {
+        listener = new FalloutJobExecutionListener();
+        jobExecution = mock(JobExecution.class);
+    }
+
+    @Test
+    public void testBeforeJob() {
+        when(jobExecution.getJobInstance()).thenReturn(mock(JobInstance.class));
+        when(jobExecution.getJobInstance().getJobName()).thenReturn("SampleJob");
+
+        listener.beforeJob(jobExecution);
+
+        // Verify that logging occurs (you may need to use a logging framework test utility)
+    }
+
+    @Test
+    public void testAfterJob_SuccessfulJob() {
+        when(jobExecution.getStartTime()).thenReturn(LocalDateTime.now().minusSeconds(5));
+        when(jobExecution.getEndTime()).thenReturn(LocalDateTime.now());
+        when(jobExecution.getStatus()).thenReturn(BatchStatus.COMPLETED);
+        when(jobExecution.getJobInstance()).thenReturn(mock(JobInstance.class));
+        when(jobExecution.getJobInstance().getJobName()).thenReturn("SampleJob");
+        when(jobExecution.getExitStatus()).thenReturn(ExitStatus.COMPLETED);
+
+        listener.afterJob(jobExecution);
+
+        // Verify logging and that job status remains COMPLETED
+        verify(jobExecution, times(1)).getStatus();
+    }
+
+    @Test
+    public void testAfterJob_NullStartTime() {
+        when(jobExecution.getStartTime()).thenReturn(null);
+        when(jobExecution.getEndTime()).thenReturn(LocalDateTime.now());
+
+        assertThrows(IllegalArgumentException.class, () -> {
+            listener.afterJob(jobExecution);
+        });
+    }
+
+    @Test
+    public void testAfterJob_NullEndTime() {
+        when(jobExecution.getStartTime()).thenReturn(LocalDateTime.now());
+        when(jobExecution.getEndTime()).thenReturn(null);
+
+        assertThrows(IllegalArgumentException.class, () -> {
+            listener.afterJob(jobExecution);
+        });
+    }
+
+    @Test
+    public void testAfterJob_UnsuccessfulJob() {
+        when(jobExecution.getStartTime()).thenReturn(LocalDateTime.now().minusSeconds(5));
+        when(jobExecution.getEndTime()).thenReturn(LocalDateTime.now());
+        when(jobExecution.getStatus()).thenReturn(BatchStatus.FAILED);
+        when(jobExecution.getJobInstance()).thenReturn(mock(JobInstance.class));
+        when(jobExecution.getJobInstance().getJobName()).thenReturn("SampleJob");
+        when(jobExecution.getExitStatus()).thenReturn(ExitStatus.FAILED);
+
+        listener.afterJob(jobExecution);
+
+        // Verify that job status is set to STOPPED
+        verify(jobExecution, times(1)).setStatus(BatchStatus.STOPPED);
+    }
 }
-```
-
-### Key Considerations:
-- **Necessary Stubbing**: Ensure that the stubbing for `jobExecution.getStartTime()` and `jobExecution.getEndTime()` is indeed necessary. In this case, they are necessary because they are directly related to the exception being tested.
-  
-- **Mockito's Behavior**: If there are still unnecessary stubbings detected, double-check the implementation of the `scheduleBatchJob` method to confirm that it actually invokes `getStartTime()` and `getEndTime()`.
-
-- **Mockito Annotations**: Ensure that you're using the `@ExtendWith(MockitoExtension.class)` annotation to enable Mockito in your test class.
-
-If you continue to run into issues, it may be helpful to clear any unused stubs from prior test cases or refactor the tests to ensure that each test case is self-contained and does not retain unused stubs from previous tests.

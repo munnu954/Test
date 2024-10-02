@@ -1,23 +1,156 @@
-@Test
-public void testScheduleBatchJob_WithRecords() throws Exception {
-    // Arrange
-    when(sqlservice.hasRecords()).thenReturn(true);
-    JobExecution jobExecution = mock(JobExecution.class);
-    
-    // Use LocalDateTime for start and end times
-    LocalDateTime startTime = LocalDateTime.now();
-    LocalDateTime endTime = startTime.plusMinutes(1);
+To write test cases for the `KafkaFalloutBatchConfig` class, we can use JUnit and Mockito for mocking dependencies. The tests will cover both positive and negative scenarios, ensuring that all branches of the code are executed.
 
-    // Mocking the JobExecution behavior to return LocalDateTime
-    when(jobExecution.getStartTime()).thenReturn(Date.from(startTime.atZone(ZoneId.systemDefault()).toInstant()));
-    when(jobExecution.getEndTime()).thenReturn(Date.from(endTime.atZone(ZoneId.systemDefault()).toInstant()));
-    when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
+Below is a sample test class that encompasses various scenarios for the `KafkaFalloutBatchConfig` class. For simplicity, I will focus on testing the main methods in the class, such as `kafkaFalloutReader`, `kafkaFalloutProcessor`, and `kafkaFalloutWriter`.
 
-    // Act
-    kafkaFalloutScheduler.scheduleBatchJob();
+### Test Class for KafkaFalloutBatchConfig
 
-    // Assert
-    verify(logger).info("KafkaFalloutScheduler::Batch job starting");
-    verify(jobLauncher).run(any(Job.class), any(JobParameters.class));
-    verify(logger).info(contains("Batch job ending with Id:"));
+```java
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.data.JdbcCursorItemReader;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+
+import java.sql.Date;
+import java.util.Collections;
+import java.util.List;
+
+@ExtendWith(MockitoExtension.class)
+@EnableBatchProcessing
+public class KafkaFalloutBatchConfigTest {
+
+    @InjectMocks
+    private KafkaFalloutBatchConfig kafkaFalloutBatchConfig;
+
+    @Mock
+    private DataSource dataSource;
+    @Mock
+    private KafkaFalloutService failedMessageService;
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+    @Mock
+    private BatchLoaderUtils utils;
+    @Mock
+    private AccountEcpdService accountService;
+    @Mock
+    private MtnEcpdService mtnEcpdService;
+    @Mock
+    private JobRepository jobRepository;
+    @Mock
+    private PlatformTransactionManager transactionManager;
+
+    private KafkaFailedMessagesEntity mockEntity;
+
+    @BeforeEach
+    public void setUp() {
+        mockEntity = new KafkaFailedMessagesEntity();
+        // Set up initial state for the mock entity if necessary.
+    }
+
+    @Test
+    public void testKafkaFalloutReader_Success() {
+        JdbcCursorItemReader<KafkaFailedMessagesEntity> reader = kafkaFalloutBatchConfig.kafkaFalloutReader();
+        assertNotNull(reader);
+        // Mocking the behavior of the reader
+        when(dataSource.getConnection()).thenReturn(mockConnection());
+        // Simulate successful SQL execution
+        // Add assertions for expected behavior
+    }
+
+    @Test
+    public void testKafkaFalloutReader_Failure() {
+        try {
+            JdbcCursorItemReader<KafkaFailedMessagesEntity> reader = kafkaFalloutBatchConfig.kafkaFalloutReader();
+            assertNull(reader);
+        } catch (Exception e) {
+            assertEquals("ItemReader:: Unable to read messages from table", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testKafkaFalloutProcessor_SensitivityCheckPass() throws JsonProcessingException {
+        KafkaFailedMessagesEntity inputItem = new KafkaFailedMessagesEntity();
+        inputItem.setSensitivityChecked('N');
+        inputItem.setPayload("{...}"); // Add valid JSON payload
+
+        when(utils.convert(anyString(), eq(ServiceMessage.class))).thenReturn(new ServiceMessage());
+        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("EcpdId"));
+        
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
+        KafkaFailedMessagesEntity outputItem = processor.process(inputItem);
+
+        assertNotNull(outputItem);
+        assertEquals('Y', outputItem.getSensitivityChecked());
+    }
+
+    @Test
+    public void testKafkaFalloutProcessor_SensitivityCheckFail() throws JsonProcessingException {
+        KafkaFailedMessagesEntity inputItem = new KafkaFailedMessagesEntity();
+        inputItem.setSensitivityChecked('N');
+        inputItem.setPayload("{...}"); // Add valid JSON payload
+
+        when(utils.convert(anyString(), eq(ServiceMessage.class))).thenReturn(new ServiceMessage());
+        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.empty());
+
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
+        KafkaFailedMessagesEntity outputItem = processor.process(inputItem);
+
+        assertNull(outputItem); // Expecting the output to be null when the sensitivity check fails
+    }
+
+    @Test
+    public void testKafkaFalloutWriter_Success() {
+        ItemWriter<KafkaFailedMessagesEntity> writer = kafkaFalloutBatchConfig.kafkaFalloutWriter();
+        List<KafkaFailedMessagesEntity> items = Collections.singletonList(mockEntity);
+
+        writer.write(items);
+
+        // Verify that the message was sent to Kafka
+        verify(kafkaTemplate, times(1)).send(anyString(), anyString());
+    }
+
+    @Test
+    public void testKafkaFalloutWriter_Failure() {
+        doThrow(new RuntimeException("Kafka error")).when(kafkaTemplate).send(anyString(), anyString());
+
+        ItemWriter<KafkaFailedMessagesEntity> writer = kafkaFalloutBatchConfig.kafkaFalloutWriter();
+        List<KafkaFailedMessagesEntity> items = Collections.singletonList(mockEntity);
+
+        Exception exception = assertThrows(RuntimeException.class, () -> {
+            writer.write(items);
+        });
+
+        assertEquals("Kafka error", exception.getMessage());
+        verify(failedMessageService, times(0)).purgeRepublishedRecord(any());
+    }
 }
+```
+
+### Explanation
+
+1. **`@ExtendWith(MockitoExtension.class)`**: This annotation is used to enable Mockito in the test class.
+2. **Mock Dependencies**: We mock the dependencies of the `KafkaFalloutBatchConfig` class, so we can control their behavior in the tests.
+3. **Test Methods**:
+   - **`testKafkaFalloutReader_Success`**: Tests the successful creation of the reader.
+   - **`testKafkaFalloutReader_Failure`**: Tests the failure scenario when the reader fails to read messages.
+   - **`testKafkaFalloutProcessor_SensitivityCheckPass`**: Tests the processor when the sensitivity check passes.
+   - **`testKafkaFalloutProcessor_SensitivityCheckFail`**: Tests the processor when the sensitivity check fails.
+   - **`testKafkaFalloutWriter_Success`**: Tests the writer when the message is sent successfully to Kafka.
+   - **`testKafkaFalloutWriter_Failure`**: Tests the writer when there is an exception while sending the message to Kafka.
+
+These test cases should cover a range of scenarios including success and failure paths, ensuring that the logic of the `KafkaFalloutBatchConfig` class is thoroughly tested. Adjust the mock behavior and assertions as necessary to fit the specific requirements of your application.

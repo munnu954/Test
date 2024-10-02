@@ -1,242 +1,67 @@
-To write comprehensive test cases for the `KafkaFalloutBatchConfig` class, we will cover both positive and negative scenarios for each method in the class. The tests will utilize JUnit and Mockito to mock dependencies and verify behaviors. This includes scenarios for reading, processing, and writing Kafka messages, as well as handling various exceptional cases.
+The `NullPointerException` you're encountering in the `testKafkaFalloutProcessor_SensitivityCheckFail_NoEcpd` test case occurs because the `requestJSONString` object is not being set correctly. This results in `requestJSONString` being `null`, leading to the exception when you invoke `getService()` on it.
 
-Here's an example of a complete test class with various test cases:
+To resolve this issue, we need to ensure that the `requestJSONString` is properly constructed and populated during the test setup. Specifically, we need to mock the `RequestJSONString` object to return a valid `Service` object, which in turn returns a valid `ServiceBody` and `CallRequest`.
 
-### Test Class for KafkaFalloutBatchConfig
+Here’s how to modify the test case to avoid the `NullPointerException`:
+
+### Updated Test Case
 
 ```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
+@Test
+public void testKafkaFalloutProcessor_SensitivityCheckFail_NoEcpd() throws JsonProcessingException {
+    // Create a mock for the ServiceMessage
+    ServiceMessage mockServiceMessage = mock(ServiceMessage.class);
+    
+    // Set up the behavior for the mock
+    when(utils.convert(anyString(), eq(ServiceMessage.class))).thenReturn(mockServiceMessage);
+    when(mockServiceMessage.getRequestJSONString()).thenReturn("{\"service\":{\"serviceBody\":{\"callRequest\":{\"body\":{\"relinquishingCustomerDetails\":{\"accountNumber\":\"12345\"}}}}}}}");
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.batch.core.StepExecution;
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.item.data.JdbcCursorItemReader;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.transaction.PlatformTransactionManager;
-import reactor.core.publisher.Mono;
+    // Prepare the input item with sensitivity checked as 'N'
+    KafkaFailedMessagesEntity inputItem = new KafkaFailedMessagesEntity();
+    inputItem.setSensitivityChecked('N');
+    inputItem.setPayload("{...}"); // Add valid JSON payload as needed
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.Collections;
+    // Mock the account service to return an empty Mono (indicating no ECPD found)
+    when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.empty());
 
-@ExtendWith(MockitoExtension.class)
-@EnableBatchProcessing
-public class KafkaFalloutBatchConfigTest {
+    // Mock the utils.convert for RequestJSONString
+    RequestJSONString mockRequestJSONString = mock(RequestJSONString.class);
+    when(utils.convert(anyString(), eq(RequestJSONString.class))).thenReturn(mockRequestJSONString);
+    
+    // Mocking the behavior of getService, getServiceBody, and getCallRequest
+    Service mockService = mock(Service.class);
+    ServiceBody mockServiceBody = mock(ServiceBody.class);
+    CallRequest mockCallRequest = mock(CallRequest.class);
+    
+    when(mockRequestJSONString.getService()).thenReturn(mockService);
+    when(mockService.getServiceBody()).thenReturn(mockServiceBody);
+    when(mockServiceBody.getCallRequest()).thenReturn(mockCallRequest);
+    
+    // Mocking the behavior of getBody
+    Body mockBody = mock(Body.class);
+    when(mockCallRequest.getBody()).thenReturn(mockBody);
 
-    @InjectMocks
-    private KafkaFalloutBatchConfig kafkaFalloutBatchConfig;
+    // Mock the relinquishing customer details to return the account number
+    CustomerDetails mockCustomerDetails = mock(CustomerDetails.class);
+    when(mockBody.getRelinquishingCustomerDetails()).thenReturn(mockCustomerDetails);
+    when(mockCustomerDetails.getAccountNumber()).thenReturn("12345");
 
-    @Mock
-    private DataSource dataSource;
-    @Mock
-    private KafkaFalloutService failedMessageService;
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-    @Mock
-    private BatchLoaderUtils utils;
-    @Mock
-    private AccountEcpdService accountService;
-    @Mock
-    private MtnEcpdService mtnEcpdService;
-    @Mock
-    private JobRepository jobRepository;
-    @Mock
-    private PlatformTransactionManager transactionManager;
+    // Process the item using the kafkaFalloutProcessor
+    ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
+    KafkaFailedMessagesEntity outputItem = processor.process(inputItem);
 
-    private KafkaFailedMessagesEntity mockEntity;
-
-    @BeforeEach
-    public void setUp() {
-        mockEntity = new KafkaFailedMessagesEntity();
-        // Set up initial state for the mock entity if necessary.
-    }
-
-    @Test
-    public void testKafkaFalloutReader_Success() {
-        JdbcCursorItemReader<KafkaFailedMessagesEntity> reader = kafkaFalloutBatchConfig.kafkaFalloutReader();
-        assertNotNull(reader);
-        // Mocking the behavior of the reader
-        when(dataSource.getConnection()).thenReturn(mockConnection());
-        // Simulate successful SQL execution
-        // Add assertions for expected behavior
-    }
-
-    @Test
-    public void testKafkaFalloutReader_Failure() {
-        try {
-            JdbcCursorItemReader<KafkaFailedMessagesEntity> reader = kafkaFalloutBatchConfig.kafkaFalloutReader();
-            assertNull(reader);
-        } catch (Exception e) {
-            assertEquals("ItemReader:: Unable to read messages from table", e.getMessage());
-        }
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_SensitivityCheckPass() throws JsonProcessingException {
-        // Create a mock for the ServiceMessage
-        ServiceMessage mockServiceMessage = mock(ServiceMessage.class);
-        
-        // Set up the behavior for the mock
-        when(utils.convert(anyString(), eq(ServiceMessage.class))).thenReturn(mockServiceMessage);
-        when(mockServiceMessage.getRequestJSONString()).thenReturn("{\"service\":{\"serviceBody\":{\"callRequest\":{\"body\":{\"relinquishingCustomerDetails\":{\"accountNumber\":\"12345\"}}}}}}}");
-
-        // Prepare the input item with sensitivity checked as 'N'
-        KafkaFailedMessagesEntity inputItem = new KafkaFailedMessagesEntity();
-        inputItem.setSensitivityChecked('N');
-        inputItem.setPayload("{...}"); // Add valid JSON payload as needed
-
-        // Mock the account service to return a valid ECPD ID
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("EcpdId"));
-
-        // Process the item using the kafkaFalloutProcessor
-        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
-        KafkaFailedMessagesEntity outputItem = processor.process(inputItem);
-
-        // Assertions to verify the output
-        assertNotNull(outputItem);
-        assertEquals('Y', outputItem.getSensitivityChecked());
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_SensitivityCheckFail_NoEcpd() throws JsonProcessingException {
-        // Create a mock for the ServiceMessage
-        ServiceMessage mockServiceMessage = mock(ServiceMessage.class);
-        
-        // Set up the behavior for the mock
-        when(utils.convert(anyString(), eq(ServiceMessage.class))).thenReturn(mockServiceMessage);
-        when(mockServiceMessage.getRequestJSONString()).thenReturn("{\"service\":{\"serviceBody\":{\"callRequest\":{\"body\":{\"relinquishingCustomerDetails\":{\"accountNumber\":\"12345\"}}}}}}}");
-
-        // Prepare the input item with sensitivity checked as 'N'
-        KafkaFailedMessagesEntity inputItem = new KafkaFailedMessagesEntity();
-        inputItem.setSensitivityChecked('N');
-        inputItem.setPayload("{...}"); // Add valid JSON payload as needed
-
-        // Mock the account service to return an empty Mono (indicating no ECPD found)
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.empty());
-
-        // Process the item using the kafkaFalloutProcessor
-        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
-        KafkaFailedMessagesEntity outputItem = processor.process(inputItem);
-
-        // Assertions to verify the output
-        assertNull(outputItem); // Expecting the output to be null when the sensitivity check fails
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_SensitivityCheckFail_Sensitive() throws JsonProcessingException {
-        // Create a mock for the ServiceMessage
-        ServiceMessage mockServiceMessage = mock(ServiceMessage.class);
-        
-        // Set up the behavior for the mock
-        when(utils.convert(anyString(), eq(ServiceMessage.class))).thenReturn(mockServiceMessage);
-        when(mockServiceMessage.getRequestJSONString()).thenReturn("{\"service\":{\"serviceBody\":{\"callRequest\":{\"body\":{\"relinquishingCustomerDetails\":{\"accountNumber\":\"12345\"}}}}}}}");
-
-        // Mock the account service to return a valid ECPD ID
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("EcpdId"));
-
-        // Create a mock for the CustomerEcpdModel
-        CustomerEcpdModel mockCustomer = mock(CustomerEcpdModel.class);
-        when(mockCustomer.getSensitivity()).thenReturn("Y");
-        when(utils.convert("EcpdId", CustomerEcpdModel.class)).thenReturn(mockCustomer);
-
-        // Prepare the input item with sensitivity checked as 'N'
-        KafkaFailedMessagesEntity inputItem = new KafkaFailedMessagesEntity();
-        inputItem.setSensitivityChecked('N');
-        inputItem.setPayload("{...}"); // Add valid JSON payload as needed
-
-        // Process the item using the kafkaFalloutProcessor
-        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
-        KafkaFailedMessagesEntity outputItem = processor.process(inputItem);
-
-        // Assertions to verify the output
-        assertNull(outputItem); // Expecting the output to be null when the record is sensitive
-        verify(failedMessageService, times(1)).purgeRepublishedRecord(inputItem.getId());
-    }
-
-    @Test
-    public void testKafkaFalloutWriter_Success() {
-        ItemWriter<KafkaFailedMessagesEntity> writer = kafkaFalloutBatchConfig.kafkaFalloutWriter();
-        List<KafkaFailedMessagesEntity> items = Collections.singletonList(mockEntity);
-
-        writer.write(items);
-
-        // Verify that the message was sent to Kafka
-        verify(kafkaTemplate, times(1)).send(anyString(), anyString());
-        verify(failedMessageService, times(1)).purgeRepublishedRecord(any());
-    }
-
-    @Test
-    public void testKafkaFalloutWriter_Failure() {
-        doThrow(new RuntimeException("Kafka error")).when(kafkaTemplate).send(anyString(), anyString());
-
-        ItemWriter<KafkaFailedMessagesEntity> writer = kafkaFalloutBatchConfig.kafkaFalloutWriter();
-        List<KafkaFailedMessagesEntity> items = Collections.singletonList(mockEntity);
-
-        Exception exception = assertThrows(RuntimeException.class, () -> {
-            writer.write(items);
-        });
-
-        assertEquals("Kafka error", exception.getMessage());
-        verify(failedMessageService, times(0)).purgeRepublishedRecord(any());
-    }
-
-    @Test
-    public void testFilterAccountNum_WithDash() {
-        String result = kafkaFalloutBatchConfig.filterAccountNum("123-456");
-        assertEquals("123", result);
-    }
-
-    @Test
-    public void testFilterAccountNum_WithoutDash() {
-        String result = kafkaFalloutBatchConfig.filterAccountNum("123456");
-        assertEquals("123456", result);
-    }
-
-    @Test
-    public void testFilterAccountNum_WithLeadingZeros() {
-        String result = kafkaFalloutBatchConfig.filterAccountNum("000123");
-        assertEquals("123", result);
-    }
-
-    @Test
-    public void testFilterAccountNum_EmptyString() {
-        String result = kafkaFalloutBatchConfig.filterAccountNum("");
-        assertEquals("", result);
-    }
+    // Assertions to verify the output
+    assertNull(outputItem); // Expecting the output to be null when no ECPD is found
 }
 ```
 
-### Explanation of the Test Cases:
+### Key Changes Made:
 
-1. **Setup**: The `setUp` method initializes the necessary mocks used in the tests.
+1. **Mocking RequestJSONString**: We create a mock for `RequestJSONString` and set it to return a valid `Service` object.
 
-2. **Reader Tests**:
-   - `testKafkaFalloutReader_Success`: Tests that the reader is initialized correctly.
-   - `testKafkaFalloutReader_Failure`: Tests the scenario where the reader throws an exception.
+2. **Mocking Service and Nested Objects**: We create mocks for `Service`, `ServiceBody`, `CallRequest`, and `Body`, setting them to return corresponding mock objects.
 
-3. **Processor Tests**:
-   - `testKafkaFalloutProcessor_SensitivityCheckPass`: Tests that the processor correctly processes an item when sensitivity is not an issue.
-   - `testKafkaFalloutProcessor_SensitivityCheckFail_NoEcpd`: Tests that the processor returns `null` when no ECPD is found.
-   - `testKafkaFalloutProcessor_SensitivityCheckFail_Sensitive`: Tests that the processor correctly identifies and filters out sensitive records.
+3. **Setting Up the Account Number**: We mock the method calls to retrieve the `relinquishingCustomerDetails` object, ensuring that it returns the mock `CustomerDetails` object with an account number.
 
-4. **Writer Tests**:
-   - `testKafkaFalloutWriter_Success`: Tests that the writer successfully sends a message to Kafka.
-   - `testKafkaFalloutWriter_Failure`: Tests that the writer handles exceptions when sending messages to Kafka.
-
-5. **Utility Method Tests**:
-   - `testFilterAccountNum_WithDash`: Tests filtering account numbers with a dash.
-   - `testFilterAccountNum_WithoutDash`: Tests filtering account numbers without a dash.
-   - `testFilterAccountNum_WithLeadingZeros`: Tests filtering account numbers with leading zeros.
-   - `testFilterAccountNum_EmptyString`: Tests filtering an empty string.
-
-This test class covers various scenarios, ensuring that the logic within `KafkaFalloutBatchConfig` is well-tested and all branches are executed. Adjust the mock behavior and assertions as necessary to fit the specific requirements of your application.
+### Summary
+By ensuring that all necessary objects in the hierarchy are mocked and returning valid values, we prevent `NullPointerException` and ensure the test can execute successfully. This setup covers the entire processing path within the `kafkaFalloutProcessor` method for the scenario where no ECPD is found.

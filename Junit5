@@ -1,40 +1,111 @@
-The `UnknownContentTypeException` you're encountering indicates that Spring's `RestTemplate` is unable to find a suitable `HttpMessageConverter` to convert the response body to the desired type, `LinkAggregationResponse`, with the content type `application/json`. Here's how you can resolve this issue:
+The error you're encountering, `org.springframework.web.client.UnknownContentTypeException`, suggests that the `RestTemplate` is receiving a JSON response but cannot find a suitable `HttpMessageConverter` to convert the JSON into your `LinkAggregationResponse` object. This typically means that either the Jackson library (or another JSON processing library) is not correctly configured or available in your project.
 
-1. **Ensure Correct Dependency**:
-   - Make sure you have included the necessary dependencies for JSON processing in your `pom.xml` or `build.gradle`. For example, if you are using Jackson for JSON conversion, include:
+Here's a step-by-step approach to resolving the issue and updating your classes:
 
-   ```xml
-   <!-- For Maven -->
-   <dependency>
-       <groupId>com.fasterxml.jackson.core</groupId>
-       <artifactId>jackson-databind</artifactId>
-       <version>2.14.2</version>
-   </dependency>
-   ```
+### 1. Ensure Jackson is included in your dependencies
+Make sure you have the Jackson dependency in your `pom.xml` (for Maven) or `build.gradle` (for Gradle):
 
-   ```gradle
-   // For Gradle
-   implementation 'com.fasterxml.jackson.core:jackson-databind:2.14.2'
-   ```
+**Maven:**
+```xml
+<dependency>
+    <groupId>com.fasterxml.jackson.core</groupId>
+    <artifactId>jackson-databind</artifactId>
+    <version>2.15.2</version> <!-- or the latest version -->
+</dependency>
+```
 
-2. **Register HttpMessageConverters**:
-   - Ensure that the `RestTemplate` is configured with the appropriate `HttpMessageConverter`. If it's not automatically configured, you can manually add the `MappingJackson2HttpMessageConverter`:
+**Gradle:**
+```gradle
+implementation 'com.fasterxml.jackson.core:jackson-databind:2.15.2' // or the latest version
+```
 
-   ```java
-   RestTemplate restTemplate = new RestTemplate();
-   restTemplate.getMessageConverters().add(new MappingJackson2HttpMessageConverter());
-   ```
+### 2. Update the RestTemplate Configuration
+Ensure that the `RestTemplate` is configured to use the appropriate message converters.
 
-3. **Verify Response Type**:
-   - Ensure that the `LinkAggregationResponse` class is correctly annotated with Jackson annotations (if necessary) and that it matches the structure of the JSON response.
+```java
+@Configuration
+public class AppConfig {
 
-4. **Check Content-Type Header**:
-   - Make sure the server is correctly setting the `Content-Type` header to `application/json`. You can log or inspect the response headers to confirm this.
+    @Value("${com.tcoms.linkaggregation.service.name}")
+    String tcomsLinkAggregationServiceName;
 
-5. **Test with a Simple Object**:
-   - As a diagnostic step, try to receive the response as a `String` or a simple map (`Map<String, Object>`) to ensure you're getting the expected JSON. This can help isolate whether the issue is with the `RestTemplate` setup or the `LinkAggregationResponse` class.
+    @Value("${com.tcoms.linkaggregation.service.url}")
+    String tcomsLinkAggregationServiceNameUrl;
 
-6. **Debug Logging**:
-   - Enable debug logging for `org.springframework.web.client` to get more detailed information about what's happening when the request is made.
+    @Bean("configMap")
+    public Map<String, String> getConfigData() {
+        Map<String, String> configData = new HashMap<>();
+        configData.put("tcomsLinkAggregationServiceName", tcomsLinkAggregationServiceName);
+        configData.put("tcomsLinkAggregationServiceNameUrl", tcomsLinkAggregationServiceNameUrl);
+        return configData;
+    }
 
-By following these steps, you should be able to resolve the issue and correctly map the JSON response to your `LinkAggregationResponse` class.
+    @Bean
+    public RestTemplate restTemplate(RestTemplateBuilder builder) {
+        return builder
+            .setConnectTimeout(Duration.ofMillis(20000))
+            .setReadTimeout(Duration.ofMillis(100000))
+            .build();
+    }
+}
+```
+
+### 3. Correct the LinkAggregationUtil Class
+Ensure that your `addSecurityDtlsToMS` method is correctly named and used:
+
+```java
+@Component
+public class LinkAggregationUtil {
+
+    @Autowired
+    RestTemplate restTemplate;
+
+    private static final Logger logger = LoggerFactory.getLogger(LinkAggregationUtil.class);
+
+    public String findServiceForName(String name) {
+        return name.contains("http") ? name.toLowerCase() : "https://uts-ple.verizon.com/" + name.toLowerCase();
+    }
+
+    public boolean validate(LinkAggregationRequest request) throws InputInvalidException {
+        if (request.getSystem() == null || request.getSystem().isEmpty()) {
+            throw new InputInvalidException(LinkAggregationConstants.NO_SYS_PROVIDED);
+        }
+        if ((request.getId() == null || request.getId().isEmpty()) && (request.getName() == null || request.getName().isEmpty())) {
+            throw new InputInvalidException(LinkAggregationConstants.ID_OR_NAME_NULL);
+        }
+        return true;
+    }
+
+    public HttpHeaders addSecurityDtlsToMS() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String plainCreds = "MICROSERVICE:MICROSERVICE123";
+        byte[] plainCredsBytes = plainCreds.getBytes();
+        byte[] base64CredsBytes = Base64.encodeBase64(plainCredsBytes, false);
+        String base64Creds = new String(base64CredsBytes);
+        headers.add("Authorization", "Basic " + base64Creds);
+        return headers;
+    }
+
+    public LinkAggregationResponse getLinkAggregationResults(String url, Map<String, String> map) throws NoDataFoundException, LinkAggregationException {
+        try {
+            HttpEntity<Map<String, String>> httpEntity = new HttpEntity<>(map, addSecurityDtlsToMS());
+            ResponseEntity<LinkAggregationResponse> response = restTemplate.postForEntity(url, httpEntity, LinkAggregationResponse.class);
+            if (response != null && response.getBody() != null && !ObjectUtils.isEmpty(response.getBody())) {
+                return response.getBody();
+            }
+        } catch (RestClientException e) {
+            if (e.getMessage() != null && e.getMessage().contains("404")) {
+                throw new NoDataFoundException(LinkAggregationConstants.NO_DATA_FOUND);
+            }
+            throw new LinkAggregationException(LinkAggregationConstants.EXCEPTION_MSG_URL + url + LinkAggregationConstants.EXCEPTION_MSG + e.getMessage());
+        } catch (Exception e) {
+            throw new LinkAggregationException(LinkAggregationConstants.EXCEPTION_MSG_URL + url + LinkAggregationConstants.EXCEPTION_MSG + e.getMessage());
+        }
+        throw new NoDataFoundException(LinkAggregationConstants.NO_DATA_FOUND);
+    }
+}
+```
+
+### Conclusion
+Make sure the application context is fully aware of Jackson's `HttpMessageConverters`, either by including Jackson dependencies in your project or by ensuring Spring Boot's auto-configuration is active (which should automatically register these converters). Once these changes are made, your application should be able to handle JSON responses correctly.

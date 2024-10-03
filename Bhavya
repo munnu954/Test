@@ -1,13 +1,18 @@
-The `NullPointerException` you're encountering in the `testKafkaFalloutProcessorPositive` test case indicates that the `serviceMessage` object is not being properly initialized or converted from the payload string. This happens because the `utils.convert` method does not return a valid `ServiceMessage` object, leading to the error when trying to access `serviceMessage.getRequestJSONString()`.
+If you're still encountering the `NullPointerException` when accessing `serviceMessage.getRequestJSONString()`, it suggests that the `serviceMessage` is either not being created or is not being returned correctly by the `utils.convert` method. 
 
-To resolve this issue, we need to ensure that:
+Let's take a more detailed look at the complete setup and ensure everything is properly configured. Here’s a refined version of the test case along with a step-by-step explanation of what needs to be set up.
 
-1. The payload string being set in the `KafkaFailedMessagesEntity` is a well-formed JSON string.
-2. The `utils.convert` method is correctly set up to convert the JSON string into a `ServiceMessage` object.
+### Step-by-Step Approach
 
-Here’s how you can fix the test case:
+1. **Ensure Proper JSON Payload**: The payload must be a valid JSON string that can be successfully converted into a `ServiceMessage`. 
 
-### Updated Test Case for `testKafkaFalloutProcessorPositive`
+2. **Mock `BatchLoaderUtils` Properly**: We need to ensure that the `BatchLoaderUtils` is mocked correctly to return a valid `ServiceMessage` object when the conversion method is called.
+
+3. **Mock Other Dependencies**: Ensure that all other dependencies, such as `AccountEcpdService`, are mocked to return expected values.
+
+### Updated Test Case
+
+Here’s the complete test case, ensuring all mocks are set up correctly:
 
 ```java
 @Test
@@ -22,6 +27,20 @@ public void testKafkaFalloutProcessorPositive() throws Exception {
     entity.setPayload("{\"requestJSONString\": \"{\\\"Service\\\": {\\\"ServiceBody\\\": {\\\"CallRequest\\\": {\\\"Body\\\": {\\\"RelinquishingCustomerDetails\\\": {\\\"AccountNumber\\\": \\\"123-456\\\"}}}}}}}\"}");
     entity.setSensitivityChecked('N');
 
+    // Mock the utils.convert method to return a valid ServiceMessage
+    ServiceMessage mockServiceMessage = new ServiceMessage();
+    mockServiceMessage.setRequestJSONString("{\"Service\":{\"ServiceBody\":{\"CallRequest\":{\"Body\":{\"RelinquishingCustomerDetails\":{\"AccountNumber\":\"123-456\"}}}}}}}");
+    
+    when(utils.convert(anyString(), eq(ServiceMessage.class))).thenReturn(mockServiceMessage);
+    
+    // Mock the necessary behavior for the account service to return a valid ECPD ID
+    when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("EcpdId"));
+    
+    // Mock the behavior for converting ECPD ID to CustomerEcpdModel
+    CustomerEcpdModel mockCustomerEcpdModel = new CustomerEcpdModel();
+    mockCustomerEcpdModel.setSensitivity("N");
+    when(utils.convert("EcpdId", CustomerEcpdModel.class)).thenReturn(mockCustomerEcpdModel);
+
     // Process the entity
     KafkaFailedMessagesEntity result = processor.process(entity);
     
@@ -31,17 +50,20 @@ public void testKafkaFalloutProcessorPositive() throws Exception {
 }
 ```
 
-### Key Changes Made:
+### Key Points to Check
 
-1. **Corrected JSON Payload**: The JSON string in the payload is now corrected to properly escape double quotes (`\"`) within the string. The structure should match what the `ServiceMessage` expects.
+1. **Correct JSON Structure**: Make sure that the JSON structure in the payload is exactly what the `KafkaFalloutBatchConfig` expects. It should be correctly formatted and escaped.
 
-2. **Ensure Proper Initialization**: The test ensures that the `entity` object is properly initialized with relevant data so that the processor can execute successfully.
+2. **Mocking**: Ensure that the following mocks are correctly set up:
+   - `utils.convert(...)` to return a valid `ServiceMessage`.
+   - `accountService.getEcpdByAcctId(...)` to return a valid `Mono` containing an ECPD ID.
+   - `utils.convert(...)` for converting ECPD ID to `CustomerEcpdModel`.
 
-### Additional Notes:
+3. **Dependencies**: Check that the `KafkaFalloutBatchConfig` configuration is being properly initialized within your test context. If you're using Spring, ensure that the test is annotated with `@SpringBootTest` or similar annotations to load the application context.
 
-- **Ensure Mocking**: If your `utils.convert` method relies on any external state or configuration, make sure that those dependencies are mocked appropriately in your test setup. This includes any necessary mocks for `BatchLoaderUtils` so that the `convert` method works as expected.
-  
-- **Debugging**: If you continue to see issues, consider adding logging inside the `kafkaFalloutProcessor` to trace the values being processed and to see where the logic may not align with expectations.
+4. **Debugging**: If you continue to have issues:
+   - Add logging in the `kafkaFalloutProcessor` to print out the values being processed and when each method is called.
+   - Check if the `BatchLoaderUtils` is being properly injected and used within the processor.
 
 ### Conclusion
-This adjustment should help eliminate the `NullPointerException` and ensure that the processor correctly processes the input item, returning an appropriate result. If you encounter further issues, ensure that all dependencies and their behaviors are correctly mocked in the test environment.
+This update ensures that the test case is set up to handle the input correctly and that all necessary components are mocked to prevent the `NullPointerException`. If the problem persists, verify that the actual implementation of the processor aligns with the mock expectations and that the application context is correctly configured.

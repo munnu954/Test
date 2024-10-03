@@ -1,88 +1,34 @@
-Given that you're still encountering the issue where the `kafkaTemplate.send()` method is not being invoked, let's take a systematic approach to troubleshoot and resolve the problem.
-
-### Steps to Diagnose and Fix the Issue
-
-1. **Ensure Proper Payload Structure**: Verify that the `validPayload` you are passing to the `onMessage` method is indeed a valid JSON string that can be successfully parsed. The structure should match the expected format for a `ServiceMessage`.
-
-2. **Check Exception Handling**: Ensure that the `onMessage` method does not exit prematurely due to exceptions. If there is an exception thrown when processing the payload, it might prevent the `kafkaTemplate.send()` call from being reached.
-
-3. **Add Logging**: Insert logging statements in the `onMessage` method to track the flow of execution. This will help identify where the method might be failing.
-
-4. **Mock All Necessary Dependencies**: Make sure that all dependencies that influence the flow (like `accountService` and `utils.convert`) are mocked correctly to return expected values and not throw exceptions.
-
-5. **Review Mocking Logic**: Double-check the mocking of the `utils.convert` method, ensuring that it properly returns the expected objects without throwing exceptions.
-
-### Updated Test Method
-
-Here’s an updated version of the `testOnMessage_ValidPayload` method that includes additional logging and error handling confirmation:
-
-```java
 @Test
 public void testOnMessage_ValidPayload() throws JsonProcessingException {
-    // Create a valid payload for testing
-    String validPayload = "{\"RequestJSONString\":\"{...}\",\"pxObjClass\":\"SomeClass\",\"pxUpdateDateTime\":\"2023-10-10T10:10:10\"}";
+    // Set up mock returns
+    when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
+    when(utils.convert(anyString(), RequestJSONString.class)).thenReturn(new RequestJSONString());
+    when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
+    when(utils.convert(anyString(), CustomerEcpdModel.class)).thenReturn(new CustomerEcpdModel());
 
-    // Create a mock ServiceMessage and RequestJSONString
-    ServiceMessage serviceMessage = new ServiceMessage();
+    CustomerEcpdModel customerEcpdModel = new CustomerEcpdModel();
+    customerEcpdModel.setSensitivity("n");
+    when(utils.convert(anyString(), CustomerEcpdModel.class)).thenReturn(customerEcpdModel);
+
+    // Additional setup for valid cases
     RequestJSONString requestJSONString = new RequestJSONString();
     Service service = new Service();
     ServiceBody serviceBody = new ServiceBody();
     CallRequest callRequest = new CallRequest();
     Body body = new Body();
-    
-    // Set up the body to include valid relinquishing customer details
     CustomerDetails relinquishingCustomerDetails = new CustomerDetails();
-    relinquishingCustomerDetails.setAccountNumber("12345678"); // Ensure this is valid
+    relinquishingCustomerDetails.setAccountNumber("12345");
     body.setRelinquishingCustomerDetails(relinquishingCustomerDetails);
     callRequest.setBody(body);
     serviceBody.setCallRequest(callRequest);
     service.setServiceBody(serviceBody);
     requestJSONString.setService(service);
-    serviceMessage.setRequestJSONString(requestJSONString.toString());
+    when(utils.convert(anyString(), RequestJSONString.class)).thenReturn(requestJSONString);
 
-    // Mock the behavior of utils.convert to return the expected ServiceMessage
-    when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(serviceMessage);
-    when(utils.convert(requestJSONString.toString(), RequestJSONString.class)).thenReturn(requestJSONString);
-    
-    // Mock the accountService to return a valid ECPD ID
-    when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("someEcpdId"));
-    
-    // Call the method with the valid payload
+    // Call the method
     eventsMessageListener.onMessage(mockConsumerRecord(validPayload), validPayload);
 
-    // Verify that the KafkaTemplate's send method was called
+    // Verify interactions
     verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
-    // Verify that no failed records were saved
     verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
 }
-
-// Helper method to create a mock ConsumerRecord
-private ConsumerRecord<String, String> mockConsumerRecord(String payload) {
-    return new ConsumerRecord<>("topic", 0, 0L, "key", payload);
-}
-```
-
-### Additional Debugging Steps
-
-- **Add Logging in the onMessage Method**:
-   - Insert logging statements before and after key operations in the `onMessage` method to see if the flow is reaching those points.
-   - For example:
-     ```java
-     LOGGER.info("Starting to process payload: {}", payload);
-     ```
-
-- **Check for Exceptions**: If any exceptions are thrown within the `try-catch` blocks, log them to see if they are causing the method to exit early.
-
-### Example of Enhanced Logging
-
-```java
-try {
-    LOGGER.info("Processing payload: {}", payload);
-    serviceMessage = utils.convert(payload, ServiceMessage.class);
-    LOGGER.info("Successfully converted payload to ServiceMessage: {}", serviceMessage);
-    
-    // Continue processing...
-    
-} catch (Exception e) {
-    LOGGER.error("Error processing payload: {}", e.getMessage());
-    failedMessageService.saveFailedRecords(producerTopic, transactionId, payload, TYSConstants.TYS_AUDIT

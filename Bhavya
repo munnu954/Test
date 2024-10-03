@@ -1,24 +1,20 @@
-The error message you're encountering indicates that the `kafkaTemplate.send()` method is not being invoked during the execution of your test case `testOnMessage_ValidPayload`. This suggests that the flow in the `onMessage` method might not be reaching the point where the message is sent to Kafka. 
+Given that you're still encountering the issue where the `kafkaTemplate.send()` method is not being invoked, let's take a systematic approach to troubleshoot and resolve the problem.
 
-### Analyzing the onMessage Method
+### Steps to Diagnose and Fix the Issue
 
-Here are some common issues that could prevent `kafkaTemplate.send()` from being called:
+1. **Ensure Proper Payload Structure**: Verify that the `validPayload` you are passing to the `onMessage` method is indeed a valid JSON string that can be successfully parsed. The structure should match the expected format for a `ServiceMessage`.
 
-1. **Payload Processing**: If the payload is invalid or if exceptions are thrown while processing the payload, the code may skip the sending logic.
-2. **Conditional Logic**: If any conditions in the `onMessage` method cause early returns, the sending logic will not be executed.
-3. **Mocking Behavior**: Ensure that all necessary mock setups are in place, particularly for methods that might throw exceptions or alter the flow.
+2. **Check Exception Handling**: Ensure that the `onMessage` method does not exit prematurely due to exceptions. If there is an exception thrown when processing the payload, it might prevent the `kafkaTemplate.send()` call from being reached.
 
-### Steps to Resolve the Issue
+3. **Add Logging**: Insert logging statements in the `onMessage` method to track the flow of execution. This will help identify where the method might be failing.
 
-1. **Review the `onMessage` Method**: Make sure that the flow of execution in the `onMessage` method reaches the point where `kafkaTemplate.send()` is called. Add logging statements to help trace the execution flow.
+4. **Mock All Necessary Dependencies**: Make sure that all dependencies that influence the flow (like `accountService` and `utils.convert`) are mocked correctly to return expected values and not throw exceptions.
 
-2. **Ensure Valid Payload**: Make sure that `validPayload` is a properly formatted JSON string that can be successfully converted to a `ServiceMessage`.
-
-3. **Mock the Right Calls**: Ensure all necessary methods that are called before `kafkaTemplate.send()` are mocked correctly so that they do not throw exceptions.
+5. **Review Mocking Logic**: Double-check the mocking of the `utils.convert` method, ensuring that it properly returns the expected objects without throwing exceptions.
 
 ### Updated Test Method
 
-Here's how you can structure your `testOnMessage_ValidPayload` method, ensuring that all necessary elements are in place:
+Here’s an updated version of the `testOnMessage_ValidPayload` method that includes additional logging and error handling confirmation:
 
 ```java
 @Test
@@ -26,7 +22,7 @@ public void testOnMessage_ValidPayload() throws JsonProcessingException {
     // Create a valid payload for testing
     String validPayload = "{\"RequestJSONString\":\"{...}\",\"pxObjClass\":\"SomeClass\",\"pxUpdateDateTime\":\"2023-10-10T10:10:10\"}";
 
-    // Set up a mock ServiceMessage and RequestJSONString
+    // Create a mock ServiceMessage and RequestJSONString
     ServiceMessage serviceMessage = new ServiceMessage();
     RequestJSONString requestJSONString = new RequestJSONString();
     Service service = new Service();
@@ -36,7 +32,7 @@ public void testOnMessage_ValidPayload() throws JsonProcessingException {
     
     // Set up the body to include valid relinquishing customer details
     CustomerDetails relinquishingCustomerDetails = new CustomerDetails();
-    relinquishingCustomerDetails.setAccountNumber("12345678");
+    relinquishingCustomerDetails.setAccountNumber("12345678"); // Ensure this is valid
     body.setRelinquishingCustomerDetails(relinquishingCustomerDetails);
     callRequest.setBody(body);
     serviceBody.setCallRequest(callRequest);
@@ -66,16 +62,27 @@ private ConsumerRecord<String, String> mockConsumerRecord(String payload) {
 }
 ```
 
-### Key Changes and Explanations
+### Additional Debugging Steps
 
-1. **Valid Payload Structure**: The `validPayload` string is structured as a valid JSON that matches the expected format of `ServiceMessage`.
+- **Add Logging in the onMessage Method**:
+   - Insert logging statements before and after key operations in the `onMessage` method to see if the flow is reaching those points.
+   - For example:
+     ```java
+     LOGGER.info("Starting to process payload: {}", payload);
+     ```
 
-2. **Mocking Method Calls**: The `utils.convert` method is mocked to return the appropriate `ServiceMessage` and `RequestJSONString`. Ensure that the `getEcpdByAcctId` method on the `accountService` is also mocked to return a valid Mono.
+- **Check for Exceptions**: If any exceptions are thrown within the `try-catch` blocks, log them to see if they are causing the method to exit early.
 
-3. **Logging**: Add logging statements in the `onMessage` method to trace execution flow, helping you determine where it might be failing.
+### Example of Enhanced Logging
 
-4. **Properly Mock ConsumerRecord**: The `mockConsumerRecord` method creates a mock `ConsumerRecord` that simulates incoming Kafka messages.
-
-### Conclusion
-
-With these adjustments, your test case should successfully invoke `kafkaTemplate.send()` when the `onMessage` method processes a valid payload. If the issue persists, consider stepping through the `onMessage` method with a debugger to see where the flow might be interrupted.
+```java
+try {
+    LOGGER.info("Processing payload: {}", payload);
+    serviceMessage = utils.convert(payload, ServiceMessage.class);
+    LOGGER.info("Successfully converted payload to ServiceMessage: {}", serviceMessage);
+    
+    // Continue processing...
+    
+} catch (Exception e) {
+    LOGGER.error("Error processing payload: {}", e.getMessage());
+    failedMessageService.saveFailedRecords(producerTopic, transactionId, payload, TYSConstants.TYS_AUDIT

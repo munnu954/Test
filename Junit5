@@ -1,9 +1,18 @@
-To resolve this issue, let's try another approach.
+The error you're encountering typically suggests that Spring's `RestTemplate` is unable to find a suitable `HttpMessageConverter` to convert the HTTP response into the `LinkAggregationResponse` object. This often happens when the response content type is `application/json`, and Spring cannot find a converter for it.
 
-*AppConfig.java*
-```
+To resolve this issue, you need to ensure that Jackson (or another JSON library) is included in your dependencies, and the `RestTemplate` is configured to use the appropriate message converters. Additionally, ensure that the `LinkAggregationResponse` class is correctly annotated for JSON serialization/deserialization, typically with Jackson annotations.
+
+Here's how you can update the classes:
+
+### 1. AppConfig Class
+
+Ensure that the `RestTemplate` is configured with the necessary message converters.
+
+```java
 @Configuration
 public class AppConfig {
+
+    Map<String, String> configData = new HashMap<>();
 
     @Value("${com.tcoms.linkaggregation.service.name}")
     String tcomsLinkAggregationServiceName;
@@ -13,7 +22,6 @@ public class AppConfig {
 
     @Bean("configMap")
     public Map<String, String> getConfigData() {
-        Map<String, String> configData = new HashMap<>();
         configData.put("tcomsLinkAggregationServiceName", tcomsLinkAggregationServiceName);
         configData.put("tcomsLinkAggregationServiceNameUrl", tcomsLinkAggregationServiceNameUrl);
         return configData;
@@ -21,96 +29,156 @@ public class AppConfig {
 
     @Bean
     public RestTemplate restTemplate(RestTemplateBuilder builder) {
-        RestTemplate restTemplate = builder
+        return builder
                 .setConnectTimeout(Duration.ofMillis(20000))
                 .setReadTimeout(Duration.ofMillis(100000))
                 .build();
-        
-        restTemplate.getMessageConverters().clear();
-        restTemplate.getMessageConverters().add(new MappingJackson2HttpMessageConverter());
-        restTemplate.getMessageConverters().add(new StringHttpMessageConverter());
-        
-        return restTemplate;
     }
 }
 ```
 
-*LinkAggregationUtil.java*
-```
-@Component
-public class LinkAggregationUtil {
+Make sure you have a dependency for Jackson in your `pom.xml` or `build.gradle`:
 
-    @Autowired
-    private RestTemplate restTemplate;
-
-    // ...
-
-    public LinkAggregationResponse getLinkAggregationResults(String url, Map<String, String> map) 
-            throws NoDataFoundException, LinkAggregationException {
-        try {
-            HttpEntity<Map<String, String>> httpEntity = new HttpEntity<>(map, addSecurityDtlsToMS());
-            
-            // Use ResponseEntity<String> instead of ResponseEntity<LinkAggregationResponse>
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, httpEntity, String.class);
-            
-            // Manually convert JSON response to LinkAggregationResponse
-            ObjectMapper mapper = new ObjectMapper();
-            mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-            mapper.registerModule(new JavaTimeModule());
-            
-            return mapper.readValue(response.getBody(), LinkAggregationResponse.class);
-        } catch (RestClientException | JsonProcessingException e) {
-            // ...
-        }
-        throw new NoDataFoundException(LinkAggregationConstants.NO_DATA_FOUND);
-    }
-}
-```
-
-*LinkAggregationController.java*, *LinkAggregationService.java*, and *LinkAggConfigService.java* remain unchanged.
-
-*Add @JsonInclude annotation to LinkAggregationResponse.java*
-```
-@JsonInclude(JsonInclude.Include.NON_NULL)
-public class LinkAggregationResponse {
-    // ...
-}
-```
-
-*Ensure dependencies*
-
-Maven:
-```
+```xml
 <dependency>
     <groupId>com.fasterxml.jackson.core</groupId>
     <artifactId>jackson-databind</artifactId>
 </dependency>
-<dependency>
-    <groupId>com.fasterxml.jackson.datatype</groupId>
-    <artifactId>jackson-datatype-jsr310</artifactId>
-</dependency>
 ```
 
-Gradle:
-```
-dependencies {
-    implementation 'com.fasterxml.jackson.core:jackson-databind'
-    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+### 2. LinkAggregationUtil Class
+
+No changes are needed if the `RestTemplate` is correctly configured.
+
+### 3. LinkAggregationController Class
+
+Ensure that your request and response objects are correctly set up for JSON serialization/deserialization. This usually requires that they are standard Java beans with getters and setters, and optionally annotated with Jackson annotations if custom serialization is needed.
+
+```java
+@RestController
+public class LinkAggregationController {
+
+    @Autowired
+    LinkAggregationService linkAggregationService;
+
+    @Autowired
+    LinkAggregationUtil linkAggregationUtil;
+
+    private static final Logger logger = LoggerFactory.getLogger(LinkAggregationController.class);
+
+    @Operation(summary = "returns ipnmp Circuit clrDetails", responses = {
+        @ApiResponse(responseCode = "200", description = "returns query details", content = {
+            @Content(mediaType = "application/json", schema = @Schema(implementation = String.class))
+        }),
+        @ApiResponse(responseCode = "400", description = "Invalid input provided", content = @Content),
+        @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content),
+        @ApiResponse(responseCode = "404", description = "Data Not found", content = @Content)
+    })
+    @PostMapping(value = "/api/v1/linkaggregation", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<LinkAggrResponse> getLinkAggregation(@RequestBody LinkAggregationRequest request)
+            throws InputInvalidException, NoDataFoundException, LinkAggregationException {
+        String requestTimeStamp = LocalDateTime.now()
+                .format(DateTimeFormatter.ofPattern(LinkAggregationConstants.DATE_FORMAT_V1));
+        logger.info("Input Request Query Parameters: " + request);
+
+        LinkAggrResponse linkAggrResponse = new LinkAggrResponse();
+
+        if (linkAggregationUtil.validate(request)) {
+            LinkAggregationResponse linkAggregationResponse = linkAggregationService.getResponse(request);
+            if (linkAggregationResponse.getLinkAggregationData() == null) {
+                throw new NoDataFoundException(LinkAggregationConstants.NO_DATA_FOUND);
+            } else {
+                String responseTimeStamp = LocalDateTime.now()
+                        .format(DateTimeFormatter.ofPattern(LinkAggregationConstants.DATE_FORMAT_V1));
+                LinkAggregationData linkAggregationData = linkAggregationResponse.getLinkAggregationData();
+                linkAggregationData.setRequestTimeStamp(requestTimeStamp);
+                linkAggrResponse.setDescription(LinkAggregationConstants.DESCRIPTION);
+                linkAggregationData.setResponseTimeStamp(responseTimeStamp);
+                linkAggrResponse.setLinkAggregationData(linkAggregationData);
+                linkAggrResponse.setMessage(LinkAggregationConstants.SUCCESS);
+                linkAggrResponse.setStatus(linkAggregationResponse.getStatus());
+            }
+        }
+
+        return new ResponseEntity<>(linkAggrResponse, HttpStatus.OK);
+    }
 }
 ```
 
-*Verify*
+### 4. LinkAggregationService Class
 
-- Your `LinkAggregationResponse` class has proper getters and setters.
-- Annotations (if necessary) for JSON serialization/deserialization.
-- Response JSON structure matches the `LinkAggregationResponse` class structure.
+Ensure that the logic for constructing the `LinkAggregationResponse` is correctly implemented, as shown:
 
-If issues persist, provide detailed error logs and JSON response structure for further assistance.
+```java
+@Service
+public class LinkAggregationService {
 
-You can try using `ByteArrayInputStream` and `ObjectMapper` to read JSON response:
+    @Autowired
+    LinkAggConfigService linkAggConfigService;
 
+    @Autowired
+    LinkAggregationUtil linkAggregationUtil;
+
+    public LinkAggregationResponse getResponse(LinkAggregationRequest linkAggregationRequest)
+            throws NoDataFoundException, LinkAggregationException {
+        Map<String, String> criteria = new HashMap<>();
+        if (linkAggregationRequest.getLocationClli() != null && !linkAggregationRequest.getLocationClli().isEmpty()) {
+            criteria.put(LinkAggregationConstants.LOCATION_CLLI, linkAggregationRequest.getLocationClli());
+        }
+        if (linkAggregationRequest.getSourceSys() != null && !linkAggregationRequest.getSourceSys().isEmpty()) {
+            criteria.put(LinkAggregationConstants.SOURCE_SYS, linkAggregationRequest.getSourceSys());
+        }
+        if (linkAggregationRequest.getSystem() != null && !linkAggregationRequest.getSystem().isEmpty()) {
+            criteria.put(LinkAggregationConstants.SYSTEM, linkAggregationRequest.getSystem());
+        }
+        if (linkAggregationRequest.getId() != null && !linkAggregationRequest.getId().isEmpty()) {
+            criteria.put(LinkAggregationConstants.ID, linkAggregationRequest.getId());
+        }
+        if (linkAggregationRequest.getName() != null && !linkAggregationRequest.getName().isEmpty()) {
+            criteria.put(LinkAggregationConstants.NAME, linkAggregationRequest.getName());
+        }
+
+        List<Map<String, String>> configPropsList = linkAggConfigService.getConfigData(LinkAggregationConstants.TCOMS_SRC_SYS_NAME);
+        Map<String, String> configProps = configPropsList.get(0);
+        String url = linkAggregationUtil.findServiceForName(configProps.get(LinkAggregationConstants.LINKAGGREGATION_SERVICE_NAME))
+                + configProps.get(LinkAggregationConstants.LINKAGGREGATION_SERVICE_URL);
+        return linkAggregationUtil.getLinkAggregationResults(url, criteria);
+    }
+}
 ```
-ResponseEntity<byte[]> response = restTemplate.exchange(url, HttpMethod.POST, httpEntity, byte[].class);
-ObjectMapper mapper = new ObjectMapper();
-LinkAggregationResponse linkAggregationResponse = mapper.readValue(new ByteArrayInputStream(response.getBody()), LinkAggregationResponse.class);
+
+### 5. LinkAggConfigService Class
+
+Ensure that this service provides the correct configuration data:
+
+```java
+@Component
+public class LinkAggConfigService {
+
+    @Autowired
+    @Qualifier("configMap")
+    private Map<String, String> configData;
+
+    public List<Map<String, String>> getConfigData(String srcSystem) {
+        List<Map<String, String>> configPropsList = new ArrayList<>();
+        Map<String, String> configProps = new HashMap<>();
+        switch (srcSystem) {
+            case LinkAggregationConstants.TCOMS_SRC_SYS_NAME:
+                configProps.put(LinkAggregationConstants.SOURCE_SYS, LinkAggregationConstants.TCOMS_SRC_SYS_NAME);
+                configProps.put(LinkAggregationConstants.LINKAGGREGATION_SERVICE_NAME, configData.get("tcomsLinkAggregationServiceName"));
+                configProps.put(LinkAggregationConstants.LINKAGGREGATION_SERVICE_URL, configData.get("tcomsLinkAggregationServiceNameUrl"));
+                configPropsList.add(configProps);
+                break;
+        }
+        return configPropsList;
+    }
+}
 ```
+
+### Additional Considerations
+
+- **Ensure `LinkAggregationResponse` is Serializable**: Make sure that the `LinkAggregationResponse` class is correctly annotated with Jackson annotations if needed. It should have proper getters and setters for all fields you expect to serialize/deserialize.
+
+- **Logging and Exception Handling**: Ensure that logging is well-placed to diagnose any additional issues, and consider more granular exception handling if needed.
+
+By ensuring that these configurations and setups are in place, you should be able to resolve the `UnknownContentTypeException` and have your service operate as expected.

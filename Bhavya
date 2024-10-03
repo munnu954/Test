@@ -1,72 +1,114 @@
-The `NullPointerException` you are experiencing indicates that there is an attempt to invoke a method on a `null` object, specifically `serviceMessage` in your `KafkaFalloutBatchConfig` class. This suggests that the processing logic is expecting a valid `ServiceMessage` object, but the payload being passed in the test does not properly parse into a valid `ServiceMessage`.
+To write positive and negative test cases for the `EventsMessageListener` class, we need to consider the various branches and scenarios that the code can encounter. Below is an example of how you might structure these tests using JUnit and Mockito. This is a simplified version and assumes you have the necessary dependencies and configurations set up for your project.
 
-### Steps to Resolve the Issue
-
-1. **Check the Payload Structure**: Ensure that the payload you are passing in your test is correctly formatted so that it can be deserialized into a `ServiceMessage` object. If the payload is invalid, it may lead to a `null` value for `serviceMessage`.
-
-2. **Update the Test Case**: Modify the test case to use a payload that correctly maps to a `ServiceMessage`, or handle the case where the payload is invalid more gracefully in your processor logic.
-
-3. **Add Null Checks**: In your processing logic, consider adding null checks or error handling to gracefully handle cases where the input data is invalid.
-
-### Example of Adjusted Test Case
-
-Assuming you want to keep the test focusing on invalid data but need to ensure that your processing logic handles this case properly, here’s how you could write the test:
+### Positive Test Cases
 
 ```java
 import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.kafka.support.KafkaHeaders;
+import org.springframework.messaging.support.MessageHeaderAccessor;
+import org.springframework.kafka.listener.MessageListenerContainer;
 
-public class KafkaFalloutBatchConfigTest {
+public class EventsMessageListenerTest {
 
     @InjectMocks
-    private KafkaFalloutBatchConfig kafkaFalloutBatchConfig;
+    private EventsMessageListener eventsMessageListener;
+
+    @Mock
+    private AccountEcpdService accountService;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Mock
+    private KafkaFalloutService failedMessageService;
+
+    @Mock
+    private BatchLoaderUtils utils;
+
+    private String validPayload;
+    private String invalidPayload;
 
     @BeforeEach
     public void setUp() {
-        MockitoAnnotations.openMocks(this); // Initialize mocks
+        MockitoAnnotations.openMocks(this);
+        validPayload = "{\"RequestJSONString\":\"{...}\",\"pxObjClass\":\"...\",\"pxUpdateDateTime\":\"...\"}";
+        invalidPayload = null; // or some invalid JSON
     }
 
     @Test
-    public void testKafkaFalloutProcessorNegative() throws Exception {
-        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
-        KafkaFailedMessagesEntity entity = new KafkaFailedMessagesEntity();
+    public void testOnMessage_ValidPayload() {
+        // Set up mock returns
+        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
+        // Additional setup for valid cases
 
-        // Set invalid test data
-        entity.setPayload("{\"invalidPayload\": \"no service details\"}");
-        entity.setSensitivityChecked('N');
+        // Call the method
+        eventsMessageListener.onMessage(mockConsumerRecord(validPayload), validPayload);
 
-        // Process the entity
-        KafkaFailedMessagesEntity result = processor.process(entity);
-
-        // Assert that the result is null for invalid data
-        assertNull(result, "Processor should return null for invalid data");
+        // Verify interactions
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
     }
+
+    // Additional positive test cases can be created for other branches
 }
 ```
 
-### Key Adjustments:
-
-1. **Structuring the Payload**: Ensure that the payload you provide can be parsed correctly. If your processor expects a `ServiceMessage` object to be constructed from the payload, provide a valid JSON structure that matches the expected fields of the `ServiceMessage`.
-
-2. **Processor Logic**: Inside your processor, verify that you are handling the scenario where the `serviceMessage` could be null due to invalid input. For example:
+### Negative Test Cases
 
 ```java
-public KafkaFailedMessagesEntity process(KafkaFailedMessagesEntity entity) {
-    ServiceMessage serviceMessage = parseServiceMessage(entity.getPayload());
-    if (serviceMessage == null) {
-        return null; // or handle invalid case
-    }
+@Test
+public void testOnMessage_EmptyPayload() {
+    // Call the method with an empty payload
+    eventsMessageListener.onMessage(mockConsumerRecord(""), "");
 
-    // Proceed with valid serviceMessage
-    // ...
+    // Verify that the message was dropped (failed message service is not invoked)
+    verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+}
+
+@Test
+public void testOnMessage_InvalidPayload() {
+    // Call the method with an invalid payload
+    eventsMessageListener.onMessage(mockConsumerRecord(invalidPayload), invalidPayload);
+
+    // Verify that failed message service is invoked
+    verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), eq(invalidPayload), anyString(), anyChar());
+}
+
+@Test
+public void testOnMessage_NullRequestJSONString() {
+    // Set up mock returns
+    when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
+    // Set up to return null for requestJSONString
+    when(requestJSONString.getService()).thenReturn(null);
+
+    // Call the method
+    eventsMessageListener.onMessage(mockConsumerRecord(validPayload), validPayload);
+
+    // Verify that the payload was dropped
+    verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), eq(validPayload), anyString(), anyChar());
+}
+
+// Helper method to create a mock ConsumerRecord
+private ConsumerRecord<String, String> mockConsumerRecord(String payload) {
+    return new ConsumerRecord<>("topic", 0, 0L, "key", payload);
 }
 ```
 
-### Conclusion
+### Explanation
 
-The goal is to ensure that the processing logic can handle invalid data gracefully and that the test case reflects the expected behavior. By ensuring that the payload is valid or that your processing logic accounts for potential null values, you can avoid the `NullPointerException`. If the processor expects a specific structure in the input data, always ensure your test cases align with that expected structure.
+1. **Positive Test Cases**: These cases verify that the `onMessage` method behaves as expected when provided with valid inputs. This includes checking that messages are sent successfully to Kafka and that no records are saved to the failed message service.
+
+2. **Negative Test Cases**: These cases check the behavior of the `onMessage` method when encountering various invalid inputs or conditions, such as empty or invalid payloads. They ensure that the correct error handling is performed, and that the appropriate records are saved to the failed message service.
+
+3. **Mocking Dependencies**: The tests use Mockito to mock dependencies like `AccountEcpdService`, `KafkaTemplate`, `KafkaFalloutService`, and `BatchLoaderUtils`. This allows for isolated testing of the `EventsMessageListener` class without relying on the actual implementations of these dependencies.
+
+4. **Branch Coverage**: The tests are designed to cover different branches of the `onMessage` method logic, ensuring that various paths through the code are exercised.
+
+Make sure to adapt the test cases according to the actual implementation details and dependencies in your project.

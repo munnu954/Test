@@ -1,18 +1,16 @@
-The error message you are seeing indicates that the `purgeRepublishedRecord` method on the `failedMessageService` mock was expected to be called during the execution of your test, but it was never invoked. This suggests that the code path leading to this method being called was not executed.
+The `NullPointerException` you are experiencing indicates that there is an attempt to invoke a method on a `null` object, specifically `serviceMessage` in your `KafkaFalloutBatchConfig` class. This suggests that the processing logic is expecting a valid `ServiceMessage` object, but the payload being passed in the test does not properly parse into a valid `ServiceMessage`.
 
-### Possible Reasons and Solutions
+### Steps to Resolve the Issue
 
-1. **Check Sensitivity Logic**: Ensure that the logic in the `kafkaFalloutProcessor` (where the `purgeRepublishedRecord` is invoked) is executed. If the entity's sensitivity check or other conditions prevent this logic from running, the method won't be called.
+1. **Check the Payload Structure**: Ensure that the payload you are passing in your test is correctly formatted so that it can be deserialized into a `ServiceMessage` object. If the payload is invalid, it may lead to a `null` value for `serviceMessage`.
 
-2. **Verify Payload**: Make sure the payload and other properties of the `KafkaFailedMessagesEntity` you are using in your test are set up correctly to meet the conditions required for `purgeRepublishedRecord` to be called.
+2. **Update the Test Case**: Modify the test case to use a payload that correctly maps to a `ServiceMessage`, or handle the case where the payload is invalid more gracefully in your processor logic.
 
-3. **Debug the Processor Logic**: Add logging or print statements in the `kafkaFalloutProcessor` to verify that it is being executed as expected and to check the values being processed.
+3. **Add Null Checks**: In your processing logic, consider adding null checks or error handling to gracefully handle cases where the input data is invalid.
 
-4. **Use ArgumentCaptor**: Use Mockito's `ArgumentCaptor` to capture the arguments passed to `purgeRepublishedRecord` if you want to inspect what is being passed in the method call.
+### Example of Adjusted Test Case
 
-### Updated Example
-
-Here's an updated version of your test case that includes checks for the conditions that would lead to `purgeRepublishedRecord` being called:
+Assuming you want to keep the test focusing on invalid data but need to ensure that your processing logic handles this case properly, here’s how you could write the test:
 
 ```java
 import static org.mockito.Mockito.*;
@@ -22,21 +20,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.item.Chunk;
-import org.springframework.kafka.support.SendResult;
-
-import java.util.Date;
-import java.util.concurrent.CompletableFuture;
 
 public class KafkaFalloutBatchConfigTest {
-
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Mock
-    private KafkaFalloutService failedMessageService;
 
     @InjectMocks
     private KafkaFalloutBatchConfig kafkaFalloutBatchConfig;
@@ -47,52 +32,41 @@ public class KafkaFalloutBatchConfigTest {
     }
 
     @Test
-    public void testKafkaFalloutWriterPositive() throws Exception {
-        // Prepare the writer
-        ItemWriter<KafkaFailedMessagesEntity> writer = kafkaFalloutBatchConfig.kafkaFalloutWriter();
-        
-        // Create a new KafkaFailedMessagesEntity instance
+    public void testKafkaFalloutProcessorNegative() throws Exception {
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
         KafkaFailedMessagesEntity entity = new KafkaFailedMessagesEntity();
 
-        // Create and set the ID for the entity
-        KafkaFailedMessagesPK id = new KafkaFailedMessagesPK();
-        id.setTransactionId("trans123"); // Set a valid transaction ID
-        id.setTopicName("testTopic"); // Set a valid topic name
-        id.setCreatedDate(new Date()); // Set the current date as created date
-        entity.setId(id); // Set the ID in the entity
+        // Set invalid test data
+        entity.setPayload("{\"invalidPayload\": \"no service details\"}");
+        entity.setSensitivityChecked('N');
 
-        // Set the payload and sensitivity to trigger the purge
-        entity.setPayload("Sample Payload");
-        entity.setSensitivityChecked('Y'); // Set this to 'Y' to trigger purge logic
+        // Process the entity
+        KafkaFailedMessagesEntity result = processor.process(entity);
 
-        // Create a Chunk directly
-        Chunk<KafkaFailedMessagesEntity> chunk = new Chunk<>();
-        chunk.add(entity); // Add the entity to the chunk
-
-        // Create a mock SendResult
-        SendResult<String, String> sendResultMock = mock(SendResult.class);
-        
-        // Create a CompletableFuture that returns the mocked SendResult
-        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(sendResultMock);
-
-        // Mock the kafkaTemplate.send() method to return the CompletableFuture
-        when(kafkaTemplate.send(eq("testTopic"), anyString())).thenReturn(future);
-
-        // Write the chunk
-        writer.write(chunk);
-
-        // Validate interactions (e.g. purgeRepublishedRecord called)
-        verify(failedMessageService, times(1)).purgeRepublishedRecord(any());
+        // Assert that the result is null for invalid data
+        assertNull(result, "Processor should return null for invalid data");
     }
 }
 ```
 
 ### Key Adjustments:
 
-1. **Set Sensitivity**: In this example, the `sensitivityChecked` property is set to `'Y'` to ensure that the logic in the processor that calls `purgeRepublishedRecord` is executed. Adjust this according to the actual logic in your processor.
+1. **Structuring the Payload**: Ensure that the payload you provide can be parsed correctly. If your processor expects a `ServiceMessage` object to be constructed from the payload, provide a valid JSON structure that matches the expected fields of the `ServiceMessage`.
 
-2. **Debugging**: If the method is still not being called, consider adding logging in your processor to see if the conditions that lead to the call are being met.
+2. **Processor Logic**: Inside your processor, verify that you are handling the scenario where the `serviceMessage` could be null due to invalid input. For example:
+
+```java
+public KafkaFailedMessagesEntity process(KafkaFailedMessagesEntity entity) {
+    ServiceMessage serviceMessage = parseServiceMessage(entity.getPayload());
+    if (serviceMessage == null) {
+        return null; // or handle invalid case
+    }
+
+    // Proceed with valid serviceMessage
+    // ...
+}
+```
 
 ### Conclusion
 
-By ensuring that the conditions under which `purgeRepublishedRecord` is called are met, you should be able to resolve the issue where the method is not being invoked. If further issues persist, consider debugging the logic in the `kafkaFalloutProcessor` to see exactly what is happening during the test execution.
+The goal is to ensure that the processing logic can handle invalid data gracefully and that the test case reflects the expected behavior. By ensuring that the payload is valid or that your processing logic accounts for potential null values, you can avoid the `NullPointerException`. If the processor expects a specific structure in the input data, always ensure your test cases align with that expected structure.

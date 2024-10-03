@@ -1,9 +1,99 @@
+To fix this issue, you need to ensure that the `MappingJackson2HttpMessageConverter` is properly registered and configured.
+
+Here's the updated code:
+
+*AppConfig.java*
+```
 @Configuration
-public class AppConfig extends WebMvcConfigurerAdapter {
-    
-    @Override
-    public void configureMessageConverters(List<HttpMessageConverter<?>> converters) {
-        converters.add(new MappingJackson2HttpMessageConverter());
-        super.configureMessageConverters(converters);
+public class AppConfig {
+
+    @Value("${com.tcoms.linkaggregation.service.name}")
+    String tcomsLinkAggregationServiceName;
+
+    @Value("${com.tcoms.linkaggregation.service.url}")
+    String tcomsLinkAggregationServiceNameUrl;
+
+    @Bean("configMap")
+    public Map<String, String> getConfigData() {
+        Map<String, String> configData = new HashMap<>();
+        configData.put("tcomsLinkAggregationServiceName", tcomsLinkAggregationServiceName);
+        configData.put("tcomsLinkAggregationServiceNameUrl", tcomsLinkAggregationServiceNameUrl);
+        return configData;
+    }
+
+    @Bean
+    public RestTemplate restTemplate(RestTemplateBuilder builder) {
+        RestTemplate restTemplate = builder
+                .setConnectTimeout(Duration.ofMillis(20000))
+                .setReadTimeout(Duration.ofMillis(100000))
+                .build();
+        restTemplate.getMessageConverters().clear(); // Clear existing converters
+        restTemplate.getMessageConverters().add(new MappingJackson2HttpMessageConverter());
+        return restTemplate;
     }
 }
+```
+
+*LinkAggregationUtil.java*
+```
+@Component
+public class LinkAggregationUtil {
+
+    @Autowired
+    private RestTemplate restTemplate;
+
+    // ...
+
+    public LinkAggregationResponse getLinkAggregationResults(String url, Map<String, String> map) 
+            throws NoDataFoundException, LinkAggregationException {
+        try {
+            HttpEntity<Map<String, String>> httpEntity = new HttpEntity<>(map, addSecurityDtlsToMS());
+            ResponseEntity<LinkAggregationResponse> response = restTemplate.exchange(url, HttpMethod.POST, httpEntity, 
+                    LinkAggregationResponse.class);
+            if (response.getBody() != null && !ObjectUtils.isEmpty(response.getBody())) {
+                return response.getBody();
+            }
+        } catch (RestClientException e) {
+            // ...
+        }
+        throw new NoDataFoundException(LinkAggregationConstants.NO_DATA_FOUND);
+    }
+
+    // Add this method to configure ObjectMapper
+    @Bean
+    public ObjectMapper objectMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        mapper.registerModule(new JavaTimeModule()); // For Java 8 date/time support
+        return mapper;
+    }
+}
+```
+
+*LinkAggregationController.java*, *LinkAggregationService.java*, and *LinkAggConfigService.java* remain unchanged.
+
+*pom.xml* (if using Maven) or *build.gradle* (if using Gradle) should include:
+
+Maven:
+```
+<dependency>
+    <groupId>com.fasterxml.jackson.core</groupId>
+    <artifactId>jackson-databind</artifactId>
+</dependency>
+<dependency>
+    <groupId>com.fasterxml.jackson.datatype</groupId>
+    <artifactId>jackson-datatype-jsr310</artifactId>
+</dependency>
+```
+
+Gradle:
+```
+dependencies {
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+}
+```
+
+Ensure that your `LinkAggregationResponse` class has proper getters and setters, and annotations (if necessary) for JSON serialization/deserialization.
+
+If the issue persists, verify the response JSON structure matches the `LinkAggregationResponse` class structure.

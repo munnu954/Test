@@ -1,53 +1,92 @@
-The `NullPointerException` you're encountering indicates that the `KafkaFailedMessagesEntity` object's ID (`KafkaFailedMessagesPK`) is null when you're trying to access `getTopicName()`. This means that the `id` field of your `KafkaFailedMessagesEntity` has not been initialized before the `write` method is called.
+The `NullPointerException` you're encountering indicates that the `future` variable is null when you are trying to call `whenCompleteAsync` on it. This suggests that the mock for `kafkaTemplate.send(...)` is not set up correctly, and therefore the `future` object is not being returned as expected.
 
 ### Steps to Resolve
 
-1. **Initialize the ID in the Test**: Ensure that when you create the `KafkaFailedMessagesEntity`, you also create and set its ID (`KafkaFailedMessagesPK`) with the necessary values.
+1. **Ensure Proper Mocking of `kafkaTemplate.send(...)`**: Verify that the mock is correctly set up to return a non-null `CompletableFuture`.
 
-2. **Mock Dependencies**: Make sure all dependencies that are used in the `write` method are properly mocked.
+2. **Check the Result Type**: Ensure that the mocked return type of `kafkaTemplate.send(...)` matches the expected type, which is `CompletableFuture<SendResult<String, String>>`.
 
 ### Updated Test Case
 
-Here’s how you can update your test case to ensure that the ID is correctly initialized:
+Here’s how you can update your test case to ensure that the `future` is properly initialized:
 
 ```java
-@Test
-public void testKafkaFalloutWriterPositive() throws Exception {
-    // Prepare the writer
-    ItemWriter<KafkaFailedMessagesEntity> writer = kafkaFalloutBatchConfig.kafkaFalloutWriter();
-    
-    // Create a new KafkaFailedMessagesEntity instance
-    KafkaFailedMessagesEntity entity = new KafkaFailedMessagesEntity();
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.Chunk;
+import org.springframework.kafka.support.SendResult;
 
-    // Create and set the ID for the entity
-    KafkaFailedMessagesPK id = new KafkaFailedMessagesPK();
-    id.setTransactionId("trans123"); // Set a valid transaction ID
-    id.setTopicName("testTopic"); // Set a valid topic name
-    id.setCreatedDate(new Date()); // Set the current date as created date
-    entity.setId(id); // Set the ID in the entity
+import java.util.Date;
+import java.util.concurrent.CompletableFuture;
 
-    // Create a Chunk directly
-    Chunk<KafkaFailedMessagesEntity> chunk = new Chunk<>();
-    chunk.add(entity); // Add the entity to the chunk
+public class KafkaFalloutBatchConfigTest {
 
-    // Assuming send method returns a mock CompletableFuture
-    CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(mock(SendResult.class));
-    when(kafkaTemplate.send(anyString(), anyString())).thenReturn(future);
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
 
-    // Write the chunk
-    writer.write(chunk);
+    @Mock
+    private KafkaFalloutService failedMessageService;
 
-    // Validate interactions (e.g. purgeRepublishedRecord called)
-    verify(failedMessageService, times(1)).purgeRepublishedRecord(any());
+    @InjectMocks
+    private KafkaFalloutBatchConfig kafkaFalloutBatchConfig;
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.openMocks(this); // Initialize mocks
+    }
+
+    @Test
+    public void testKafkaFalloutWriterPositive() throws Exception {
+        // Prepare the writer
+        ItemWriter<KafkaFailedMessagesEntity> writer = kafkaFalloutBatchConfig.kafkaFalloutWriter();
+        
+        // Create a new KafkaFailedMessagesEntity instance
+        KafkaFailedMessagesEntity entity = new KafkaFailedMessagesEntity();
+
+        // Create and set the ID for the entity
+        KafkaFailedMessagesPK id = new KafkaFailedMessagesPK();
+        id.setTransactionId("trans123"); // Set a valid transaction ID
+        id.setTopicName("testTopic"); // Set a valid topic name
+        id.setCreatedDate(new Date()); // Set the current date as created date
+        entity.setId(id); // Set the ID in the entity
+
+        // Create a Chunk directly
+        Chunk<KafkaFailedMessagesEntity> chunk = new Chunk<>();
+        chunk.add(entity); // Add the entity to the chunk
+
+        // Create a mock SendResult
+        SendResult<String, String> sendResultMock = mock(SendResult.class);
+        
+        // Create a CompletableFuture that returns the mocked SendResult
+        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(sendResultMock);
+
+        // Mock the kafkaTemplate.send() method to return the CompletableFuture
+        when(kafkaTemplate.send(anyString(), anyString())).thenReturn(future);
+
+        // Write the chunk
+        writer.write(chunk);
+
+        // Validate interactions (e.g. purgeRepublishedRecord called)
+        verify(failedMessageService, times(1)).purgeRepublishedRecord(any());
+    }
 }
 ```
 
 ### Key Changes Made:
 
-1. **Initialization of ID**: A `KafkaFailedMessagesPK` object is created and initialized with a transaction ID, topic name, and created date. This ID is then set in the `KafkaFailedMessagesEntity` before adding it to the chunk.
+1. **Mocking SendResult**: A mock `SendResult<String, String>` is created to simulate the successful sending of a message.
 
-2. **Chunk Creation**: The `Chunk` is created and the `entity` is added to it, ensuring that the `write` method can access the `id` without encountering a `NullPointerException`.
+2. **CompletableFuture Setup**: A `CompletableFuture` is created and initialized to return the mocked `SendResult` when the `send` method is called.
+
+3. **Correct Mocking**: The `when(kafkaTemplate.send(anyString(), anyString())).thenReturn(future);` line is set up to ensure that calling `send` returns a non-null `CompletableFuture`.
 
 ### Conclusion
 
-By ensuring that the `KafkaFailedMessagesEntity` has a properly initialized `id`, you should be able to avoid the `NullPointerException` when invoking `getTopicName()`. If issues continue, please check any other parts of the code where the entity might be modified or ensure that all dependencies are correctly set up in your test environment.
+By ensuring that the `future` variable is properly initialized and not null when you call `whenCompleteAsync`, you should be able to resolve the `NullPointerException`. If any issues persist, double-check that all mocked methods and return types are correctly set up in your test.

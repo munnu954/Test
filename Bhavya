@@ -1,96 +1,67 @@
-The `AssertionFailedError` indicating that the processor should return a valid entity but is returning null means that the logic within the `kafkaFalloutProcessor` is not producing the expected output based on the input provided. 
+The error message you're receiving indicates that the `write` method in the `ItemWriter<KafkaFailedMessagesEntity>` expects a `Chunk` type argument, while you are currently passing a `List`. This is common in Spring Batch where the `ItemWriter` is designed to handle a chunk of items rather than a list.
 
-### Steps to Diagnose and Fix
+### Solutions
 
-1. **Review Processor Logic**: Ensure that the conditions in the `kafkaFalloutProcessor` logic allow it to return a non-null value. If the sensitivity check or other conditions are not met, the processor may return null.
+You can resolve this issue in a couple of ways:
 
-2. **Mocking Dependencies**: Make sure that all necessary services and methods being called within the processor are properly mocked and returning the expected results.
+1. **Cast the List to Chunk**: If you want to keep using a `List`, you can convert it to a `Chunk` type before passing it to the `write` method.
+   
+2. **Change Type to Chunk Directly**: Instead of using a `List`, you can directly create a `Chunk` object and pass it to the `write` method.
 
-3. **Debugging**: Add logging statements in the processor to understand the flow of data and where it might be failing.
+### Solution 1: Casting the List to Chunk
 
-### Updated Test Case
-
-Here’s an updated test case with additional checks and mocks to ensure the processor can produce a valid output:
+You can wrap the list in a `Chunk` object like this:
 
 ```java
 @Test
-public void testKafkaFalloutProcessorPositive() throws Exception {
-    // Prepare the processor
-    ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
-    
-    // Create a new KafkaFailedMessagesEntity instance
+public void testKafkaFalloutWriterPositive() throws Exception {
+    ItemWriter<KafkaFailedMessagesEntity> writer = kafkaFalloutBatchConfig.kafkaFalloutWriter();
     KafkaFailedMessagesEntity entity = new KafkaFailedMessagesEntity();
     
-    // Create and set the ID for the entity
-    KafkaFailedMessagesPK id = new KafkaFailedMessagesPK();
-    id.setTransactionId("trans123"); // Set a valid transaction ID
-    id.setTopicName("testTopic"); // Set a valid topic name
-    id.setCreatedDate(new Date()); // Set the current date as created date
-    entity.setId(id); // Set the ID in the entity
+    // Create a list of items
+    List<KafkaFailedMessagesEntity> items = Collections.singletonList(entity);
 
-    // Set valid test data - Ensure the JSON structure is correct
-    entity.setPayload("{\"requestJSONString\": \"{\\\"Service\\\": {\\\"ServiceBody\\\": {\\\"CallRequest\\\": {\\\"Body\\\": {\\\"RelinquishingCustomerDetails\\\": {\\\"AccountNumber\\\": \\\"123-456\\\"}}}}}}}\"}");
-    entity.setSensitivityChecked('N');
+    // Create a Chunk from the list
+    Chunk<KafkaFailedMessagesEntity> chunk = new Chunk<>(items);
 
-    // Mock the utils.convert method to return a valid ServiceMessage
-    ServiceMessage mockServiceMessage = new ServiceMessage();
-    mockServiceMessage.setRequestJSONString("{\"Service\":{\"ServiceBody\":{\"CallRequest\":{\"Body\":{\"RelinquishingCustomerDetails\":{\"AccountNumber\":\"123-456\"}}}}}}}");
+    // Assuming send method returns a mock CompletableFuture
+    CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(mock(SendResult.class));
+    when(kafkaTemplate.send(anyString(), anyString())).thenReturn(future);
 
-    // Mock the conversion to return the service message
-    when(utils.convert(anyString(), eq(ServiceMessage.class))).thenReturn(mockServiceMessage);
-    
-    // Mock the RequestJSONString to return a valid Service
-    RequestJSONString mockRequestJSONString = new RequestJSONString();
-    Service mockService = new Service();
-    ServiceBody mockServiceBody = new ServiceBody();
-    CallRequest mockCallRequest = new CallRequest();
-    Body mockBody = new Body();
-    CustomerDetails mockCustomerDetails = new CustomerDetails();
+    // Write the chunk
+    writer.write(chunk);
 
-    mockCustomerDetails.setAccountNumber("123-456");
-    mockBody.setRelinquishingCustomerDetails(mockCustomerDetails);
-    mockCallRequest.setBody(mockBody);
-    mockServiceBody.setCallRequest(mockCallRequest);
-    mockService.setServiceBody(mockServiceBody);
-    mockRequestJSONString.setService(mockService);
-    
-    // Mock the conversion for RequestJSONString
-    when(utils.convert(anyString(), eq(RequestJSONString.class))).thenReturn(mockRequestJSONString);
-
-    // Mock the necessary behavior for the account service to return a valid ECPD ID
-    when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("EcpdId"));
-    
-    // Mock the behavior for converting ECPD ID to CustomerEcpdModel
-    CustomerEcpdModel mockCustomerEcpdModel = new CustomerEcpdModel();
-    mockCustomerEcpdModel.setSensitivity("N");
-    when(utils.convert("EcpdId", CustomerEcpdModel.class)).thenReturn(mockCustomerEcpdModel);
-
-    // Process the entity
-    KafkaFailedMessagesEntity result = processor.process(entity);
-    
-    // Assert that the result is not null and sensitivity is marked as 'Y'
-    assertNotNull(result, "Processor should return a valid entity"); // This assertion is failing
-    assertEquals('Y', result.getSensitivityChecked(), "Sensitivity should be marked as 'Y'");
+    // Validate interactions (e.g. purgeRepublishedRecord called)
+    verify(failedMessageService, times(1)).purgeRepublishedRecord(any());
 }
 ```
 
-### Key Points to Check:
+### Solution 2: Change Type to Chunk Directly
 
-1. **Ensure Processor Logic Completes**: Review the logic inside the `kafkaFalloutProcessor` to ensure that when the sensitivity is 'N' and valid account details are provided, it correctly processes and returns a non-null entity.
-
-2. **Check Mocked Return Values**: Ensure that all mocked methods are returning the expected values. If any of the mocked calls return null or an unexpected value, it can cause the processor to return null.
-
-3. **Add Logging in Processor**: If the problem persists, consider adding logging statements within the `kafkaFalloutProcessor` to output the values being processed and the flow of execution. This can help identify where it might be returning null.
-
-### Example of Adding Logging
-
-You can add logging in the processor like this:
+Alternatively, you can directly create a `Chunk` without using a `List`:
 
 ```java
-LOGGER.info("Processing Transaction ID: {}", item.getId().getTransactionId());
-// Add more logs as needed to trace the flow
+@Test
+public void testKafkaFalloutWriterPositive() throws Exception {
+    ItemWriter<KafkaFailedMessagesEntity> writer = kafkaFalloutBatchConfig.kafkaFalloutWriter();
+    KafkaFailedMessagesEntity entity = new KafkaFailedMessagesEntity();
+
+    // Create a Chunk directly
+    Chunk<KafkaFailedMessagesEntity> chunk = new Chunk<>();
+    chunk.add(entity); // Add the entity to the chunk
+
+    // Assuming send method returns a mock CompletableFuture
+    CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(mock(SendResult.class));
+    when(kafkaTemplate.send(anyString(), anyString())).thenReturn(future);
+
+    // Write the chunk
+    writer.write(chunk);
+
+    // Validate interactions (e.g. purgeRepublishedRecord called)
+    verify(failedMessageService, times(1)).purgeRepublishedRecord(any());
+}
 ```
 
-### Conclusion
+### Summary
 
-The test case is set up to ensure that all necessary components are properly instantiated and that the processor's logic is capable of returning a valid entity. If issues continue, investigate the processor's logic in detail and ensure all dependencies are correctly mocked to avoid returning null values.
+Both solutions effectively resolve the issue by ensuring that the argument passed to the `write` method is of the correct type (`Chunk<KafkaFailedMessagesEntity>`). You can choose either approach based on your coding style preference. If you have more entities to write, you can easily add them to the `Chunk` as needed.

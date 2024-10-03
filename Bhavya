@@ -1,45 +1,81 @@
-The error you're encountering indicates that the expected invocation of `failedMessageService.saveFailedRecords` did not occur as anticipated during the execution of the `testOnMessage_InvalidPayload` method. This means that the `onMessage` method did not handle the invalid payload correctly, which should have led to the invocation of the `saveFailedRecords` method.
+The error message you're encountering indicates that the `kafkaTemplate.send()` method is not being invoked during the execution of your test case `testOnMessage_ValidPayload`. This suggests that the flow in the `onMessage` method might not be reaching the point where the message is sent to Kafka. 
 
-### Debugging Steps
+### Analyzing the onMessage Method
 
-1. **Ensure Exception Handling**: Make sure that the `onMessage` method in your `EventsMessageListener` class is designed to catch exceptions that occur when processing the payload. Specifically, check that it catches exceptions thrown during the parsing of the payload and subsequently calls `failedMessageService.saveFailedRecords`.
+Here are some common issues that could prevent `kafkaTemplate.send()` from being called:
 
-2. **Mock Setup**: When testing with an invalid payload, ensure that any method that processes the payload (like `utils.convert`) is set up to throw an exception. This is crucial to trigger the error handling logic in `onMessage`.
+1. **Payload Processing**: If the payload is invalid or if exceptions are thrown while processing the payload, the code may skip the sending logic.
+2. **Conditional Logic**: If any conditions in the `onMessage` method cause early returns, the sending logic will not be executed.
+3. **Mocking Behavior**: Ensure that all necessary mock setups are in place, particularly for methods that might throw exceptions or alter the flow.
 
-### Example Implementation
+### Steps to Resolve the Issue
 
-Here’s how you can structure the `testOnMessage_InvalidPayload` method to ensure that it properly simulates an invalid payload scenario:
+1. **Review the `onMessage` Method**: Make sure that the flow of execution in the `onMessage` method reaches the point where `kafkaTemplate.send()` is called. Add logging statements to help trace the execution flow.
+
+2. **Ensure Valid Payload**: Make sure that `validPayload` is a properly formatted JSON string that can be successfully converted to a `ServiceMessage`.
+
+3. **Mock the Right Calls**: Ensure all necessary methods that are called before `kafkaTemplate.send()` are mocked correctly so that they do not throw exceptions.
+
+### Updated Test Method
+
+Here's how you can structure your `testOnMessage_ValidPayload` method, ensuring that all necessary elements are in place:
 
 ```java
 @Test
-public void testOnMessage_InvalidPayload() {
-    // Simulate an invalid payload (e.g., a malformed JSON string)
-    String invalidPayload = "invalid json";
+public void testOnMessage_ValidPayload() throws JsonProcessingException {
+    // Create a valid payload for testing
+    String validPayload = "{\"RequestJSONString\":\"{...}\",\"pxObjClass\":\"SomeClass\",\"pxUpdateDateTime\":\"2023-10-10T10:10:10\"}";
 
-    // Mock the behavior of the utils.convert method to throw an exception for invalid payloads
-    when(utils.convert(eq(invalidPayload), any(Class.class)))
-        .thenThrow(new JsonProcessingException("Invalid JSON") {});
+    // Set up a mock ServiceMessage and RequestJSONString
+    ServiceMessage serviceMessage = new ServiceMessage();
+    RequestJSONString requestJSONString = new RequestJSONString();
+    Service service = new Service();
+    ServiceBody serviceBody = new ServiceBody();
+    CallRequest callRequest = new CallRequest();
+    Body body = new Body();
+    
+    // Set up the body to include valid relinquishing customer details
+    CustomerDetails relinquishingCustomerDetails = new CustomerDetails();
+    relinquishingCustomerDetails.setAccountNumber("12345678");
+    body.setRelinquishingCustomerDetails(relinquishingCustomerDetails);
+    callRequest.setBody(body);
+    serviceBody.setCallRequest(callRequest);
+    service.setServiceBody(serviceBody);
+    requestJSONString.setService(service);
+    serviceMessage.setRequestJSONString(requestJSONString.toString());
 
-    // Call the method with the invalid payload
-    eventsMessageListener.onMessage(mockConsumerRecord(invalidPayload), invalidPayload);
+    // Mock the behavior of utils.convert to return the expected ServiceMessage
+    when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(serviceMessage);
+    when(utils.convert(requestJSONString.toString(), RequestJSONString.class)).thenReturn(requestJSONString);
+    
+    // Mock the accountService to return a valid ECPD ID
+    when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("someEcpdId"));
+    
+    // Call the method with the valid payload
+    eventsMessageListener.onMessage(mockConsumerRecord(validPayload), validPayload);
 
-    // Verify that the failed message service is invoked due to invalid payload
-    verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), eq(invalidPayload), anyString(), anyChar());
+    // Verify that the KafkaTemplate's send method was called
+    verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+    // Verify that no failed records were saved
+    verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+}
+
+// Helper method to create a mock ConsumerRecord
+private ConsumerRecord<String, String> mockConsumerRecord(String payload) {
+    return new ConsumerRecord<>("topic", 0, 0L, "key", payload);
 }
 ```
 
-### Explanation of Key Changes
+### Key Changes and Explanations
 
-1. **Mocking Exception**: The `utils.convert` method is mocked to throw a `JsonProcessingException` when called with the `invalidPayload`. This simulates the behavior of the application when it encounters an invalid payload.
+1. **Valid Payload Structure**: The `validPayload` string is structured as a valid JSON that matches the expected format of `ServiceMessage`.
 
-2. **Verification**: After invoking the `onMessage` method, we verify that `failedMessageService.saveFailedRecords` is called exactly once with the correct parameters.
+2. **Mocking Method Calls**: The `utils.convert` method is mocked to return the appropriate `ServiceMessage` and `RequestJSONString`. Ensure that the `getEcpdByAcctId` method on the `accountService` is also mocked to return a valid Mono.
 
-### Additional Considerations
+3. **Logging**: Add logging statements in the `onMessage` method to trace execution flow, helping you determine where it might be failing.
 
-- **Check Exception Handling Logic**: In the `onMessage` method, ensure that you have a `try-catch` block that catches the `JsonProcessingException` (or whatever specific exception it throws) and calls `failedMessageService.saveFailedRecords` in the catch block.
-
-- **Logging**: If issues persist, consider adding logging statements within the `onMessage` method to trace execution and confirm whether the code reaches the catch block.
+4. **Properly Mock ConsumerRecord**: The `mockConsumerRecord` method creates a mock `ConsumerRecord` that simulates incoming Kafka messages.
 
 ### Conclusion
 
-With these adjustments, the test should properly trigger the error handling path in `onMessage`, leading to the invocation of `failedMessageService.saveFailedRecords`. Run the test again after implementing these changes, and it should pass without the invoked method error. If it still fails, check the implementation of `onMessage` to ensure that the exception handling is set up correctly.
+With these adjustments, your test case should successfully invoke `kafkaTemplate.send()` when the `onMessage` method processes a valid payload. If the issue persists, consider stepping through the `onMessage` method with a debugger to see where the flow might be interrupted.

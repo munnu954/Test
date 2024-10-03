@@ -1,114 +1,55 @@
-To write positive and negative test cases for the `EventsMessageListener` class, we need to consider the various branches and scenarios that the code can encounter. Below is an example of how you might structure these tests using JUnit and Mockito. This is a simplified version and assumes you have the necessary dependencies and configurations set up for your project.
+The error message indicates that the expected interaction with the `failedMessageService.saveFailedRecords` method did not occur during the execution of the `testOnMessage_ValidPayload` test case. This typically happens when the conditions inside the `onMessage` method do not lead to the `failedMessageService.saveFailedRecords` method being called.
 
-### Positive Test Cases
+### Steps to Diagnose and Fix
 
-```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
+1. **Review the Validity of the Payload**: Ensure that the `validPayload` JSON string is correctly structured and can be parsed successfully into a `ServiceMessage` and `RequestJSONString`. If the parsing fails, it could lead to the `saveFailedRecords` method being called, resulting in unexpected behavior.
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.kafka.support.KafkaHeaders;
-import org.springframework.messaging.support.MessageHeaderAccessor;
-import org.springframework.kafka.listener.MessageListenerContainer;
+2. **Check Mock Returns**: Verify that the mocks are correctly set up to return the expected results when methods are called. For instance, if you're returning a `ServiceMessage` from the `utils.convert` method, make sure that the `RequestJSONString` is also set up to return valid data.
 
-public class EventsMessageListenerTest {
+3. **Inspect the Logic Flow**: Ensure that the logic in the `onMessage` method does not encounter any conditions that would cause it to short-circuit before reaching the call to `failedMessageService.saveFailedRecords`. 
 
-    @InjectMocks
-    private EventsMessageListener eventsMessageListener;
+4. **Logging and Debugging**: You can add logging statements inside the `onMessage` method to clarify what paths the method is taking during the test. This can help identify any branches that may not be executing as expected.
 
-    @Mock
-    private AccountEcpdService accountService;
-
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Mock
-    private KafkaFalloutService failedMessageService;
-
-    @Mock
-    private BatchLoaderUtils utils;
-
-    private String validPayload;
-    private String invalidPayload;
-
-    @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
-        validPayload = "{\"RequestJSONString\":\"{...}\",\"pxObjClass\":\"...\",\"pxUpdateDateTime\":\"...\"}";
-        invalidPayload = null; // or some invalid JSON
-    }
-
-    @Test
-    public void testOnMessage_ValidPayload() {
-        // Set up mock returns
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-        // Additional setup for valid cases
-
-        // Call the method
-        eventsMessageListener.onMessage(mockConsumerRecord(validPayload), validPayload);
-
-        // Verify interactions
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
-        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-    }
-
-    // Additional positive test cases can be created for other branches
-}
-```
-
-### Negative Test Cases
+Here is an updated version of the `testOnMessage_ValidPayload` method, including some mock setups and a slight restructuring for clarity:
 
 ```java
 @Test
-public void testOnMessage_EmptyPayload() {
-    // Call the method with an empty payload
-    eventsMessageListener.onMessage(mockConsumerRecord(""), "");
+public void testOnMessage_ValidPayload() {
+    // Mock the behavior of convert method to return a valid ServiceMessage
+    ServiceMessage serviceMessage = new ServiceMessage();
+    RequestJSONString requestJSONString = new RequestJSONString();
+    Service service = new Service();
+    ServiceBody serviceBody = new ServiceBody();
+    CallRequest callRequest = new CallRequest();
+    Body body = new Body();
 
-    // Verify that the message was dropped (failed message service is not invoked)
-    verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-}
+    // Set up the mock objects accordingly
+    body.setRelinquishingCustomerDetails(new CustomerDetails());
+    body.getRelinquishingCustomerDetails().setAccountNumber("12345678");
+    callRequest.setBody(body);
+    serviceBody.setCallRequest(callRequest);
+    service.setServiceBody(serviceBody);
+    requestJSONString.setService(service);
+    serviceMessage.setRequestJSONString(requestJSONString.toString());
 
-@Test
-public void testOnMessage_InvalidPayload() {
-    // Call the method with an invalid payload
-    eventsMessageListener.onMessage(mockConsumerRecord(invalidPayload), invalidPayload);
-
-    // Verify that failed message service is invoked
-    verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), eq(invalidPayload), anyString(), anyChar());
-}
-
-@Test
-public void testOnMessage_NullRequestJSONString() {
-    // Set up mock returns
-    when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-    // Set up to return null for requestJSONString
-    when(requestJSONString.getService()).thenReturn(null);
+    // Mock the utils.convert calls
+    when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(serviceMessage);
+    when(utils.convert(requestJSONString.toString(), RequestJSONString.class)).thenReturn(requestJSONString);
 
     // Call the method
     eventsMessageListener.onMessage(mockConsumerRecord(validPayload), validPayload);
 
-    // Verify that the payload was dropped
-    verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), eq(validPayload), anyString(), anyChar());
-}
-
-// Helper method to create a mock ConsumerRecord
-private ConsumerRecord<String, String> mockConsumerRecord(String payload) {
-    return new ConsumerRecord<>("topic", 0, 0L, "key", payload);
+    // Verify interactions
+    verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+    verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
 }
 ```
 
-### Explanation
+### Key Changes:
 
-1. **Positive Test Cases**: These cases verify that the `onMessage` method behaves as expected when provided with valid inputs. This includes checking that messages are sent successfully to Kafka and that no records are saved to the failed message service.
+- **Constructing Mock Objects**: The test now constructs `ServiceMessage`, `RequestJSONString`, and their related objects to reflect a valid payload structure.
+- **Mocking Return Values**: The mocks for the `utils.convert` method are set up to return the constructed objects, ensuring that the `onMessage` method can process them correctly.
+- **Payload Structure**: Ensure that the payload being passed is structured such that it meets the expectations of the `onMessage` method.
 
-2. **Negative Test Cases**: These cases check the behavior of the `onMessage` method when encountering various invalid inputs or conditions, such as empty or invalid payloads. They ensure that the correct error handling is performed, and that the appropriate records are saved to the failed message service.
-
-3. **Mocking Dependencies**: The tests use Mockito to mock dependencies like `AccountEcpdService`, `KafkaTemplate`, `KafkaFalloutService`, and `BatchLoaderUtils`. This allows for isolated testing of the `EventsMessageListener` class without relying on the actual implementations of these dependencies.
-
-4. **Branch Coverage**: The tests are designed to cover different branches of the `onMessage` method logic, ensuring that various paths through the code are exercised.
-
-Make sure to adapt the test cases according to the actual implementation details and dependencies in your project.
+### Conclusion
+After making these changes, run the test again. If it still fails, continue to inspect the logic in the `onMessage` method to ensure that all branches are covered and that the flow leads to the expected outcomes based on the mocked data.

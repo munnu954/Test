@@ -1,45 +1,13 @@
-The error you are encountering, "UnknownContentTypeException," indicates that Spring cannot find an appropriate `HttpMessageConverter` to handle the response type `LinkAggregationResponse` with the content type `application/json`. This issue typically happens when the Jackson library is not properly configured or when there is a mismatch in the expected response and the content type.
+The error you're encountering typically occurs when Spring's `RestTemplate` cannot find a suitable `HttpMessageConverter` to convert the response body to the desired type. This often happens if the necessary Jackson dependencies are missing or not properly configured.
 
-Here's how you can resolve the issue and reframe the necessary classes:
+Here's how you can fix this issue and the necessary code changes:
 
-**1. Ensure Jackson Dependency:**
-Firstly, ensure that you have the Jackson library included in your project's `pom.xml` (for Maven) or `build.gradle` (for Gradle). Jackson is the default JSON library used by Spring Boot.
-
-Maven:
-```xml
-<dependency>
-    <groupId>com.fasterxml.jackson.core</groupId>
-    <artifactId>jackson-databind</artifactId>
-</dependency>
-```
-
-Gradle:
-```groovy
-implementation 'com.fasterxml.jackson.core:jackson-databind'
-```
-
-**2. Update LinkAggregationController:**
-No changes are required here if the request and response objects are properly annotated with Jackson annotations (e.g., `@JsonProperty`).
-
-**3. Update LinkAggregationService:**
-Ensure that the `LinkAggregationResponse` class is properly annotated for JSON serialization/deserialization.
-
-**4. Update LinkAggConfigService:**
-No changes needed unless `LinkAggregationResponse` is being affected by configuration.
-
-**5. Update LinkAggregationUtil:**
-Make sure that the `LinkAggregationResponse` class is properly annotated for JSON serialization/deserialization.
-
-**6. Update AppConfig:**
-Ensure that the `RestTemplate` is properly configured to handle JSON. You can explicitly add a `MappingJackson2HttpMessageConverter` to your `RestTemplate`.
-
-Here's how you can modify the `AppConfig` class:
+### 1. **AppConfig Class**
+Ensure that the `MappingJackson2HttpMessageConverter` is registered with the `RestTemplate`.
 
 ```java
 @Configuration
 public class AppConfig {
-
-    Map<String, String> configData = new HashMap<>();
 
     @Value("${com.tcoms.linkaggregation.service.name}")
     String tcomsLinkAggregationServiceName;
@@ -49,6 +17,7 @@ public class AppConfig {
 
     @Bean("configMap")
     public Map<String, String> getConfigData() {
+        Map<String, String> configData = new HashMap<>();
         configData.put("tcomsLinkAggregationServiceName", tcomsLinkAggregationServiceName);
         configData.put("tcomsLinkAggregationServiceNameUrl", tcomsLinkAggregationServiceNameUrl);
         return configData;
@@ -56,29 +25,82 @@ public class AppConfig {
 
     @Bean
     public RestTemplate restTemplate(RestTemplateBuilder builder) {
-        RestTemplate restTemplate = builder
+        return builder
                 .setConnectTimeout(Duration.ofMillis(20000))
                 .setReadTimeout(Duration.ofMillis(100000))
+                .additionalMessageConverters(new MappingJackson2HttpMessageConverter())
                 .build();
-        restTemplate.getMessageConverters().add(new MappingJackson2HttpMessageConverter());
-        return restTemplate;
     }
 }
 ```
 
-**7. Update the LinkAggregationResponse Class:**
-Ensure that your `LinkAggregationResponse` class is annotated with Jackson annotations to facilitate serialization/deserialization.
+### 2. **LinkAggregationUtil Class**
+No changes needed here as it already uses `RestTemplate`.
 
-Example annotations:
+### 3. **LinkAggConfigService Class**
+No changes needed here.
+
+### 4. **LinkAggregationService Class**
+Ensure that the `LinkAggregationResponse` class is properly annotated for JSON serialization/deserialization.
+
 ```java
-import com.fasterxml.jackson.annotation.JsonProperty;
+@Service
+public class LinkAggregationService {
 
-public class LinkAggregationResponse {
-    @JsonProperty("field_name")
-    private String fieldName;
+    @Autowired
+    LinkAggConfigService linkAggConfigService;
 
-    // getters and setters
+    @Autowired
+    LinkAggregationUtil linkAggregationUtil;
+
+    public LinkAggregationResponse getResponse(LinkAggregationRequest linkAggregationRequest) throws NoDataFoundException, LinkAggregationException {
+        Map<String, String> criteria = new HashMap<>();
+        if (linkAggregationRequest.getLocationClli() != null && !linkAggregationRequest.getLocationClli().isEmpty()) {
+            criteria.put(LinkAggregationConstants.LOCATION_CLLI, linkAggregationRequest.getLocationClli());
+        }
+        if (linkAggregationRequest.getSourceSys() != null && !linkAggregationRequest.getSourceSys().isEmpty()) {
+            criteria.put(LinkAggregationConstants.SOURCE_SYS, linkAggregationRequest.getSourceSys());
+        }
+        if (linkAggregationRequest.getSystem() != null && !linkAggregationRequest.getSystem().isEmpty()) {
+            criteria.put(LinkAggregationConstants.SYSTEM, linkAggregationRequest.getSystem());
+        }
+        if (linkAggregationRequest.getId() != null && !linkAggregationRequest.getId().isEmpty()) {
+            criteria.put(LinkAggregationConstants.ID, linkAggregationRequest.getId());
+        }
+        if (linkAggregationRequest.getName() != null && !linkAggregationRequest.getName().isEmpty()) {
+            criteria.put(LinkAggregationConstants.NAME, linkAggregationRequest.getName());
+        }
+        List<Map<String, String>> configPropsList = linkAggConfigService.getConfigData(LinkAggregationConstants.TCOMS_SRC_SYS_NAME);
+        Map<String, String> configProps = configPropsList.get(0);
+        String url = linkAggregationUtil.findServiceForName(configProps.get(LinkAggregationConstants.LINKAGGREGATION_SERVICE_NAME)) + configProps.get(LinkAggregationConstants.LINKAGGREGATION_SERVICE_URL);
+        return linkAggregationUtil.getLinkAggregationResults(url, criteria);
+    }
 }
 ```
 
-By ensuring that the Jackson library is correctly configured and that your response classes are annotated properly, you should be able to resolve the `UnknownContentTypeException`.
+### 5. **LinkAggregationController Class**
+No changes needed here.
+
+### Summary of Changes:
+- **AppConfig Class**: Added `MappingJackson2HttpMessageConverter` to the `RestTemplate` bean.
+- **LinkAggregationService Class**: Ensured proper handling of `LinkAggregationResponse`.
+
+These changes should resolve the `UnknownContentTypeException` by ensuring that the `RestTemplate` can handle JSON responses correctly. Let me know if you need any further assistance! 😊
+
+Source: Conversation with Copilot, 10/4/2024
+(1) Http Message Converters with the Spring Framework | Baeldung. https://www.baeldung.com/spring-httpmessageconverter-rest.
+(2) 解决:Could not extract response: no suitable HttpMessageConverter found .... https://blog.csdn.net/qq_44732146/article/details/130391606.
+(3) HttpMessageNotWritableException: No Converter for [class …] With Preset .... https://www.baeldung.com/spring-no-converter-with-preset.
+(4) 解决 RestTemplate 报错 UnknownContentTypeException - 叫我阿森就行 - 博客园. https://www.cnblogs.com/asen001/p/13634642.html.
+(5) Message conversion issue going from 2.3.0 to 2.3.1 #22080 - GitHub. https://github.com/spring-projects/spring-boot/issues/22080.
+(6) UnknownContentTypeException in Spring: Handling Unrecognized Content .... https://exceptiondecoded.com/posts/spring-unknowncontenttypeexception/.
+(7) @RequestMapping Content-Type error when a @RequestBody is used ... - GitHub. https://github.com/spring-projects/spring-boot/issues/3313.
+(8) HttpMessageNotWritableException: No Converter for [class …] With Preset .... https://bing.com/search?q=fix+UnknownContentTypeException+spring+boot.
+(9) Spring RestTemplate Error Handling - Baeldung. https://www.baeldung.com/spring-rest-template-error-handling.
+(10) Link aggregation - Wikipedia. https://en.wikipedia.org/wiki/Link_aggregation.
+(11) Link Aggregation Control Protocol - GeeksforGeeks. https://www.geeksforgeeks.org/link-aggregation-control-protocol/.
+(12) Network Basics: What Is Link Aggregation & How Does It Work? - Auvik. https://www.auvik.com/franklyit/blog/network-basics-link-aggregation/.
+(13) Externalized Configuration :: Spring Boot. https://docs.spring.io/spring-boot/reference/features/external-config.html.
+(14) A Custom Auto-Configuration with Spring Boot - Baeldung. https://www.baeldung.com/spring-boot-custom-auto-configuration.
+(15) Constructor Dependency Injection in Spring - Baeldung. https://www.baeldung.com/constructor-injection-in-spring.
+(16) Support - 04-Ethernet Link Aggregation Configuration- H3C. https://www.h3c.com/en/d_201211/761848_294551_0.htm.

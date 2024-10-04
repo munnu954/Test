@@ -1,68 +1,112 @@
-The `MissingMethodInvocationException` indicates that there is an issue with how you've set up your mocks using Mockito. This typically occurs when you attempt to stub a method call that is not on a mock object or involves methods that cannot be stubbed (like final or private methods).
+The `MissingMethodInvocationException` typically arises when you attempt to mock or stub a method that isn't invoked on a mock object, or when you try to stub a method that cannot be mocked due to its nature (like final methods). 
 
-In your case, it seems like there might be an issue with the way you are calling `when()` on certain objects or methods that are not part of the mocks. Let’s carefully refactor the test to ensure that all the method calls are being made on mocks, and we will also check the structure of the payload and mock setups.
+Let's carefully address this issue with a clearer step-by-step approach, ensuring we have properly defined mocks and that all method calls within the `onMessage` method are correctly stubbed.
 
-### Refactored Test Method
+### Step-by-Step Refactoring
 
-Here's a revised version of the test method, ensuring all method calls are correctly stubbed:
+1. **Ensure All Dependencies are Mocked**: Make sure that all dependencies of the `EventsMessageListener` class are properly annotated with `@Mock`.
+
+2. **Directly Use Mocks**: When setting up the stubs, ensure that you are calling methods on mocks and not on real instances.
+
+3. **Correctly Structure the Payload**: Ensure the payload used in `ConsumerRecord` aligns correctly with how the `onMessage` method processes it.
+
+### Refactored Test Code
+
+Here's a more focused version of the test case that addresses the above points:
 
 ```java
-@Test
-void testOnMessage_SuccessfulProcessing() throws JsonProcessingException {
-    // Arrange
-    String validPayload = "{\"RequestJSONString\": \"{...}\"}"; // Mock a valid payload
-    ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", validPayload);
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
+import reactor.core.publisher.Mono;
 
-    ServiceMessage serviceMessage = new ServiceMessage();
-    serviceMessage.setRequestJSONString("{\"Service\": {\"ServiceBody\": {\"CallRequest\": {\"Body\": {\"Relinquishing Customer Details\": {\"AccountNumber\": \"12345\"}}}}}}}");
+@ExtendWith(MockitoExtension.class)
+public class EventsMessageListenerTest {
 
-    RequestJSONString requestJSONString = new RequestJSONString();
-    Service service = new Service();
-    ServiceBody serviceBody = new ServiceBody();
-    CallRequest callRequest = new CallRequest();
-    Body body = new Body();
-    CustomerDetails customerDetails = new CustomerDetails();
-    customerDetails.setAccountNumber("12345");
-    body.setRelinquishingCustomerDetails(customerDetails);
-    callRequest.setBody(body);
-    serviceBody.setCallRequest(callRequest);
-    service.setServiceBody(serviceBody);
-    requestJSONString.setService(service);
+    @InjectMocks
+    private EventsMessageListener eventsMessageListener;
 
-    // Mock the necessary methods
-    when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(serviceMessage);
-    // Ensure the requestJSONString can be converted from the serviceMessage
-    when(serviceMessage.getRequestJSONString()).thenReturn("{\"Service\": {}}");
-    when(utils.convert("{\"Service\": {}}", RequestJSONString.class)).thenReturn(requestJSONString);
-    when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
+    @Mock
+    private AccountEcpdService accountService;
 
-    // Act
-    eventsMessageListener.onMessage(consumerRecord, validPayload);
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
 
-    // Assert
-    // Verify that the method does not throw any exceptions
-    assertDoesNotThrow(() -> eventsMessageListener.onMessage(consumerRecord, validPayload));
+    @Mock
+    private KafkaFalloutService failedMessageService;
 
-    // Verify that the Kafka template's send method was called
-    verify(kafkaTemplate, times(1)).send(any());
+    @Mock
+    private BatchLoaderUtils utils;
+
+    private String validPayload;
+    private ConsumerRecord<String, String> consumerRecord;
+
+    @BeforeEach
+    public void setUp() {
+        // Prepare a valid payload and consumer record
+        validPayload = "{\"RequestJSONString\": \"{...}\"}"; // Mock a valid payload
+        consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", validPayload);
+    }
+
+    @Test
+    void testOnMessage_SuccessfulProcessing() throws JsonProcessingException {
+        // Arrange
+        ServiceMessage serviceMessage = new ServiceMessage();
+        serviceMessage.setRequestJSONString("{\"Service\": {\"ServiceBody\": {\"CallRequest\": {\"Body\": {\"Relinquishing Customer Details\": {\"AccountNumber\": \"12345\"}}}}}}}");
+
+        // Create the RequestJSONString and its nested structure
+        RequestJSONString requestJSONString = new RequestJSONString();
+        Service service = new Service();
+        ServiceBody serviceBody = new ServiceBody();
+        CallRequest callRequest = new CallRequest();
+        Body body = new Body();
+        CustomerDetails customerDetails = new CustomerDetails();
+        customerDetails.setAccountNumber("12345");
+        body.setRelinquishingCustomerDetails(customerDetails);
+        callRequest.setBody(body);
+        serviceBody.setCallRequest(callRequest);
+        service.setServiceBody(serviceBody);
+        requestJSONString.setService(service);
+
+        // Mock the necessary methods
+        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(serviceMessage);
+        when(utils.convert(serviceMessage.getRequestJSONString(), RequestJSONString.class)).thenReturn(requestJSONString);
+        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
+
+        // Act
+        eventsMessageListener.onMessage(consumerRecord, validPayload);
+
+        // Assert
+        // Verify that the method does not throw any exceptions
+        assertDoesNotThrow(() -> eventsMessageListener.onMessage(consumerRecord, validPayload));
+
+        // Verify that the Kafka template's send method was called
+        verify(kafkaTemplate, times(1)).send(any());
+    }
 }
 ```
 
-### Key Adjustments
+### Key Points in This Code
 
-1. **ConsumerRecord Initialization**: Make sure the `ConsumerRecord` is properly initialized with the mock payload that will be passed to your listener.
+1. **Valid Payload**: Ensure `validPayload` is structured correctly. It needs to be a JSON string that your `ServiceMessage` can parse.
 
 2. **Correct Stubbing**:
-   - Ensure that the `when()` calls are made on mock objects only. The line `when(serviceMessage.getRequestJSONString()).thenReturn(...)` should be valid if `serviceMessage` is a regular object and not a mock. If `serviceMessage` is a regular object, you don't need to stub it. Instead, you should set the expected value directly.
-   - The `when(utils.convert(...))` calls should reference the correct string literals or expected output.
+   - The call to `when(utils.convert(...))` must use the result of calling the `ServiceMessage` methods correctly.
+   - Make sure that the `when(...)` calls directly correspond to mocked methods and not on any real instance objects.
 
-3. **Payload Structure**: Ensure that the payload structure you define matches the expected structure in the `onMessage` method. The mock payload needs to align with how the `ServiceMessage` and `RequestJSONString` classes are set up to parse the payload.
+3. **Mockito Annotations**: Ensure that the class is annotated with `@ExtendWith(MockitoExtension.class)` to enable the Mockito framework for the test class.
 
 ### Troubleshooting
 
-- If you are still encountering issues:
-  - Double-check that the methods you are stubbing are indeed part of your mock objects (`utils`, `accountService`, etc.).
-  - Verify that none of the methods you are trying to stub are final or private, as Mockito cannot mock those.
-  - Ensure that your `MockitoExtension` is correctly set up in your test class to handle the mocks.
+- If you still encounter the `MissingMethodInvocationException`:
+  - Verify that the method calls within `onMessage` are indeed being invoked as expected.
+  - Ensure that no method calls within your mocks are being made on non-mock objects.
+  - Check that there are no final methods or private methods being stubbed.
 
-This refactored test method should resolve the `MissingMethodInvocationException` and ensure that the test runs as expected. If you encounter further issues, please provide the error message, and we can continue troubleshooting from there.
+This structured approach should help you resolve the issue. If the problem persists, please provide more details about the exact lines that are causing the error and any additional context.

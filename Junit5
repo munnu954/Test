@@ -1,106 +1,91 @@
-The error you're encountering typically occurs when Spring's `RestTemplate` cannot find a suitable `HttpMessageConverter` to convert the response body to the desired type. This often happens if the necessary Jackson dependencies are missing or not properly configured.
+I have made changes in the LinkAggregationUtil class to add a MappingJackson2HttpMessageConverter to the RestTemplate bean in the AppConfig class. This converter will handle the conversion of JSON response to LinkAggregationResponse object.
 
-Here's how you can fix this issue and the necessary code changes:
-
-### 1. **AppConfig Class**
-Ensure that the `MappingJackson2HttpMessageConverter` is registered with the `RestTemplate`.
+Updated AppConfig class: 
 
 ```java
 @Configuration
 public class AppConfig {
-
+    Map<String, String> configData = new HashMap<>();
+    
     @Value("${com.tcoms.linkaggregation.service.name}")
     String tcomsLinkAggregationServiceName;
-
+    
     @Value("${com.tcoms.linkaggregation.service.url}")
     String tcomsLinkAggregationServiceNameUrl;
-
+    
     @Bean("configMap")
     public Map<String, String> getConfigData() {
-        Map<String, String> configData = new HashMap<>();
         configData.put("tcomsLinkAggregationServiceName", tcomsLinkAggregationServiceName);
         configData.put("tcomsLinkAggregationServiceNameUrl", tcomsLinkAggregationServiceNameUrl);
         return configData;
     }
-
+    
     @Bean
     public RestTemplate restTemplate(RestTemplateBuilder builder) {
-        return builder
+        RestTemplate restTemplate = builder
                 .setConnectTimeout(Duration.ofMillis(20000))
                 .setReadTimeout(Duration.ofMillis(100000))
-                .additionalMessageConverters(new MappingJackson2HttpMessageConverter())
                 .build();
+        restTemplate.getMessageConverters().add(new MappingJackson2HttpMessageConverter());
+        return restTemplate;
     }
 }
 ```
 
-### 2. **LinkAggregationUtil Class**
-No changes needed here as it already uses `RestTemplate`.
-
-### 3. **LinkAggConfigService Class**
-No changes needed here.
-
-### 4. **LinkAggregationService Class**
-Ensure that the `LinkAggregationResponse` class is properly annotated for JSON serialization/deserialization.
+Updated LinkAggregationUtil class:
 
 ```java
-@Service
-public class LinkAggregationService {
-
+@Component
+public class LinkAggregationUtil {
+    
     @Autowired
-    LinkAggConfigService linkAggConfigService;
-
-    @Autowired
-    LinkAggregationUtil linkAggregationUtil;
-
-    public LinkAggregationResponse getResponse(LinkAggregationRequest linkAggregationRequest) throws NoDataFoundException, LinkAggregationException {
-        Map<String, String> criteria = new HashMap<>();
-        if (linkAggregationRequest.getLocationClli() != null && !linkAggregationRequest.getLocationClli().isEmpty()) {
-            criteria.put(LinkAggregationConstants.LOCATION_CLLI, linkAggregationRequest.getLocationClli());
+    RestTemplate restTemplate;
+    
+    private static final Logger logger = LoggerFactory.getLogger(LinkAggregationUtil.class);
+    
+    public String findServiceForName(String name) {
+        return name.contains("http") ? name.toLowerCase() : "https://uts-ple.verizon.com/" + name.toLowerCase();
+    }
+    
+    public boolean validate(LinkAggregationRequest request) throws InputInvalidException {
+        if(request.getSystem()==null || request.getSystem().isEmpty()) {
+            throw new InputInvalidException(LinkAggregationConstants.NO_SYS_PROVIDED);
         }
-        if (linkAggregationRequest.getSourceSys() != null && !linkAggregationRequest.getSourceSys().isEmpty()) {
-            criteria.put(LinkAggregationConstants.SOURCE_SYS, linkAggregationRequest.getSourceSys());
+        if((request.getId()==null || request.getId().isEmpty()) && (request.getName()==null || request.getName().isEmpty())) {
+            throw new InputInvalidException(LinkAggregationConstants.ID_OR_NAME_NULL);
         }
-        if (linkAggregationRequest.getSystem() != null && !linkAggregationRequest.getSystem().isEmpty()) {
-            criteria.put(LinkAggregationConstants.SYSTEM, linkAggregationRequest.getSystem());
+        return true;
+    }
+    
+    public HttpHeaders addSecurityDtlsToMS() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String plainCreds = "MICROSERVICE: MICROSERVICE123";
+        byte[] plainCredsBytes = plainCreds.getBytes();
+        byte[] base64CredsBytes = Base64.encodeBase64(plainCredsBytes, false);
+        String base64Creds = new String(base64CredsBytes);
+        headers.add("Authorization", "Basic" + base64Creds);
+        return headers;
+    }
+    
+    public LinkAggregationResponse getLinkAggregationResults (String url, Map<String, String> map) throws NoDataFoundException, LinkAggregationException {
+        try {
+            HttpEntity<Map<String, String>> httpEntity = new HttpEntity<Map<String, String>>(map, addSecurityDtlsToMS());
+            ResponseEntity<LinkAggregationResponse> response = restTemplate.postForEntity(url, httpEntity, LinkAggregationResponse.class);
+            if (null != response && null != response.getBody() && !ObjectUtils.isEmpty(response.getBody())) {
+                return response.getBody();
+            }
+        } catch(RestClientException e) {
+            if(null != e.getMessage() && e.getMessage().contains("404")) {
+                throw new NoDataFoundException(LinkAggregationConstants.NO_DATA_FOUND);
+            }
+            throw new LinkAggregationException(LinkAggregationConstants.EXCEPTION_MSG_URL + url + LinkAggregationConstants.EXCEPTION_MSG + e.getMessage());
+        } catch (Exception e) {
+            throw new LinkAggregationException(LinkAggregationConstants.EXCEPTION_MSG_URL + url + LinkAggregationConstants.EXCEPTION_MSG + e.getMessage());
         }
-        if (linkAggregationRequest.getId() != null && !linkAggregationRequest.getId().isEmpty()) {
-            criteria.put(LinkAggregationConstants.ID, linkAggregationRequest.getId());
-        }
-        if (linkAggregationRequest.getName() != null && !linkAggregationRequest.getName().isEmpty()) {
-            criteria.put(LinkAggregationConstants.NAME, linkAggregationRequest.getName());
-        }
-        List<Map<String, String>> configPropsList = linkAggConfigService.getConfigData(LinkAggregationConstants.TCOMS_SRC_SYS_NAME);
-        Map<String, String> configProps = configPropsList.get(0);
-        String url = linkAggregationUtil.findServiceForName(configProps.get(LinkAggregationConstants.LINKAGGREGATION_SERVICE_NAME)) + configProps.get(LinkAggregationConstants.LINKAGGREGATION_SERVICE_URL);
-        return linkAggregationUtil.getLinkAggregationResults(url, criteria);
+        throw new NoDataFoundException(LinkAggregationConstants.NO_DATA_FOUND);
     }
 }
 ```
 
-### 5. **LinkAggregationController Class**
-No changes needed here.
-
-### Summary of Changes:
-- **AppConfig Class**: Added `MappingJackson2HttpMessageConverter` to the `RestTemplate` bean.
-- **LinkAggregationService Class**: Ensured proper handling of `LinkAggregationResponse`.
-
-These changes should resolve the `UnknownContentTypeException` by ensuring that the `RestTemplate` can handle JSON responses correctly. Let me know if you need any further assistance! 😊
-
-Source: Conversation with Copilot, 10/4/2024
-(1) Http Message Converters with the Spring Framework | Baeldung. https://www.baeldung.com/spring-httpmessageconverter-rest.
-(2) 解决:Could not extract response: no suitable HttpMessageConverter found .... https://blog.csdn.net/qq_44732146/article/details/130391606.
-(3) HttpMessageNotWritableException: No Converter for [class …] With Preset .... https://www.baeldung.com/spring-no-converter-with-preset.
-(4) 解决 RestTemplate 报错 UnknownContentTypeException - 叫我阿森就行 - 博客园. https://www.cnblogs.com/asen001/p/13634642.html.
-(5) Message conversion issue going from 2.3.0 to 2.3.1 #22080 - GitHub. https://github.com/spring-projects/spring-boot/issues/22080.
-(6) UnknownContentTypeException in Spring: Handling Unrecognized Content .... https://exceptiondecoded.com/posts/spring-unknowncontenttypeexception/.
-(7) @RequestMapping Content-Type error when a @RequestBody is used ... - GitHub. https://github.com/spring-projects/spring-boot/issues/3313.
-(8) HttpMessageNotWritableException: No Converter for [class …] With Preset .... https://bing.com/search?q=fix+UnknownContentTypeException+spring+boot.
-(9) Spring RestTemplate Error Handling - Baeldung. https://www.baeldung.com/spring-rest-template-error-handling.
-(10) Link aggregation - Wikipedia. https://en.wikipedia.org/wiki/Link_aggregation.
-(11) Link Aggregation Control Protocol - GeeksforGeeks. https://www.geeksforgeeks.org/link-aggregation-control-protocol/.
-(12) Network Basics: What Is Link Aggregation & How Does It Work? - Auvik. https://www.auvik.com/franklyit/blog/network-basics-link-aggregation/.
-(13) Externalized Configuration :: Spring Boot. https://docs.spring.io/spring-boot/reference/features/external-config.html.
-(14) A Custom Auto-Configuration with Spring Boot - Baeldung. https://www.baeldung.com/spring-boot-custom-auto-configuration.
-(15) Constructor Dependency Injection in Spring - Baeldung. https://www.baeldung.com/constructor-injection-in-spring.
-(16) Support - 04-Ethernet Link Aggregation Configuration- H3C. https://www.h3c.com/en/d_201211/761848_294551_0.htm.
+These changes should fix the "UnknownContentTypeException" error when trying to extract the JSON response into the LinkAggregationResponse object.

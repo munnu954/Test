@@ -1,8 +1,6 @@
-The `UnnecessaryStubbingException` indicates that there are some stubbings in your test method that are not being used during the execution of the test. This often happens when the mock setup is more extensive than what is actually invoked during the test run.
+The `UnnecessaryStubbingException` you're encountering indicates that some of the stubbings (mock setups) in your test method are not actually called during the execution of the test. This can happen if the method being tested does not utilize all the mocked methods as expected.
 
-In your case, it looks like the stubbing for `utils.convert(validPayload, ServiceMessage.class)` might not be necessary if the method is not called in the subsequent test code.
-
-Here's how you can refactor the test method to avoid unnecessary stubbings:
+To resolve this issue, we need to ensure that all stubbings are necessary for the test to run correctly. Here’s how you can refactor your test to avoid unnecessary stubbings and ensure that the test executes correctly.
 
 ### Refactored Test Method
 
@@ -11,9 +9,25 @@ Here's how you can refactor the test method to avoid unnecessary stubbings:
 void testOnMessage_SuccessfulProcessing() throws JsonProcessingException {
     // Arrange
     ServiceMessage serviceMessage = new ServiceMessage();
-    serviceMessage.setRequestJSONString("{...}"); // Mock the necessary fields if needed
+    serviceMessage.setRequestJSONString("{\"Service\": {\"ServiceBody\": {\"CallRequest\": {\"Body\": {\"Relinquishing Customer Details\": {\"AccountNumber\": \"12345\"}}}}}}}");
 
+    RequestJSONString requestJSONString = new RequestJSONString();
+    Service service = new Service();
+    ServiceBody serviceBody = new ServiceBody();
+    CallRequest callRequest = new CallRequest();
+    Body body = new Body();
+    CustomerDetails customerDetails = new CustomerDetails();
+    customerDetails.setAccountNumber("12345");
+    body.setRelinquishingCustomerDetails(customerDetails);
+    callRequest.setBody(body);
+    serviceBody.setCallRequest(callRequest);
+    service.setServiceBody(serviceBody);
+    requestJSONString.setService(service);
+
+    // Mock the necessary methods
     when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(serviceMessage);
+    when(serviceMessage.getRequestJSONString()).thenReturn("{\"Service\": {}}");
+    when(utils.convert(serviceMessage.getRequestJSONString(), RequestJSONString.class)).thenReturn(requestJSONString);
     when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
 
     // Act
@@ -30,15 +44,19 @@ void testOnMessage_SuccessfulProcessing() throws JsonProcessingException {
 
 ### Key Changes
 
-1. **Removed Unused Stubbing**: The unnecessary stubbing of `utils.convert(validPayload, ServiceMessage.class)` now ensures that it is actually used in the test. I've included a mock setup for `serviceMessage`.
+1. **ServiceMessage Setup**:
+   - Ensure that `serviceMessage` is properly constructed with a valid `requestJSONString` that contains a `Service` object with nested details. This is important to ensure that the `onMessage` method has the necessary structure when it executes.
 
-2. **Assert Does Not Throw**: I've kept the `assertDoesNotThrow` statement in the correct place to ensure that the method does not throw any exceptions during execution.
+2. **RequestJSONString Mocking**:
+   - The `RequestJSONString` is mocked to return a valid structure that includes a `Service` object, which is crucial for the method to proceed past validation checks.
 
-3. **Verify Call to Kafka Template**: After the method execution, I added a verification step to ensure that the `send` method on the `kafkaTemplate` is called, which checks that the processing logic is functioning as expected.
+3. **Verification of Kafka Send**:
+   - Added a verification step to ensure that the `send` method of the `kafkaTemplate` is called.
 
-### Additional Tips
+### Additional Notes
 
-- Ensure that the `validPayload` string is properly constructed to match the expected input format.
-- If you need to adjust the test further based on how the methods are processed within the listener, you can continue refining the mocks and assertions.
+- Ensure that `validPayload` is a string that matches the expected JSON format for the `ServiceMessage`.
+- The structure of the mocked objects (`Service`, `ServiceBody`, etc.) must match what your `onMessage` method expects when it processes the payload.
+- If there are any other calls made in the `onMessage` method that need to be mocked or verified, make sure to set them up accordingly.
 
-This should help you resolve the `UnnecessaryStubbingException` and maintain a clean test setup.
+This refactored test method should resolve the `UnnecessaryStubbingException` and provide a comprehensive test for the `onMessage` method in the `EventsMessageListener` class.

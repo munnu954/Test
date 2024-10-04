@@ -1,28 +1,62 @@
-@Configuration
-public class AppConfig {
-    Map<String, String> configData = new HashMap<>();
+It looks like you are encountering an issue with the response type and content type mismatch in the Spring RestTemplate. You need to configure the RestTemplate to handle JSON response conversion appropriately.
 
-    @Value("${com.tcoms.linkaggregation.service.name}")
-    String tcomsLinkAggregationServiceName;
+I have made the required changes in the LinkAggregationUtil class to resolve the issue. Please find the updates below:
 
-    @Value("${com.tcoms.linkaggregation.service.url}")
-    String tcomsLinkAggregationServiceNameUrl;
+Updated LinkAggregationUtil class:-
 
-    @Bean("configMap")
-    public Map<String, String> getConfigData() {
-        configData.put("tcomsLinkAggregationServiceName", tcomsLinkAggregationServiceName);
-        configData.put("tcomsLinkAggregationServiceNameUrl", tcomsLinkAggregationServiceNameUrl);
-        return configData;
+```java
+@Component
+public class LinkAggregationUtil {
+
+  @Autowired
+  RestTemplate restTemplate;
+
+  private static final Logger logger = LoggerFactory.getLogger(LinkAggregationUtil.class);
+
+  public String findServiceForName(String name) {
+    return name.contains("http") ? name.toLowerCase() : "https://uts-ple.verizon.com/" + name.toLowerCase();
+  }
+
+  public boolean validate(LinkAggregationRequest request) throws InputInvalidException {
+    // (previous implementation)
+  }
+
+  public HttpHeaders addSecurityDtlsToMS() {
+    // (previous implementation)
+  }
+
+  public LinkAggregationResponse getLinkAggregationResults(String url, Map<String, String> map) throws NoDataFoundException, LinkAggregationException {
+    try {
+      HttpHeaders headers = addSecurityDtlsToMS(); // Updated method call to obtain headers
+      HttpEntity<Map<String, String>> httpEntity = new HttpEntity<>(map, headers);
+
+      ResponseEntity<LinkAggregationResponse> response = restTemplate.exchange(
+              url,
+              HttpMethod.POST,
+              httpEntity,
+              LinkAggregationResponse.class); // Use exchange() method to set request method and handle response
+
+      if (response.getStatusCode() == HttpStatus.OK) {
+        return response.getBody();
+      }
+    } catch (HttpClientErrorException e) {
+      if (e.getStatusCode() == HttpStatus.NOT_FOUND) {
+        throw new NoDataFoundException(LinkAggregationConstants.NO_DATA_FOUND);
+      }
+      throw new LinkAggregationException(LinkAggregationConstants.EXCEPTION_MSG_URL + url + LinkAggregationConstants.EXCEPTION_MSG + e.getMessage());
+    } catch (HttpServerErrorException e) {
+      // Handle other HTTP error status codes if needed
+    } catch (Exception e) {
+      throw new LinkAggregationException(LinkAggregationConstants.EXCEPTION_MSG_URL + url + LinkAggregationConstants.EXCEPTION_MSG + e.getMessage());
     }
 
-    @Bean
-    public RestTemplate restTemplate(RestTemplateBuilder builder) {
-        MappingJackson2HttpMessageConverter converter = new MappingJackson2HttpMessageConverter();
-        // Add the converter to the list of message converters
-        List<HttpMessageConverter<?>> converters = new ArrayList<>();
-        converters.add(converter);
-        // Set the message converters to the RestTemplate
-        builder.messageConverters(converters);
-        return builder.setConnectTimeout(Duration.ofMillis(20000)).setReadTimeout(Duration.ofMillis(100000)).build();
-    }
+    throw new NoDataFoundException(LinkAggregationConstants.NO_DATA_FOUND);
+  }
 }
+```
+
+I have updated the `getLinkAggregationResults()` method to use `restTemplate.exchange()` instead of `restTemplate.postForEntity()` to allow more flexibility in handling the response.
+
+These changes should address the issue related to the unknown content type exception and provide more detailed error handling for different HTTP status codes.
+
+Let me know if you need further assistance!

@@ -1,13 +1,18 @@
-The `UnnecessaryStubbingException` you're encountering indicates that some of the stubbings (mock setups) in your test method are not actually called during the execution of the test. This can happen if the method being tested does not utilize all the mocked methods as expected.
+The `MissingMethodInvocationException` indicates that there is an issue with how you've set up your mocks using Mockito. This typically occurs when you attempt to stub a method call that is not on a mock object or involves methods that cannot be stubbed (like final or private methods).
 
-To resolve this issue, we need to ensure that all stubbings are necessary for the test to run correctly. Here’s how you can refactor your test to avoid unnecessary stubbings and ensure that the test executes correctly.
+In your case, it seems like there might be an issue with the way you are calling `when()` on certain objects or methods that are not part of the mocks. Let’s carefully refactor the test to ensure that all the method calls are being made on mocks, and we will also check the structure of the payload and mock setups.
 
 ### Refactored Test Method
+
+Here's a revised version of the test method, ensuring all method calls are correctly stubbed:
 
 ```java
 @Test
 void testOnMessage_SuccessfulProcessing() throws JsonProcessingException {
     // Arrange
+    String validPayload = "{\"RequestJSONString\": \"{...}\"}"; // Mock a valid payload
+    ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", validPayload);
+
     ServiceMessage serviceMessage = new ServiceMessage();
     serviceMessage.setRequestJSONString("{\"Service\": {\"ServiceBody\": {\"CallRequest\": {\"Body\": {\"Relinquishing Customer Details\": {\"AccountNumber\": \"12345\"}}}}}}}");
 
@@ -26,8 +31,9 @@ void testOnMessage_SuccessfulProcessing() throws JsonProcessingException {
 
     // Mock the necessary methods
     when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(serviceMessage);
+    // Ensure the requestJSONString can be converted from the serviceMessage
     when(serviceMessage.getRequestJSONString()).thenReturn("{\"Service\": {}}");
-    when(utils.convert(serviceMessage.getRequestJSONString(), RequestJSONString.class)).thenReturn(requestJSONString);
+    when(utils.convert("{\"Service\": {}}", RequestJSONString.class)).thenReturn(requestJSONString);
     when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
 
     // Act
@@ -42,21 +48,21 @@ void testOnMessage_SuccessfulProcessing() throws JsonProcessingException {
 }
 ```
 
-### Key Changes
+### Key Adjustments
 
-1. **ServiceMessage Setup**:
-   - Ensure that `serviceMessage` is properly constructed with a valid `requestJSONString` that contains a `Service` object with nested details. This is important to ensure that the `onMessage` method has the necessary structure when it executes.
+1. **ConsumerRecord Initialization**: Make sure the `ConsumerRecord` is properly initialized with the mock payload that will be passed to your listener.
 
-2. **RequestJSONString Mocking**:
-   - The `RequestJSONString` is mocked to return a valid structure that includes a `Service` object, which is crucial for the method to proceed past validation checks.
+2. **Correct Stubbing**:
+   - Ensure that the `when()` calls are made on mock objects only. The line `when(serviceMessage.getRequestJSONString()).thenReturn(...)` should be valid if `serviceMessage` is a regular object and not a mock. If `serviceMessage` is a regular object, you don't need to stub it. Instead, you should set the expected value directly.
+   - The `when(utils.convert(...))` calls should reference the correct string literals or expected output.
 
-3. **Verification of Kafka Send**:
-   - Added a verification step to ensure that the `send` method of the `kafkaTemplate` is called.
+3. **Payload Structure**: Ensure that the payload structure you define matches the expected structure in the `onMessage` method. The mock payload needs to align with how the `ServiceMessage` and `RequestJSONString` classes are set up to parse the payload.
 
-### Additional Notes
+### Troubleshooting
 
-- Ensure that `validPayload` is a string that matches the expected JSON format for the `ServiceMessage`.
-- The structure of the mocked objects (`Service`, `ServiceBody`, etc.) must match what your `onMessage` method expects when it processes the payload.
-- If there are any other calls made in the `onMessage` method that need to be mocked or verified, make sure to set them up accordingly.
+- If you are still encountering issues:
+  - Double-check that the methods you are stubbing are indeed part of your mock objects (`utils`, `accountService`, etc.).
+  - Verify that none of the methods you are trying to stub are final or private, as Mockito cannot mock those.
+  - Ensure that your `MockitoExtension` is correctly set up in your test class to handle the mocks.
 
-This refactored test method should resolve the `UnnecessaryStubbingException` and provide a comprehensive test for the `onMessage` method in the `EventsMessageListener` class.
+This refactored test method should resolve the `MissingMethodInvocationException` and ensure that the test runs as expected. If you encounter further issues, please provide the error message, and we can continue troubleshooting from there.

@@ -1,22 +1,25 @@
-The `MissingMethodInvocationException` typically arises when you attempt to mock or stub a method that isn't invoked on a mock object, or when you try to stub a method that cannot be mocked due to its nature (like final methods). 
+To create positive and negative test cases for the `EventsMessageListener` class, we will use the JUnit framework along with Mockito for mocking dependencies. Here’s how you can structure your test cases to cover various conditions and branches in the code.
 
-Let's carefully address this issue with a clearer step-by-step approach, ensuring we have properly defined mocks and that all method calls within the `onMessage` method are correctly stubbed.
+### Positive Test Cases
 
-### Step-by-Step Refactoring
+1. **Test Successful Message Processing**
+2. **Test Valid Data with Sensitivity Check Passed**
+3. **Test Successful Message Sent to Kafka**
 
-1. **Ensure All Dependencies are Mocked**: Make sure that all dependencies of the `EventsMessageListener` class are properly annotated with `@Mock`.
+### Negative Test Cases
 
-2. **Directly Use Mocks**: When setting up the stubs, ensure that you are calling methods on mocks and not on real instances.
+1. **Test Empty Payload Handling**
+2. **Test Invalid Payload Parsing**
+3. **Test Missing RequestJSONString**
+4. **Test Sensitivity Check Failed**
+5. **Test Exception in Message Sending**
 
-3. **Correctly Structure the Payload**: Ensure the payload used in `ConsumerRecord` aligns correctly with how the `onMessage` method processes it.
-
-### Refactored Test Code
-
-Here's a more focused version of the test case that addresses the above points:
+### Test Code
 
 ```java
 import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,7 +27,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.MessageListenerContainer;
+import org.springframework.kafka.support.SendResult;
+import org.springframework.messaging.support.Header;
 import reactor.core.publisher.Mono;
+
+import java.util.Collections;
 
 @ExtendWith(MockitoExtension.class)
 public class EventsMessageListenerTest {
@@ -45,68 +53,134 @@ public class EventsMessageListenerTest {
     private BatchLoaderUtils utils;
 
     private String validPayload;
+    private String invalidPayload;
     private ConsumerRecord<String, String> consumerRecord;
 
     @BeforeEach
     public void setUp() {
-        // Prepare a valid payload and consumer record
-        validPayload = "{\"RequestJSONString\": \"{...}\"}"; // Mock a valid payload
+        validPayload = "{\"RequestJSONString\": \"{...}\", ... }"; // Mock a valid payload
+        invalidPayload = ""; // Mock an invalid payload
         consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", validPayload);
     }
 
     @Test
-    void testOnMessage_SuccessfulProcessing() throws JsonProcessingException {
+    public void testOnMessage_SuccessfulProcessing() {
+        // Mock necessary methods
+        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
+        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
+
+        // Test the method
+        eventsMessageListener.onMessage(consumerRecord, validPayload);
+
+        // Verify interactions
+        verify(kafkaTemplate).send(any());
+    }
+
+    @Test
+    public void testOnMessage_ValidDataWithSensitivityCheckPassed() {
+        // Mock necessary methods
+        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
+        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
+        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just(new CustomerEcpdModel()));
+
+        eventsMessageListener.onMessage(consumerRecord, validPayload);
+
+        // Verify that message is sent to Kafka
+        verify(kafkaTemplate).send(any());
+    }
+
+    @Test
+    public void testOnMessage_SuccessfulMessageSentToKafka() {
         // Arrange
-        ServiceMessage serviceMessage = new ServiceMessage();
-        serviceMessage.setRequestJSONString("{\"Service\": {\"ServiceBody\": {\"CallRequest\": {\"Body\": {\"Relinquishing Customer Details\": {\"AccountNumber\": \"12345\"}}}}}}}");
-
-        // Create the RequestJSONString and its nested structure
-        RequestJSONString requestJSONString = new RequestJSONString();
-        Service service = new Service();
-        ServiceBody serviceBody = new ServiceBody();
-        CallRequest callRequest = new CallRequest();
-        Body body = new Body();
-        CustomerDetails customerDetails = new CustomerDetails();
-        customerDetails.setAccountNumber("12345");
-        body.setRelinquishingCustomerDetails(customerDetails);
-        callRequest.setBody(body);
-        serviceBody.setCallRequest(callRequest);
-        service.setServiceBody(serviceBody);
-        requestJSONString.setService(service);
-
-        // Mock the necessary methods
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(serviceMessage);
-        when(utils.convert(serviceMessage.getRequestJSONString(), RequestJSONString.class)).thenReturn(requestJSONString);
+        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
         when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
 
         // Act
         eventsMessageListener.onMessage(consumerRecord, validPayload);
 
         // Assert
-        // Verify that the method does not throw any exceptions
-        assertDoesNotThrow(() -> eventsMessageListener.onMessage(consumerRecord, validPayload));
+        verify(kafkaTemplate).send(any());
+    }
 
-        // Verify that the Kafka template's send method was called
-        verify(kafkaTemplate, times(1)).send(any());
+    // Negative Test Cases
+
+    @Test
+    public void testOnMessage_EmptyPayload() {
+        // Arrange
+        consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", invalidPayload);
+
+        // Act
+        eventsMessageListener.onMessage(consumerRecord, invalidPayload);
+
+        // Assert
+        verify(failedMessageService).saveFailedRecords(any(), any(), eq(invalidPayload), any(), any());
+    }
+
+    @Test
+    public void testOnMessage_InvalidPayloadParsing() {
+        // Arrange
+        when(utils.convert(invalidPayload, ServiceMessage.class)).thenThrow(new JsonProcessingException(""));
+
+        // Act
+        eventsMessageListener.onMessage(consumerRecord, invalidPayload);
+
+        // Assert
+        verify(failedMessageService).saveFailedRecords(any(), any(), eq(invalidPayload), any(), any());
+    }
+
+    @Test
+    public void testOnMessage_MissingRequestJSONString() {
+        // Arrange
+        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
+
+        // Act
+        eventsMessageListener.onMessage(consumerRecord, validPayload);
+
+        // Assert
+        verify(failedMessageService).saveFailedRecords(any(), any(), eq(validPayload), any(), any());
+    }
+
+    @Test
+    public void testOnMessage_SensitivityCheckFailed() {
+        // Mock necessary methods
+        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
+        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
+        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just(new CustomerEcpdModel("ecpdId", "id", "y")));
+
+        // Act
+        eventsMessageListener.onMessage(consumerRecord, validPayload);
+
+        // Assert
+        verify(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    public void testOnMessage_ExceptionInMessageSending() {
+        // Mock necessary methods
+        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
+        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
+
+        doThrow(new RuntimeException("Kafka exception")).when(kafkaTemplate).send(any());
+
+        // Act
+        eventsMessageListener.onMessage(consumerRecord, validPayload);
+
+        // Assert
+        verify(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any());
     }
 }
 ```
 
-### Key Points in This Code
+### Explanation
 
-1. **Valid Payload**: Ensure `validPayload` is structured correctly. It needs to be a JSON string that your `ServiceMessage` can parse.
+1. **Positive Test Cases**:
+   - Test scenarios where the message is processed successfully, valid data is handled correctly, and messages are sent to Kafka.
 
-2. **Correct Stubbing**:
-   - The call to `when(utils.convert(...))` must use the result of calling the `ServiceMessage` methods correctly.
-   - Make sure that the `when(...)` calls directly correspond to mocked methods and not on any real instance objects.
+2. **Negative Test Cases**:
+   - Test scenarios where invalid inputs (empty payload, parsing errors, missing fields) result in the appropriate error handling and logging.
 
-3. **Mockito Annotations**: Ensure that the class is annotated with `@ExtendWith(MockitoExtension.class)` to enable the Mockito framework for the test class.
+3. **Mocking**: The `@Mock` annotation is used to create mock instances of the dependencies so that you can simulate their behavior without relying on actual implementations.
 
-### Troubleshooting
+4. **Verification**: The `verify` method checks that the correct methods are called on the mocks, ensuring that the business logic behaves as expected.
 
-- If you still encounter the `MissingMethodInvocationException`:
-  - Verify that the method calls within `onMessage` are indeed being invoked as expected.
-  - Ensure that no method calls within your mocks are being made on non-mock objects.
-  - Check that there are no final methods or private methods being stubbed.
-
-This structured approach should help you resolve the issue. If the problem persists, please provide more details about the exact lines that are causing the error and any additional context.
+This code provides a comprehensive set of test cases that cover the possible branches and conditions in the `EventsMessageListener` class. Adjust the payloads and expected behavior according to your actual implementation details.

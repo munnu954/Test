@@ -1,186 +1,44 @@
-To create positive and negative test cases for the `EventsMessageListener` class, we will use the JUnit framework along with Mockito for mocking dependencies. Here’s how you can structure your test cases to cover various conditions and branches in the code.
+The `UnnecessaryStubbingException` indicates that there are some stubbings in your test method that are not being used during the execution of the test. This often happens when the mock setup is more extensive than what is actually invoked during the test run.
 
-### Positive Test Cases
+In your case, it looks like the stubbing for `utils.convert(validPayload, ServiceMessage.class)` might not be necessary if the method is not called in the subsequent test code.
 
-1. **Test Successful Message Processing**
-2. **Test Valid Data with Sensitivity Check Passed**
-3. **Test Successful Message Sent to Kafka**
+Here's how you can refactor the test method to avoid unnecessary stubbings:
 
-### Negative Test Cases
-
-1. **Test Empty Payload Handling**
-2. **Test Invalid Payload Parsing**
-3. **Test Missing RequestJSONString**
-4. **Test Sensitivity Check Failed**
-5. **Test Exception in Message Sending**
-
-### Test Code
+### Refactored Test Method
 
 ```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
+@Test
+void testOnMessage_SuccessfulProcessing() throws JsonProcessingException {
+    // Arrange
+    ServiceMessage serviceMessage = new ServiceMessage();
+    serviceMessage.setRequestJSONString("{...}"); // Mock the necessary fields if needed
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.listener.MessageListenerContainer;
-import org.springframework.kafka.support.SendResult;
-import org.springframework.messaging.support.Header;
-import reactor.core.publisher.Mono;
+    when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(serviceMessage);
+    when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
 
-import java.util.Collections;
+    // Act
+    eventsMessageListener.onMessage(consumerRecord, validPayload);
 
-@ExtendWith(MockitoExtension.class)
-public class EventsMessageListenerTest {
+    // Assert
+    // Verify that the method does not throw any exceptions
+    assertDoesNotThrow(() -> eventsMessageListener.onMessage(consumerRecord, validPayload));
 
-    @InjectMocks
-    private EventsMessageListener eventsMessageListener;
-
-    @Mock
-    private AccountEcpdService accountService;
-
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Mock
-    private KafkaFalloutService failedMessageService;
-
-    @Mock
-    private BatchLoaderUtils utils;
-
-    private String validPayload;
-    private String invalidPayload;
-    private ConsumerRecord<String, String> consumerRecord;
-
-    @BeforeEach
-    public void setUp() {
-        validPayload = "{\"RequestJSONString\": \"{...}\", ... }"; // Mock a valid payload
-        invalidPayload = ""; // Mock an invalid payload
-        consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", validPayload);
-    }
-
-    @Test
-    public void testOnMessage_SuccessfulProcessing() {
-        // Mock necessary methods
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-
-        // Test the method
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
-
-        // Verify interactions
-        verify(kafkaTemplate).send(any());
-    }
-
-    @Test
-    public void testOnMessage_ValidDataWithSensitivityCheckPassed() {
-        // Mock necessary methods
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just(new CustomerEcpdModel()));
-
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
-
-        // Verify that message is sent to Kafka
-        verify(kafkaTemplate).send(any());
-    }
-
-    @Test
-    public void testOnMessage_SuccessfulMessageSentToKafka() {
-        // Arrange
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
-
-        // Assert
-        verify(kafkaTemplate).send(any());
-    }
-
-    // Negative Test Cases
-
-    @Test
-    public void testOnMessage_EmptyPayload() {
-        // Arrange
-        consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", invalidPayload);
-
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, invalidPayload);
-
-        // Assert
-        verify(failedMessageService).saveFailedRecords(any(), any(), eq(invalidPayload), any(), any());
-    }
-
-    @Test
-    public void testOnMessage_InvalidPayloadParsing() {
-        // Arrange
-        when(utils.convert(invalidPayload, ServiceMessage.class)).thenThrow(new JsonProcessingException(""));
-
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, invalidPayload);
-
-        // Assert
-        verify(failedMessageService).saveFailedRecords(any(), any(), eq(invalidPayload), any(), any());
-    }
-
-    @Test
-    public void testOnMessage_MissingRequestJSONString() {
-        // Arrange
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
-
-        // Assert
-        verify(failedMessageService).saveFailedRecords(any(), any(), eq(validPayload), any(), any());
-    }
-
-    @Test
-    public void testOnMessage_SensitivityCheckFailed() {
-        // Mock necessary methods
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just(new CustomerEcpdModel("ecpdId", "id", "y")));
-
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
-
-        // Assert
-        verify(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any());
-    }
-
-    @Test
-    public void testOnMessage_ExceptionInMessageSending() {
-        // Mock necessary methods
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-
-        doThrow(new RuntimeException("Kafka exception")).when(kafkaTemplate).send(any());
-
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
-
-        // Assert
-        verify(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any());
-    }
+    // Verify that the Kafka template's send method was called
+    verify(kafkaTemplate, times(1)).send(any());
 }
 ```
 
-### Explanation
+### Key Changes
 
-1. **Positive Test Cases**:
-   - Test scenarios where the message is processed successfully, valid data is handled correctly, and messages are sent to Kafka.
+1. **Removed Unused Stubbing**: The unnecessary stubbing of `utils.convert(validPayload, ServiceMessage.class)` now ensures that it is actually used in the test. I've included a mock setup for `serviceMessage`.
 
-2. **Negative Test Cases**:
-   - Test scenarios where invalid inputs (empty payload, parsing errors, missing fields) result in the appropriate error handling and logging.
+2. **Assert Does Not Throw**: I've kept the `assertDoesNotThrow` statement in the correct place to ensure that the method does not throw any exceptions during execution.
 
-3. **Mocking**: The `@Mock` annotation is used to create mock instances of the dependencies so that you can simulate their behavior without relying on actual implementations.
+3. **Verify Call to Kafka Template**: After the method execution, I added a verification step to ensure that the `send` method on the `kafkaTemplate` is called, which checks that the processing logic is functioning as expected.
 
-4. **Verification**: The `verify` method checks that the correct methods are called on the mocks, ensuring that the business logic behaves as expected.
+### Additional Tips
 
-This code provides a comprehensive set of test cases that cover the possible branches and conditions in the `EventsMessageListener` class. Adjust the payloads and expected behavior according to your actual implementation details.
+- Ensure that the `validPayload` string is properly constructed to match the expected input format.
+- If you need to adjust the test further based on how the methods are processed within the listener, you can continue refining the mocks and assertions.
+
+This should help you resolve the `UnnecessaryStubbingException` and maintain a clean test setup.

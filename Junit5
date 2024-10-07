@@ -1,170 +1,181 @@
-```
-//import and initialize appropriate classes
-
-import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.stream.Collectors;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
-import org.apache.kafka.clients.producer.SendResult;
-import org.apache.kafka.common.header.Header;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.function.Executable;
-import org.mockito.BDDMockito;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.stubbing.Answer;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
-import reactor.core.publisher.Mono;
-
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.fasterxml.jackson.databind.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.verizon.vbg.ledger.exception.FalloutException;
+import com.verizon.vbg.ledger.listener.AccountEcpdService;
+import com.verizon.vbg.ledger.listener.BatchLoaderUtils;
+import com.verizon.vbg.ledger.listener.EventsMessageListener;
+import com.verizon.vbg.ledger.listener.KafkaFalloutService;
+import com.verizon.vbg.ledger.model.CustomerDetails;
+import com.verizon.vbg.ledger.model.CustomerEcpdModel;
+import com.verizon.vbg.ledger.model.MTNDetails;
+import com.verizon.vbg.ledger.model.RequestJSONString;
+import com.verizon.vbg.ledger.model.ServiceMessage;
+import java.time.Calendar;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.SendResult;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
 
 @ExtendWith(MockitoExtension.class)
-class EventsMessageListenerPrivateElseTest {
+public class EventMessageListenerTest {
 
     @InjectMocks
-    private EventsMessageListener classUnderTest;
+    private EventsMessageListener eventsMessageListener;
     @Mock
-    private AccountEcpdService accountEcpdService;
+    private AccountEcpdService accountService;
+    @Mock
+    private KafkaFalloutService kafkaFalloutService;
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
     @Mock
-    private KafkaFalloutService failedMessageService;
+    private BatchLoaderUtils batchLoaderUtils;
     @Mock
-    private BatchLoaderUtils utils;
-
-    @Value("${topics.outbound.tys-event:none}")
-    private String producerTopic;
-    @Value("${topics.inbound.tys-event:none")
-    private String inboundTopic;
-
-    private Method filterAccountNumMethod = getMethodToTest("filterAccountNum", 1);
-    private Method sendMessageAsyncMethod = getMethodToTest("sendMessageAsync", 6);
+    private ObjectMapper om;
+    @Captor
+    private ArgumentCaptor<String> argumentCaptor;
+    @Captor
+    private ArgumentCaptor<ReactorKafkaSender.SendOperation<String, String>> sendOperationArgumentCaptor;
+    private String transactionId = UUID.randomUUID().toString();
 
     @BeforeEach
-    void setUp() {
-        producerTopic = "topic-name";
-        inboundTopic = "test-topic";
+    public void setup() {
+        when(kafkaTemplate.send(any(ProducerRecord.class)))
+                .thenReturn(Mono.just(new SendResult<>(null, null)));
     }
 
-    @Test
-    void filterAccountNum_withCorrectInput_shouldReturnCorrectValue() throws NoSuchMethodException, ExecutionException, InterruptedException {
-        // arrange
-        String input = "1234-123456";
+    @Nested
+    @DisplayName("onMessage")
+    class onMessage {
 
-        // act
-        String result = (String) filterAccountNumMethod.invoke(classUnderTest, input);
-
-        // assert
-        assertEquals("123456", result);
-    }
-
-    @Test
-    void sendMessageAsync_withCorrectInput() throws Exception {
-        // arrange
-        when(failedMessageService.saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar())).thenReturn(null);
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("mock-topic", "mock-key", "mock-value");
-        String transactionID = "mock-transaction-id";
-        String payload = "mock-payload";
-        Mono<SendResult<String, String>> future = Mono.just(new SendResult<>(producerRecord, new RecordMetadata(1L, 1L, "1", 1L, 1L, 1L, 1L)));
-
-        BDDMockito.given(kafkaTemplate.send(producerRecord)).willReturn(future);
-
-        // act
-        sendMessageAsyncMethod.invoke(classUnderTest, producerRecord, transactionID, payload, producerTopic, "TYS_AUDIT_EVENT", 'Y', null);
-
-        // assert
-        verify(kafkaTemplate, times(1)).send(producerRecord);
-        verify(failedMessageService, times(0)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), 'Y');
-    }
-
-    @Test
-    void sendMessageAsync_withFailedSend_shouldCallSaveFailedRecords() throws Exception {
-        // arrange
-        CompletableFuture<SendResult<String, String>> badFuture = new CompletableFuture<>();
-        badFuture.completeExceptionally(new Exception());
-
-        ProducerRecord<String, String> producerRecord = new ProducerRecord("mock-topic", "mock-value");
-        String message = "mock-message";
-        String key = "mock-key";
-        String topic = "mock-topic";
-
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(badFuture);
-
-        // act
-        sendMessageAsyncMethod.invoke(classUnderTest, producerRecord, key, message, topic, "mock", 'N', null);
-
-        // assert
-        verify(kafkaTemplate, times(1)).send(producerRecord);
-        verify(failedMessageService, times(1)).saveFailedRecords(topic, key, message, "mock", 'N');
-    }
-
-    @Test
-    void throwException_filterAccountNum_withNoInput_shouldThrowException() {
-        // act + assert
-        String result = assertThrows(IllegalArgumentException.class, () -> {
-            classUnderTest.filterAccountNum("");
-        }).getMessage();
-
-        // assert
-        assertEquals("filterAccountNum: 'input' cannot be empty or null.", result);
-    }
-
-    @Test
-    void throwException_filterAccountNum_withMultipleInputs_shouldThrowWrongArgumentsException() {
-        // act + assert
-        String result = assertThrows(IllegalArgumentException.class, () -> {
-            methodWithVariousArgs().invoke(classUnderTest, "1234-123456", "123456");
-        }).getMessage();
-
-        // assert
-        assertEquals("Method 'filterAccountNum' in 'EventsMessageListener' expects 1 argument(s) but got 2.", result);
-    }
-
-    @Test
-    void throwException_sendMessageAsync_withInvalidInput_throwsException() {
-        assertThrows(IllegalArgumentException.class,
-                new Executable() {
-                    @Override
-                    public void execute() throws Throwable {
-                        sendMessageAsyncMethod.invoke(classUnderTest, null, "mock-key", "mock-message", inboundTopic, "mock-insight", 'N' , null);
-                    }
-                }
-        );
-    }
-
-
-    private Method getMethodToTest(String methodName, int index) {
-        for (Method method : EventsMessageListener.class.getDeclaredMethods()) {
-            if (method.getName().equals(methodName) && method.getParameterTypes().length == index) {
-                method.setAccessible(true);
-                return method;
-            }
+        @Test
+        @DisplayName("Should return null when the payload is empty")
+        public void shouldReturnNullWhenPayloadIsEmpty() {
+            EventsMessageListener listener = new EventsMessageListener(null, null, null, null, null, null, null, null);
+            listener.onMessage(null, "");
         }
 
-        throw new RuntimeException("Could not find method: " + methodName);
-    }
-
-    private Method methodWithVariousArgs() {
-        try {
-            return EventsMessageListener.class.getDeclaredMethod("methodWithVariousArgs", String.class, String.class);
-        } catch (NoSuchMethodException e) {
-            throw new RuntimeException("Could not find method: methodWithVariousArgs");
+        @Test
+        @DisplayName("Should return null when serviceMessage cannot be converted")
+        public void shouldReturnNullWhenServiceMessageCannotBeConverted() throws JsonProcessingException {
+            when(batchLoaderUtils.convert(any(), any()))
+                    .thenThrow(new JsonProcessingException("Error"));
+            eventsMessageListener.onMessage(null, "{ \"key\": \"value\" }");
         }
-    }
-}
-```
+
+        @Test
+        @DisplayName("Should return null when requestJSONString cannot be converted")
+        public void shouldReturnNullWhenRequestJSONStringCannotBeConverted() throws JsonProcessingException {
+            ServiceMessage serviceMessage = new ServiceMessage();
+            when(batchLoaderUtils.convert(any(), any()))
+                    .thenReturn(serviceMessage);
+            when(batchLoaderUtils.convert(any(), any()))
+                    .thenThrow(new JsonProcessingException("Error"));
+            eventsMessageListener.onMessage(null, "{\"RequestJSONString\":{}}");
+        }
+
+        @Test
+        @DisplayName("Should return null when account number is not valid")
+        public void shouldReturnNullWhenAccountNumberIsNotValid() {
+            ServiceMessage serviceMessage = new ServiceMessage();
+            RequestJSONString requestJSONString = new RequestJSONString();
+            CustomerDetails customerDetails = new CustomerDetails();
+            customerDetails.setAccountNumber("123");
+            requestJSONString.setService(new Service());
+            requestJSONString.getService().getServiceBody()
+                    .setCallRequest(new com.verizon.vbg.ledger.model.CallRequest());
+            requestJSONString.getService().getServiceBody()
+                    .getCallRequest().setBody(new Body());
+            requestJSONString.getService().getServiceBody()
+                    .getCallRequest().getBody().setRelinquishingCustomerDetails(customerDetails);
+            when(batchLoaderUtils.convert(any(), any()))
+                    .thenReturn(serviceMessage, requestJSONString);
+            when(batchLoaderUtils.isValidData(any()))
+                    .thenReturn(false);
+            eventsMessageListener.onMessage(null, "{\"RequestJSONString\":{}}");
+        }
+
+        @Test
+        @DisplayName("Should not save failed records when ecpd is not found")
+        public void shouldNotSaveFailedRecordsWhenEcpdNotFound() {
+            ServiceMessage serviceMessage = new ServiceMessage();
+            RequestJSONString requestJSONString = new RequestJSONString();
+            CustomerDetails customerDetails = new CustomerDetails();
+            customerDetails.setAccountNumber("123");
+            requestJSONString.setService(new Service());
+            requestJSONString.getService().getServiceBody()
+                    .setCallRequest(new com.verizon.vbg.ledger.model.CallRequest());
+            requestJSONString.getService().getServiceBody()
+                    .getCallRequest().setBody(new Body());
+            requestJSONString.getService().getServiceBody()
+                    .getCallRequest().getBody().setRelinquishingCustomerDetails(customerDetails);
+            when(batchLoaderUtils.convert(any(), any()))
+                    .thenReturn(serviceMessage, requestJSONString);
+            when(accountService.getEcpdByAcctId(any()))
+                    .thenReturn(Mono.empty());
+            eventsMessageListener.onMessage(null, "{\"RequestJSONString\":{}}");
+            verify(kafkaFalloutService, times(0))
+                    .saveFailedRecords(any(), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Should save failed records when sensitivity is yes")
+        public void shouldSaveFailedRecordsWhenSensitivityIsYes() {
+            ServiceMessage serviceMessage = new ServiceMessage();
+            RequestJSONString requestJSONString = new RequestJSONString();
+            CustomerDetails customerDetails = new CustomerDetails();
+            customerDetails.setAccountNumber("123");
+            requestJSONString.setService(new Service());
+            requestJSONString.getService().getServiceBody()
+                    .setCallRequest(new com.verizon.vbg.ledger.model.CallRequest());
+            requestJSONString.getService().getServiceBody()
+                    .getCallRequest().setBody(new Body());
+            requestJSONString.getService().getServiceBody()
+                    .getCallRequest().getBody().setRelinquishingCustomerDetails(customerDetails);
+            CustomerEcpdModel customerEcpdModel = new CustomerEcpdModel();
+            customerEcpdModel.setSensitivity("y");
+            when(batchLoaderUtils.convert(any(), any()))
+                    .thenReturn(serviceMessage, requestJSONString);
+            when(accountService.getEcpdByAcctId(any()))
+                    .thenReturn(Mono.just(customerEcpdModel.getEcpd()));
+            eventsMessageListener.onMessage(null, "{\"RequestJSONString\":{}}");
+            verify(kafkaFalloutService, times(1))
+                    .saveFailedRecords(any(), any(), argumentCaptor.capture(), any(), any());
+            assertEquals("{\"RequestJSONString\":{}}", argumentCaptor.getValue());
+        }
+
+        @Test
+        @DisplayName("Should not save failed records when sensitivity is no")
+        public void shouldNotSaveFailedRecordsWhenSensitivityIsNo() {
+            ServiceMessage serviceMessage = new ServiceMessage();
+            RequestJSONString requestJSONString = new RequestJSONString();
+            CustomerDetails customerDetails = new CustomerDetails();
+            customerDetails.setAccountNumber("123");
+            requestJSONString.setService(new Service());

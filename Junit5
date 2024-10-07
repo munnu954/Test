@@ -1,6 +1,6 @@
-The error you're encountering typically occurs when there is a mismatch between the expected return type of the mocked method and the type being returned. The `kafkaTemplate.send` method is expected to return a `ListenableFuture`, and the mocking should reflect this appropriately. Let's correct the test cases to ensure proper mocking using `CompletableFuture` instead of `SettableListenableFuture` for compatibility:
+The error message you're seeing indicates that the `saveFailedRecords` method on the `failedMessageService` mock was never called. This could happen if the exception handling in the `sendMessageAsync` method isn't correctly triggering the call to `saveFailedRecords`. 
 
-Here's the updated test code:
+To address this, let's ensure the asynchronous handling is set up correctly, and the `whenCompleteAsync` callback is triggered properly. Here’s the updated test case code:
 
 ```java
 import static org.mockito.ArgumentMatchers.any;
@@ -18,8 +18,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.support.SendResult;
-import org.springframework.util.concurrent.ListenableFuture;
-import org.springframework.util.concurrent.ListenableFutureCallback;
 
 @ExtendWith(MockitoExtension.class)
 public class BatchLoaderUtilsTest {
@@ -70,7 +68,7 @@ public class BatchLoaderUtilsTest {
     }
 
     @Test
-    public void testSendMessageAsync_Failure() throws ExecutionException, InterruptedException {
+    public void testSendMessageAsync_Failure() {
         // Arrange
         CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
         future.completeExceptionally(new RuntimeException("Kafka send exception"));
@@ -80,19 +78,25 @@ public class BatchLoaderUtilsTest {
         // Act
         batchLoaderUtils.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, errorCategory);
 
+        // Wait for the async operation to complete
+        try {
+            future.get();
+        } catch (Exception ignored) {
+            // Ignored because we expect an exception
+        }
+
         // Assert
         verify(failedMessageService, times(1)).saveFailedRecords(eq(producerTopic), eq(transactionId), eq(payload), eq(insightName), eq(sensitivityCheckDone), eq(errorCategory), anyString());
     }
 }
 ```
 
-### Key Changes:
+### Key Updates:
 
-1. **Use of `CompletableFuture`**:
-   - Updated to use `CompletableFuture`, which is more appropriate for the kind of asynchronous operations we are simulating with Kafka.
+1. **Handling Future Completion**:
+   - In the `testSendMessageAsync_Failure` test, after calling `sendMessageAsync`, we call `future.get()`. This blocks the test execution until the future is completed, ensuring the `whenCompleteAsync` callback has a chance to execute. This is crucial for testing asynchronous operations.
 
-2. **Mocking with `CompletableFuture`**:
-   - Used `future.complete` for simulating a successful operation.
-   - Used `future.completeExceptionally` for simulating an exception during the operation.
+2. **Exception Handling**:
+   - The exception from `future.get()` is caught and ignored because it is expected in this test scenario.
 
-These changes should resolve the error and allow the tests to correctly simulate the behavior of the `sendMessageAsync` method.
+This should ensure that the `saveFailedRecords` method is correctly invoked when an exception occurs during the message sending process.

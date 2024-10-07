@@ -1,26 +1,37 @@
-The error `java.lang.StringIndexOutOfBoundsException: begin 0, end 200, length 194` indicates that the substring operation is attempting to access a range beyond the actual length of the string. To fix this, you need to ensure that the substring operation only takes place if the string length is indeed greater than 200 characters.
-
-Here's the corrected test code to handle this exception:
+To achieve 100% code coverage for the `EventsMessageListener` class using JUnit 5, you'll need to thoroughly test all branches and conditions in the code, including error handling. Below is a comprehensive test suite that covers different scenarios. The tests use Mockito for mocking dependencies and the Reflection API to access private fields and methods.
 
 ```java
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
-import java.util.concurrent.CompletableFuture;
-
+import com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
+import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.support.SendResult;
+import org.slf4j.Logger;
 import org.springframework.kafka.core.KafkaTemplate;
+import reactor.core.publisher.Mono;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.UUID;
 
 @ExtendWith(MockitoExtension.class)
-public class BatchLoaderUtilsTest {
+public class EventsMessageListenerTest {
+
+    @InjectMocks
+    private EventsMessageListener eventsMessageListener;
+
+    @Mock
+    private AccountEcpdService accountService;
 
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
@@ -28,60 +39,112 @@ public class BatchLoaderUtilsTest {
     @Mock
     private KafkaFalloutService failedMessageService;
 
-    @InjectMocks
-    private BatchLoaderUtils batchLoaderUtils;
+    @Mock
+    private BatchLoaderUtils utils;
 
-    private ProducerRecord<String, String> producerRecord;
-    private String transactionId;
-    private String payload;
-    private String producerTopic;
-    private String insightName;
-    private char sensitivityCheckDone;
-    private String errorCategory;
+    @Mock
+    private Logger logger;
+
+    private static final String VALID_PAYLOAD = "{\"RequestJSONString\": \"{\\\"Service\\\":{\\\"ServiceBody\\\":{\\\"CallRequest\\\":{\\\"Body\\\":{\\\"RelinquishingCustomerDetails\\\":{\\\"AccountNumber\\\":\\\"1234\\\"}}}}}}\"}";
+    private static final String PRODUCER_TOPIC = "test-topic";
 
     @BeforeEach
-    void setUp() {
-        producerRecord = new ProducerRecord<>("topic", "key", "value");
-        transactionId = "txnId";
-        payload = "payload";
-        producerTopic = "producerTopic";
-        insightName = "insightName";
-        sensitivityCheckDone = 'Y';
-        errorCategory = "errorCategory";
+    public void setUp() throws NoSuchFieldException, IllegalAccessException {
+        // Inject private fields using reflection
+        Field producerTopicField = EventsMessageListener.class.getDeclaredField("producerTopic");
+        producerTopicField.setAccessible(true);
+        producerTopicField.set(eventsMessageListener, PRODUCER_TOPIC);
+
+        Field loggerField = EventsMessageListener.class.getDeclaredField("LOGGER");
+        loggerField.setAccessible(true);
+        loggerField.set(eventsMessageListener, logger);
     }
 
     @Test
-    void testSendMessageAsync_withShortErrorMessage() {
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.completeExceptionally(new RuntimeException("Short error message"));
+    void testOnMessage_withValidPayload() throws JsonProcessingException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        // Set up mocks for valid payload
+        when(utils.convert(anyString(), eq(ServiceMessage.class)))
+                .thenReturn(new ServiceMessage());
+        when(utils.convert(anyString(), eq(RequestJSONString.class)))
+                .thenReturn(createValidRequestJSONString());
+        when(utils.isValidData(anyString())).thenReturn(true);
+        when(accountService.getEcpdByAcctId(anyString()))
+                .thenReturn(Mono.just("{\"sensitivity\": \"N\", \"ecpd\": \"someEcpd\"}"));
+        when(utils.convert(anyString(), eq(CustomerEcpdModel.class)))
+                .thenReturn(new CustomerEcpdModel());
 
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+        // Create test record
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, null, VALID_PAYLOAD);
 
-        batchLoaderUtils.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, errorCategory);
+        // Call private method 'onMessage' using reflection
+        Method onMessageMethod = EventsMessageListener.class.getDeclaredMethod("onMessage", ConsumerRecord.class, String.class);
+        onMessageMethod.setAccessible(true);
+        onMessageMethod.invoke(eventsMessageListener, record, VALID_PAYLOAD);
 
-        verify(failedMessageService, times(1)).saveFailedRecords(eq(producerTopic), eq(transactionId), eq(payload), eq(insightName), eq(sensitivityCheckDone), eq(errorCategory), eq("Short error message"));
+        // Verify interactions
+        verify(utils, times(1)).convert(anyString(), eq(ServiceMessage.class));
+        verify(utils, times(1)).convert(anyString(), eq(RequestJSONString.class));
+        verify(accountService, times(1)).getEcpdByAcctId(anyString());
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
     }
 
     @Test
-    void testSendMessageAsync_withLongErrorMessage() {
-        String longErrorMessage = "This is a very long error message that exceeds two hundred characters. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.";
-        String expectedErrorMessage = longErrorMessage.length() > 200 ? longErrorMessage.substring(0, 200) : longErrorMessage;
+    void testOnMessage_withEmptyPayload() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        // Create test record with empty payload
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, null, "");
 
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.completeExceptionally(new RuntimeException(longErrorMessage));
+        // Call private method 'onMessage' using reflection
+        Method onMessageMethod = EventsMessageListener.class.getDeclaredMethod("onMessage", ConsumerRecord.class, String.class);
+        onMessageMethod.setAccessible(true);
+        onMessageMethod.invoke(eventsMessageListener, record, "");
 
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+        // Verify interactions
+        verify(failedMessageService, times(0)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
 
-        batchLoaderUtils.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, errorCategory);
+    @Test
+    void testOnMessage_withInvalidServiceMessage() throws JsonProcessingException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        // Set up mocks for invalid service message
+        when(utils.convert(anyString(), eq(ServiceMessage.class)))
+                .thenThrow(new JsonProcessingException("") {});
 
-        verify(failedMessageService, times(1)).saveFailedRecords(eq(producerTopic), eq(transactionId), eq(payload), eq(insightName), eq(sensitivityCheckDone), eq(errorCategory), eq(expectedErrorMessage));
+        // Create test record
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, null, VALID_PAYLOAD);
+
+        // Call private method 'onMessage' using reflection
+        Method onMessageMethod = EventsMessageListener.class.getDeclaredMethod("onMessage", ConsumerRecord.class, String.class);
+        onMessageMethod.setAccessible(true);
+        onMessageMethod.invoke(eventsMessageListener, record, VALID_PAYLOAD);
+
+        // Verify interactions
+        verify(logger, times(1)).error(anyString(), any(), any());
+    }
+
+    private RequestJSONString createValidRequestJSONString() {
+        RequestJSONString requestJSONString = new RequestJSONString();
+        Service service = new Service();
+        ServiceBody serviceBody = new ServiceBody();
+        CallRequest callRequest = new CallRequest();
+        Body body = new Body();
+        CustomerDetails relinquishingCustomerDetails = new CustomerDetails();
+        relinquishingCustomerDetails.setAccountNumber("1234");
+        body.setRelinquishingCustomerDetails(relinquishingCustomerDetails);
+        callRequest.setBody(body);
+        serviceBody.setCallRequest(callRequest);
+        service.setServiceBody(serviceBody);
+        requestJSONString.setService(service);
+        return requestJSONString;
     }
 }
 ```
 
-### Changes Made:
+### Explanation:
+- **Reflection Usage:** The test class uses reflection to access private fields and methods, ensuring that we don't modify the visibility of any fields or methods in the `EventsMessageListener` class.
+- **Mocking:** Mockito is used to mock dependencies, and the behavior of these dependencies is set up to simulate different scenarios.
+- **Test Cases:** 
+  - **Valid Payload:** Tests the normal flow with a valid payload, ensuring all services and methods are called as expected.
+  - **Empty Payload:** Tests the behavior when an empty payload is received.
+  - **Invalid Service Message:** Simulates a scenario where the `ServiceMessage` cannot be parsed, and ensures appropriate logging and error handling.
+- **Utility Methods:** Helper methods create mock objects like `RequestJSONString` to streamline test setup.
 
-- **Handling Substring Logic in Test Case**:
-  - In `testSendMessageAsync_withLongErrorMessage`, the substring operation is now conditional on the length of the error message being greater than 200 characters. This prevents the `StringIndexOutOfBoundsException`.
-
-This adjustment ensures that the test cases handle both short and long error messages correctly without encountering an out-of-bounds exception.
+This suite of tests aims to cover all branches and paths in the `onMessage` method, providing comprehensive coverage for the code.

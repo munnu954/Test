@@ -1,10 +1,13 @@
-To achieve 100% code coverage for the `sendMessageAsync` method in the `BatchLoaderUtils` class, we need to write JUnit 5 test cases that cover both successful and failed message sending scenarios. We'll use mocking to handle interactions with the `KafkaTemplate` and `KafkaFalloutService`. Here's how you can write the test cases:
+The error you're encountering typically occurs when there is a mismatch between the expected return type of the mocked method and the type being returned. The `kafkaTemplate.send` method is expected to return a `ListenableFuture`, and the mocking should reflect this appropriately. Let's correct the test cases to ensure proper mocking using `CompletableFuture` instead of `SettableListenableFuture` for compatibility:
+
+Here's the updated test code:
 
 ```java
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
@@ -15,7 +18,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.support.SendResult;
-import org.springframework.util.concurrent.SettableListenableFuture;
+import org.springframework.util.concurrent.ListenableFuture;
+import org.springframework.util.concurrent.ListenableFutureCallback;
 
 @ExtendWith(MockitoExtension.class)
 public class BatchLoaderUtilsTest {
@@ -49,12 +53,12 @@ public class BatchLoaderUtilsTest {
     }
 
     @Test
-    public void testSendMessageAsync_Success() {
+    public void testSendMessageAsync_Success() throws ExecutionException, InterruptedException {
         // Arrange
-        SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
         RecordMetadata metadata = new RecordMetadata(null, 0L, 0, 0L, Long.valueOf(0), 0, 0);
         SendResult<String, String> sendResult = new SendResult<>(producerRecord, metadata);
-        future.set(sendResult);
+        future.complete(sendResult);
 
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
@@ -66,10 +70,10 @@ public class BatchLoaderUtilsTest {
     }
 
     @Test
-    public void testSendMessageAsync_Failure() {
+    public void testSendMessageAsync_Failure() throws ExecutionException, InterruptedException {
         // Arrange
-        SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
-        future.setException(new RuntimeException("Kafka send exception"));
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.completeExceptionally(new RuntimeException("Kafka send exception"));
 
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
@@ -82,18 +86,13 @@ public class BatchLoaderUtilsTest {
 }
 ```
 
-### Explanation:
+### Key Changes:
 
-1. **Setup**: We use `@Mock` to create mock instances of `KafkaTemplate` and `KafkaFalloutService`. The `@InjectMocks` annotation is used to inject these mocks into the `BatchLoaderUtils` instance.
+1. **Use of `CompletableFuture`**:
+   - Updated to use `CompletableFuture`, which is more appropriate for the kind of asynchronous operations we are simulating with Kafka.
 
-2. **Test Setup**: Initialize common variables in the `setUp` method, which runs before each test. This reduces redundancy.
+2. **Mocking with `CompletableFuture`**:
+   - Used `future.complete` for simulating a successful operation.
+   - Used `future.completeExceptionally` for simulating an exception during the operation.
 
-3. **Success Scenario**:
-   - Mock the `kafkaTemplate.send` method to return a successful `CompletableFuture`.
-   - Verify that `failedMessageService.saveFailedRecords` is never called, indicating that no failure occurred.
-
-4. **Failure Scenario**:
-   - Mock the `kafkaTemplate.send` method to return a `CompletableFuture` that throws an exception.
-   - Verify that `failedMessageService.saveFailedRecords` is called once with the correct parameters.
-
-These tests cover all branches of the `sendMessageAsync` method, ensuring both successful and failed message sending paths are tested.
+These changes should resolve the error and allow the tests to correctly simulate the behavior of the `sendMessageAsync` method.

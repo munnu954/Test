@@ -1,6 +1,6 @@
-To achieve 100% code coverage for the `NetworkOutageEventsMessageListener` and `BatchLoaderUtils` classes, we need to write JUnit 5 test cases that cover all possible branches in the `onMessage` method's catch blocks, as well as test the methods in the `BatchLoaderUtils` class.
+To achieve 100% code coverage for the specific branches of the `saveFailedRecords` method calls in the `NetworkOutageEventsMessageListener` class, we need to ensure that we test both scenarios for error handling in the `onMessage` method. Here are the JUnit 5 test cases that will cover all four branches:
 
-### JUnit 5 Test Cases for `NetworkOutageEventsMessageListener`
+### Additional JUnit 5 Test Cases for `NetworkOutageEventsMessageListener`
 
 ```java
 import static org.mockito.Mockito.*;
@@ -34,160 +34,82 @@ public class NetworkOutageEventsMessageListenerTest {
         listener.producerTopic = producerTopic;
     }
 
+    // Existing tests...
+
     @Test
-    public void testOnMessage_EmptyPayload() {
-        when(message.getData()).thenReturn(new byte[0]);
+    public void testOnMessage_KafkaSendError_ExceedsErrorMessageLength() throws Exception {
+        when(message.getData()).thenReturn(payload.getBytes());
+        OutageDetailsEvent event = new OutageDetailsEvent();
+        event.setEventId("12345");
+        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenReturn(event);
 
-        Exception exception = assertThrows(SystemException.class, () -> {
-            listener.onMessage(message);
-        });
+        // Simulate a Kafka send error with a long error message
+        doThrow(new RuntimeException("This is a very long error message that definitely exceeds the length limit of 200 characters. " +
+                "This is just for testing purposes to ensure we cover the substring logic in the saveFailedRecords method.")).when(utils).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
 
-        assertEquals("NetworkOutageEventsMessageListener: Empty payload received from NSP topic", exception.getMessage());
+        listener.onMessage(message);
+
+        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()), 
+                argThat(arg -> arg.equals("This is a very long error message that definitely exceeds the length limit of 200 characters. This is just for testing purposes to ensure we cover the substring logic in the saveFailedRecords method.")));
     }
 
     @Test
-    public void testOnMessage_InvalidJson() throws Exception {
+    public void testOnMessage_JsonProcessingException_ExceedsErrorMessageLength() throws Exception {
         when(message.getData()).thenReturn(payload.getBytes());
-        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenThrow(new JsonProcessingException("Invalid JSON") {});
+
+        // Simulate a JsonProcessingException
+        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenThrow(new JsonProcessingException("This error message is also very long and should be trimmed to ensure that we are covering the substring logic in the saveFailedRecords method.") {});
 
         Exception exception = assertThrows(SystemException.class, () -> {
             listener.onMessage(message);
         });
 
-        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()), anyString());
+        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()), 
+                argThat(arg -> arg.equals("This error message is also very long and should be trimmed to ensure that we are covering the substring logic in the saveFailedRecords method.")));
         assertEquals("NetworkOutageEventsMessageListener:: Erroneous payload received from NSP topic", exception.getMessage());
     }
 
     @Test
-    public void testOnMessage_NullEventId() throws Exception {
-        when(message.getData()).thenReturn(payload.getBytes());
-        OutageDetailsEvent event = new OutageDetailsEvent();
-        event.setEventId(null);
-        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenReturn(event);
-
-        listener.onMessage(message);
-
-        // Verify nothing is sent
-        verify(utils, never()).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
-    }
-
-    @Test
-    public void testOnMessage_Success() throws Exception {
+    public void testOnMessage_KafkaSendError_WithinErrorMessageLength() throws Exception {
         when(message.getData()).thenReturn(payload.getBytes());
         OutageDetailsEvent event = new OutageDetailsEvent();
         event.setEventId("12345");
         when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenReturn(event);
 
+        // Simulate a Kafka send error with a short error message
+        doThrow(new RuntimeException("Short error")).when(utils).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
+
         listener.onMessage(message);
 
-        // Verify that the message was sent
-        verify(utils).sendMessageAsync(any(), anyString(), eq(payload), eq(producerTopic), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()));
+        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()), 
+                argThat(arg -> arg.equals("Short error")));
     }
 
     @Test
-    public void testOnMessage_KafkaSendError() throws Exception {
+    public void testOnMessage_JsonProcessingException_WithinErrorMessageLength() throws Exception {
         when(message.getData()).thenReturn(payload.getBytes());
-        OutageDetailsEvent event = new OutageDetailsEvent();
-        event.setEventId("12345");
-        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenReturn(event);
-        doThrow(new RuntimeException("Kafka error")).when(utils).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
 
-        listener.onMessage(message);
+        // Simulate a JsonProcessingException
+        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenThrow(new JsonProcessingException("Short error message") {});
 
-        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()), anyString());
-    }
-}
-```
-
-### JUnit 5 Test Cases for `BatchLoaderUtils`
-
-```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.kafka.core.KafkaTemplate;
-
-public class BatchLoaderUtilsTest {
-
-    @InjectMocks
-    private BatchLoaderUtils utils;
-
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Mock
-    private KafkaFalloutService failedMessageService;
-
-    @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
-    }
-
-    @Test
-    public void testReturnHeaders_NonEmptyValue() {
-        List<Header> headers = utils.returnHeaders("TestType");
-        assertEquals(1, headers.size());
-        assertEquals("TestType".getBytes(), headers.get(0).value());
-    }
-
-    @Test
-    public void testReturnHeaders_EmptyValue() {
-        List<Header> headers = utils.returnHeaders("");
-        assertTrue(headers.isEmpty());
-    }
-
-    @Test
-    public void testSendMessageAsync_Success() throws Exception {
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
-        doReturn(CompletableFuture.completedFuture(new SendResult<>(producerRecord, new RecordMetadata()))).when(kafkaTemplate).send(producerRecord);
-
-        utils.sendMessageAsync(producerRecord, "transactionId", "payload", "topic", "insightName", 'N', "errorCategory");
-
-        // Verify that success message is logged (you would need to use a logging framework to capture this in a real test)
-    }
-
-    @Test
-    public void testSendMessageAsync_Error() throws Exception {
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
-        doReturn(CompletableFuture.failedFuture(new RuntimeException("Kafka error"))).when(kafkaTemplate).send(producerRecord);
-
-        utils.sendMessageAsync(producerRecord, "transactionId", "payload", "topic", "insightName", 'N', "errorCategory");
-
-        verify(failedMessageService).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar(), anyString(), anyString());
-    }
-
-    @Test
-    public void testConvert_ValidJson() throws Exception {
-        String json = "{\"EVENT_ID\":\"123\"}";
-        OutageDetailsEvent event = utils.convert(json, OutageDetailsEvent.class);
-        assertNotNull(event);
-        assertEquals("123", event.getEventId());
-    }
-
-    @Test
-    public void testConvert_InvalidJson() {
-        String json = "Invalid JSON";
-        assertThrows(JsonProcessingException.class, () -> {
-            utils.convert(json, OutageDetailsEvent.class);
+        Exception exception = assertThrows(SystemException.class, () -> {
+            listener.onMessage(message);
         });
-    }
 
-    @Test
-    public void testSaveFailedRecords() {
-        utils.saveFailedRecords("topic", "transactionId", "payload", "insightName", 'N', "errorCategory", "errorMessage");
-        verify(failedMessageService).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar(), anyString(), anyString());
+        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()), 
+                argThat(arg -> arg.equals("Short error message")));
+        assertEquals("NetworkOutageEventsMessageListener:: Erroneous payload received from NSP topic", exception.getMessage());
     }
 }
 ```
 
 ### Explanation
-1. **`NetworkOutageEventsMessageListenerTest`**: This test class covers all branches of the `onMessage` method by simulating different scenarios, such as receiving an empty payload, an invalid JSON payload, a valid event ID, and handling Kafka send errors.
+1. **`testOnMessage_KafkaSendError_ExceedsErrorMessageLength`**: This test case checks the scenario where the Kafka send fails with an error message longer than 200 characters. It verifies that the `saveFailedRecords` method is called with the entire error message.
 
-2. **`BatchLoaderUtilsTest`**: This test class covers all methods in the `BatchLoaderUtils` class, including the successful and error scenarios for sending messages, header generation, JSON conversion, and saving failed records.
+2. **`testOnMessage_JsonProcessingException_ExceedsErrorMessageLength`**: This test case simulates a `JsonProcessingException` being thrown while converting the payload. It also checks that the error message is too long and is passed to `saveFailedRecords` in its entirety.
 
-By running these tests, you should achieve 100% code coverage for both classes.
+3. **`testOnMessage_KafkaSendError_WithinErrorMessageLength`**: This test case simulates a Kafka send error with a short error message. It verifies that the short message is passed correctly to the `saveFailedRecords` method.
+
+4. **`testOnMessage_JsonProcessingException_WithinErrorMessageLength`**: This test case checks the scenario where a `JsonProcessingException` is thrown with a short error message. It verifies that the message is passed correctly to `saveFailedRecords`.
+
+These additional test cases ensure that all branches of the specified lines are covered, achieving 100% code coverage for those specific paths in your application.

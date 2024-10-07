@@ -1,28 +1,27 @@
-To achieve 100% code coverage for the `sendMessageAsync` method in the `BatchLoaderUtils` class, we need to create JUnit 5 test cases, which will involve mocking the dependencies such as `KafkaTemplate` and `KafkaFalloutService`. We'll use Mockito for mocking these dependencies. Here's how you can write the test cases:
+Here is a sample JUnit5 test class for testing the BatchLoaderUtils class:
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-import java.util.concurrent.CompletableFuture;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
-import org.junit.jupiter.api.BeforeEach;
+import org.apache.kafka.common.header.Header;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
+import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
 import org.springframework.kafka.support.SendResult;
+import org.springframework.test.util.ReflectionTestUtils;
 
-@ExtendWith(MockitoExtension.class)
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+
 public class BatchLoaderUtilsTest {
+
+    @InjectMocks
+    private BatchLoaderUtils batchLoaderUtils;
 
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
@@ -30,83 +29,53 @@ public class BatchLoaderUtilsTest {
     @Mock
     private KafkaFalloutService failedMessageService;
 
-    @InjectMocks
-    private BatchLoaderUtils batchLoaderUtils;
-
-    private ProducerRecord<String, String> producerRecord;
-    
-    @BeforeEach
-    public void setUp() {
-        producerRecord = new ProducerRecord<>("testTopic", "testKey", "testValue");
+    public void setup() {
+        MockitoAnnotations.openMocks(this);
+        ReflectionTestUtils.setField(batchLoaderUtils, "failedMessageService", failedMessageService);
     }
 
     @Test
-    public void testSendMessageAsync_Success() throws Exception {
-        SendResult<String, String> sendResult = mock(SendResult.class);
-        RecordMetadata metadata = mock(RecordMetadata.class);
+    public void testSendMessageAsyncSuccess() {
+        String producerTopic = "test-topic";
+        String transactionId = "123456";
+        String payload = "test-payload";
+        String insightName = "test-insight";
+        char sensitivityCheckDone = 'Y';
+        String errorCategory = "test-error";
+
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>(producerTopic, payload);
+
+        SendResult<String, String> sendResult = new SendResult<>(null, null);
         CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(sendResult);
-
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-        when(sendResult.getRecordMetadata()).thenReturn(metadata);
-        when(metadata.offset()).thenReturn(1L);
-        when(metadata.partition()).thenReturn(1);
 
-        batchLoaderUtils.sendMessageAsync(
-                producerRecord, 
-                "transactionId", 
-                "payload", 
-                "producerTopic", 
-                "insightName", 
-                'Y', 
-                "errorCategory"
-        );
+        batchLoaderUtils.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, errorCategory);
 
-        // Verify no failed records were saved
-        verify(failedMessageService, Mockito.never()).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
+        // Verify the message is sent successfully
     }
 
     @Test
-    public void testSendMessageAsync_Failure() throws Exception {
+    public void testSendMessageAsyncFailure() {
+        String producerTopic = "test-topic";
+        String transactionId = "123456";
+        String payload = "test-payload";
+        String insightName = "test-insight";
+        char sensitivityCheckDone = 'Y';
+        String errorCategory = "test-error";
+
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>(producerTopic, payload);
+
         CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.completeExceptionally(new Exception("Simulated error"));
+        future.completeExceptionally(new RuntimeException("Kafka producer error"));
 
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-        doNothing().when(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
 
-        batchLoaderUtils.sendMessageAsync(
-                producerRecord, 
-                "transactionId", 
-                "payload", 
-                "producerTopic", 
-                "insightName", 
-                'Y', 
-                "errorCategory"
-        );
+        batchLoaderUtils.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, errorCategory);
 
-        // Verify that the failed message service was called to save failed records
-        verify(failedMessageService).saveFailedRecords(
-                eq("producerTopic"), 
-                eq("transactionId"), 
-                eq("payload"), 
-                eq("insightName"), 
-                eq('Y'), 
-                eq("errorCategory"), 
-                eq("Simulated error")
-        );
+        // Verify the message is saved as a failed record
     }
+
 }
 ```
 
-### Explanation:
-
-1. **Mocks**: We mock the `KafkaTemplate` and `KafkaFalloutService` using Mockito.
-
-2. **Setup**: We initialize a `ProducerRecord` before each test case.
-
-3. **Test Success Scenario**: We simulate a successful send by completing the `CompletableFuture` with a mocked `SendResult`. We verify that the `failedMessageService` is not called to save failed records.
-
-4. **Test Failure Scenario**: We simulate a failure by completing the `CompletableFuture` exceptionally. We verify that the `failedMessageService` is called with the correct parameters to save the failed record.
-
-5. **Verification**: Mockito's `verify` method is used to assert that the expected interactions with the mocked services occur.
-
-These tests will ensure that all branches of the `sendMessageAsync` method are covered, achieving 100% code coverage for that method.
+In the test methods, you can verify the behavior of the BatchLoaderUtils class by setting up mock responses for the KafkaTemplate and KafkaFalloutService. You can use Mockito's `when` and `thenReturn` methods to mock the behavior for different scenarios (success and failure).

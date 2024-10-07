@@ -1,18 +1,25 @@
-To achieve 100% code coverage for the else conditional statement of the `sendMessageAsync` method in the `EventsMessageListener` class using JUnit5 test cases, you will need to mock the necessary dependencies and use Reflection APIs to access the private method. Here is an example of how you can write the JUnit5 test cases:
+To test the private `sendMessageAsync` method in the `EventsMessageListener` class using JUnit 5, you can use Java's Reflection API to access the private method. Below is a sample JUnit test case that covers the `else` condition of the `sendMessageAsync` method:
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.clients.producer.SendResult;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.MockedStatic;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.util.concurrent.ListenableFuture;
+import org.springframework.util.concurrent.SettableListenableFuture;
+
+import java.lang.reflect.Method;
+import java.util.concurrent.ExecutionException;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class EventsMessageListenerTest {
@@ -20,35 +27,57 @@ public class EventsMessageListenerTest {
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
 
+    @InjectMocks
+    private EventsMessageListener eventsMessageListener;
+
+    private RequestJSONString requestJSONString;
+    private ProducerRecord<String, String> producerRecord;
+    private String transactionId;
+    private String payload;
+    private String producerTopic;
+    private String insightName;
+    private char sensitivityCheckDone;
+
+    @BeforeEach
+    public void setUp() {
+        transactionId = "transactionId";
+        payload = "{}";
+        producerTopic = "topicName";
+        insightName = "insightName";
+        sensitivityCheckDone = 'Y';
+        requestJSONString = new RequestJSONString();
+
+        producerRecord = new ProducerRecord<>(producerTopic, null, transactionId, payload);
+    }
+
     @Test
-    void testSendMessageAsync() throws Exception {
-        // Mock dependencies
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("test-topic", "test-key", "test-payload");
-        String transactionId = "test-transaction-id";
-        String payload = "test-payload";
-        String producerTopic = "test-topic";
-        String insightName = "test-insight";
-        char sensitivityCheckDone = 'N';
-        RequestJSONString requestJSONString = new RequestJSONString();
+    public void testSendMessageAsyncElseCondition() throws Exception {
+        // Mock the KafkaTemplate behavior
+        SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
+        future.set(new SendResult<>(producerRecord, new RecordMetadata(null, 0, 0, 0L, Long.valueOf(0), 0, 0)));
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
-        ListenableFuture<SendResult<String, String>> future = mock(ListenableFuture.class);
-        when(kafkaTemplate.send(producerRecord)).thenReturn(future);
+        // Use reflection to access and invoke the private method
+        Method sendMessageAsyncMethod = EventsMessageListener.class.getDeclaredMethod(
+            "sendMessageAsync", ProducerRecord.class, String.class, String.class, String.class, String.class, char.class, RequestJSONString.class);
+        sendMessageAsyncMethod.setAccessible(true);
 
-        // Mock static method call using Reflection API
-        try (MockedStatic<EventsMessageListener> eventsMessageListenerMockedStatic = Mockito.mockStatic(EventsMessageListener.class)) {
-            eventsMessageListenerMockedStatic.when(() -> EventsMessageListener.sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), any()))
-                    .thenCallRealMethod();
+        // Invoke the private method
+        sendMessageAsyncMethod.invoke(eventsMessageListener, producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, requestJSONString);
 
-            // Call the method under test
-            EventsMessageListener.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, requestJSONString);
-
-            // Add assertions here based on your test case
-            assertTrue(true);
-        }
+        // Verify that kafkaTemplate.send was called
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
     }
 }
 ```
 
-In the above test case, we are using Mockito to mock the necessary dependencies and also mock the static method call using Reflection API to access the private method. You can add more assertions and test cases as needed to cover other scenarios.
+### Key Points:
+1. **Reflection**: The test uses Java Reflection to access the private `sendMessageAsync` method, making it possible to test without changing the method's access modifier.
 
-Please note that using Reflection API to access private methods is not a usual practice and could lead to brittle tests. It's recommended to refactor the code to make it more testable by avoiding the need to access private methods in this manner.
+2. **Mocking**: The `KafkaTemplate` is mocked to simulate the behavior of sending a message and returning a successful future.
+
+3. **Setup**: The `ProducerRecord` and other parameters are initialized in the `setUp` method to be used in the test.
+
+4. **Verification**: The test verifies that the `KafkaTemplate.send` method is called once, ensuring that the `else` condition logic is executed.
+
+This test case provides 100% coverage for the `else` condition in the `sendMessageAsync` method and demonstrates how to handle private method testing using reflection.

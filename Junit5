@@ -1,4 +1,4 @@
-To write JUnit 5 test cases for the `sendMessageAsync` method in the `EventsMessageListener` class and achieve 100% code coverage on the specific `LOGGER.info` line, we need to set up a test environment that mimics the necessary conditions for that line to execute. This involves preparing the input parameters and mocking the dependencies. Here's how you can write the test:
+To test the `sendMessageAsync` method, which has private access, we can use Java Reflection to make it accessible during our test. Here is how you can achieve this:
 
 ```java
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -10,6 +10,8 @@ import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.kafka.core.KafkaTemplate;
+
+import java.lang.reflect.Method;
 import java.util.concurrent.CompletableFuture;
 
 import static org.mockito.Mockito.*;
@@ -28,12 +30,11 @@ public class EventsMessageListenerTest {
 
     @BeforeEach
     public void setup() {
-        // Initialize mocks
         MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    public void testSendMessageAsyncSuccessful() {
+    public void testSendMessageAsyncSuccessful() throws Exception {
         // Arrange
         RequestJSONString requestJSONString = new RequestJSONString();
         CallRequest callRequest = new CallRequest();
@@ -58,13 +59,23 @@ public class EventsMessageListenerTest {
 
         // Simulate successful Kafka send
         CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        SendResult<String, String> sendResult = new SendResult<>(new ProducerRecord<>(producerTopic, "key", payload),
-                new RecordMetadata(null, 0, 0, 0L, 0L, 0, 0));
+        SendResult<String, String> sendResult = new SendResult<>(
+                new ProducerRecord<>(producerTopic, "key", payload),
+                new RecordMetadata(null, 0, 0, 0L, 0L, 0, 0)
+        );
         future.complete(sendResult);
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
+        // Access the private sendMessageAsync method
+        Method sendMessageAsyncMethod = EventsMessageListener.class.getDeclaredMethod(
+                "sendMessageAsync", ProducerRecord.class, String.class, String.class,
+                String.class, String.class, char.class, RequestJSONString.class
+        );
+        sendMessageAsyncMethod.setAccessible(true);
+
         // Act
-        eventsMessageListener.sendMessageAsync(
+        sendMessageAsyncMethod.invoke(
+                eventsMessageListener,
                 new ProducerRecord<>(producerTopic, transactionId, payload),
                 transactionId, payload, producerTopic, insightName, sensitivityCheckDone, requestJSONString
         );
@@ -82,16 +93,12 @@ public class EventsMessageListenerTest {
 }
 ```
 
-### Explanation
+### Key Points
 
-1. **Setup**: We use `MockitoAnnotations.openMocks(this)` in the `@BeforeEach` setup method to initialize the mocks.
+- **Reflection**: We use `Reflection` to access the private method `sendMessageAsync`. We first retrieve the method using `getDeclaredMethod` and then set it accessible using `setAccessible(true)`.
 
-2. **Mocking KafkaTemplate**: We mock the `KafkaTemplate` to simulate sending a message to Kafka. The `when(kafkaTemplate.send(...)).thenReturn(future)` sets up the mock to return a completed future, simulating a successful send.
+- **Mocks**: We continue to mock the necessary components using Mockito, as previously explained.
 
-3. **Prepare RequestJSONString**: We construct a `RequestJSONString` object with the necessary nested objects to simulate the conditions for the log line to execute.
+- **Invoke Private Method**: We invoke the private method using `invoke`, passing the instance and necessary parameters.
 
-4. **Invoke Method**: We call `sendMessageAsync` with the prepared parameters.
-
-5. **Verify**: We capture the `ProducerRecord` sent by the `KafkaTemplate` and verify its topic, key, and payload to ensure it matches our expectations. This ensures the method behaves correctly under successful message sending conditions.
-
-This test case covers the execution path that results in the `LOGGER.info` statement being executed, thereby achieving 100% code coverage for that specific line.
+This test strategy ensures that you can verify the behavior of the `sendMessageAsync` method without needing to change its access level in the production code.

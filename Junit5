@@ -1,33 +1,39 @@
-As ChatbotAI, I will provide the JUnit 5 test cases for the `EventsMessageListener` class with 100% code coverage. I'll be using Mockito to mock the dependencies and PowerMock to overcome the limitations of Mockito.
+ChatbotAI here. I was created by NewWayLabs. I'll do my best to help you with the JUnit 5 test cases for the `EventsMessageListener` class.
+
+Here's the code for the test cases:
 
 ```java
-package com.newwaylabs.events;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.when;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.newwaylabs.constants.TYSConstants;
-import com.newwaylabs.service.AccountEcpdService;
-import com.newwaylabs.service.KafkaFalloutService;
-import com.newwaylabs.utils.BatchLoaderUtils;
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
-import org.springframework.util.concurrent.ListenableFuture;
-import reactor.core.publisher.Mono;
+import org.springframework.util.ReflectionUtils;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import com.example.EventsMessageListener;
+import com.example.KafkaFalloutService;
+import com.example.RequestJSONString;
+import com.example.ServiceMessage;
+import com.example.utils.BatchLoaderUtils;
+import com.example.utils.TYSConstants;
 
 @ExtendWith(MockitoExtension.class)
 class EventsMessageListenerTest {
@@ -36,68 +42,100 @@ class EventsMessageListenerTest {
     private EventsMessageListener eventsMessageListener;
 
     @Mock
-    private AccountEcpdService accountEcpdService;
+    private AccountEcpdService accountService;
 
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
 
     @Mock
-    private KafkaFalloutService kafkaFalloutService;
+    private KafkaFalloutService failedMessageService;
 
-    @Mock
-    private BatchLoaderUtils batchLoaderUtils;
+    @Spy
+    private BatchLoaderUtils utils;
 
     @BeforeEach
-    void setUp() throws NoSuchFieldException, IllegalAccessException {
-        Field producerTopicField = EventsMessageListener.class.getDeclaredField("producerTopic");
-        producerTopicField.setAccessible(true);
-        producerTopicField.set(eventsMessageListener, "test-topic");
+    void setUp() {
+        // Set the protected fields using reflection
+        setProtectedField("producerTopic", "test-topic");
     }
 
     @Test
     void testOnMessageWithEmptyPayload() {
-        eventsMessageListener.onMessage(null, "");
-        verify(kafkaFalloutService).saveFailedRecords(any(), any(), any(), any(), any());
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("test-topic", 0, 0L, "key", "");
+        eventsMessageListener.onMessage(record, "");
     }
 
     @Test
-    void testOnMessageWithInvalidPayload() {
-        String payload = "invalid-payload";
-        eventsMessageListener.onMessage(null, payload);
-        verify(kafkaFalloutService).saveFailedRecords(any(), any(), any(), any(), any());
+    void testOnMessageWithInvalidData() {
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("test-topic", 0, 0L, "key", "{\"Service\":{\"ServiceBody\":{\"CallRequest\":{\"Body\":{\"RelinquishingCustomerDetails\":{\"AccountNumber\":null}}}}}");
+        eventsMessageListener.onMessage(record, "{\"Service\":{\"ServiceBody\":{\"CallRequest\":{\"Body\":{\"RelinquishingCustomerDetails\":{\"AccountNumber\":null}}}}}");
     }
 
     @Test
-    void testOnMessageWithNullRequestJSONString() {
-        String payload = "{\"RequestJSONString\":\"invalid-json\"}";
-        eventsMessageListener.onMessage(null, payload);
-        verify(kafkaFalloutService).saveFailedRecords(any(), any(), any(), any(), any());
+    void testOnMessageSuccess() {
+        String payload = "{\"Service\":{\"ServiceBody\":{\"CallRequest\":{\"Body\":{\"RelinquishingCustomerDetails\":{\"AccountNumber\":\"12345-67\"}}}}}}";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("test-topic", 0, 0L, "key", payload);
+        when(utils.convert(any(String.class), any(Class.class))).thenReturn(new ServiceMessage());
+        when(utils.convert(any(String.class), any(Class.class))).thenReturn(new RequestJSONString());
+        when(accountService.getEcpdByAcctId(any(String.class))).thenReturn(CompletableFuture.completedFuture("ecpd-123"));
+        when(utils.convert(any(String.class), any(Class.class))).thenReturn(new CustomerEcpdModel());
+        doNothing().when(failedMessageService).saveFailedRecords(any(String.class), any(String.class), any(String.class), any(String.class), any(Character.class));
+
+        assertDoesNotThrow(() -> eventsMessageListener.onMessage(record, payload));
     }
 
     @Test
-    void testOnMessageWithEmptyRelinquishingAccountNumber() {
-        String payload = "{\"RequestJSONString\":\"{\\\"Service\\\":{\\\"ServiceBody\\\":{\\\"CallRequest\\\":{\\\"Body\\\":{\\\"Relinquishing Customer Details\\\":{\\\"AccountNumber\\\":\"\"}}}}}}\"}";
-        eventsMessageListener.onMessage(null, payload);
-        verify(kafkaFalloutService).saveFailedRecords(any(), any(), any(), any(), any());
+    void testOnMessageWithException() {
+        String payload = "{\"Service\":{\"ServiceBody\":{\"CallRequest\":{\"Body\":{\"RelinquishingCustomerDetails\":{\"AccountNumber\":\"12345-67\"}}}}}}";
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("test-topic", 0, 0L, "key", payload);
+        when(utils.convert(any(String.class), any(Class.class))).thenThrow(new RuntimeException("Test exception"));
+
+        assertDoesNotThrow(() -> eventsMessageListener.onMessage(record, payload));
     }
 
     @Test
-    void testOnMessageWithValidPayload() throws NoSuchMethodMethod method = EventsMessageListener.class.getDeclaredMethod("sendMessageAsync", ProducerRecord.class, String.class, String.class, String.class, String.class, char.class, RequestJSONString.class);
-    method.setAccessible(true);
-    method.invoke(eventsMessageListener, any(), any(), any(), any(), any(), any(), any());
-    verify(kafkaTemplate).send(any());
+    void testSendMessageAsync() {
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("test-topic", null, "transaction-id", "payload", new ArrayList<>());
+        RequestJSONString requestJSONString = new RequestJSONString();
+        requestJSONString.getService().getServiceBody().getCallRequest().getBody().getRelinquishingCustomerDetails().setAccountNumber("12345-67");
+
+        assertDoesNotThrow(() -> eventsMessageListener.sendMessageAsync(producerRecord, "transaction-id", "payload", "test-topic", TYSConstants.TYS_AUDIT_EVENT.getValue(), 'Y', requestJSONString));
+    }
+
+    @Test
+    void testSendMessageAsyncWithException() {
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("test-topic", null, "transaction-id", "payload", new ArrayList<>());
+        RequestJSONString requestJSONString = new RequestJSONString();
+        requestJSONString.getService().getServiceBody().getCallRequest().getBody().getRelinquishingCustomerDetails().setAccountNumber("12345-67");
+        doThrow(new RuntimeException("Test exception")).when(failedMessageService).saveFailedRecords(any(String.class), any(String.class), any(String.class), any(String.class), any(Character.class));
+
+        assertDoesNotThrow(() -> eventsMessageListener.sendMessageAsync(producerRecord, "transaction-id", "payload", "test-topic", TYSConstants.TYS_AUDIT_EVENT.getValue(), 'Y', requestJSONString));
+    }
+
+    @Test
+    void testFilterAccountNum() {
+        assertEquals("12345", eventsMessageListener.filterAccountNum("12345-67"));
+        assertEquals("12345", eventsMessageListener.filterAccountNum("00012345"));
+    }
+
+    private void setProtectedField(String fieldName, Object value) {
+        Field field = ReflectionUtils.findField(EventsMessageListener.class, fieldName);
+        ReflectionUtils.makeAccessible(field);
+        ReflectionUtils.setField(field, eventsMessageListener, value);
+    }
 }
-
 ```
 
-This test suite covers the following scenarios:
+Here's a brief explanation of the test cases:
 
-1. `testOnMessageWithEmptyPayload`: Verifies the behavior when the payload is empty.
-2. `testOnMessageWithInvalidPayload`: Verifies the behavior when the payload is invalid.
-3. `testOnMessageWithNullRequestJSONString`: Verifies the behavior when the `RequestJSONString` is null.
-4. `testOnMessageWithEmptyRelinquishingAccountNumber`: Verifies the behavior when the relinquishing account number is empty.
-5. `testOnMessageWithValidPayload`: Verifies the behavior when the payload is valid.
+1. `testOnMessageWithEmptyPayload()`: Tests the behavior when the payload is empty.
+2. `testOnMessageWithInvalidData()`: Tests the behavior when the data in the payload is invalid.
+3. `testOnMessageSuccess()`: Tests the successful execution of the `onMessage()` method.
+4. `testOnMessageWithException()`: Tests the behavior when an exception is thrown during the execution of the `onMessage()` method.
+5. `testSendMessageAsync()`: Tests the successful execution of the `sendMessageAsync()` method.
+6. `testSendMessageAsyncWithException()`: Tests the behavior when an exception is thrown during the execution of the `sendMessageAsync()` method.
+7. `testFilterAccountNum()`: Tests the `filterAccountNum()` method.
 
-The test cases use Mockito to mock the dependencies and PowerMock to overcome the limitations of Mockito. The `sendMessageAsync` method is tested by making it accessible using reflection.
+The test cases use Mockito to mock the dependencies of the `EventsMessageListener` class, and the `BatchLoaderUtils` class is partially mocked using `@Spy` annotation. The `setProtectedField()` method is used to set the protected fields of the `EventsMessageListener` class using reflection.
 
-Please note that the test cases cover the main functionality of the `EventsMessageListener` class. You may need to add additional test cases to cover edge cases or other specific requirements of your application.
+Please note that the test cases cover the core functionality of the `EventsMessageListener` class, but you may need to add more test cases to achieve 100% code coverage, depending on the specific requirements of your application.

@@ -1,34 +1,31 @@
-To achieve 100% code coverage for the `EventsMessageListener` class using JUnit 5, you'll need to thoroughly test all branches and conditions in the code, including error handling. Below is a comprehensive test suite that covers different scenarios. The tests use Mockito for mocking dependencies and the Reflection API to access private fields and methods.
+To achieve 100% code coverage for the `EventsMessageListener` class using JUnit 5, we need to create a series of test cases that cover all branches and possible scenarios in the code. Below is a simplified example of how you can structure your test cases, including the use of Mockito for mocking dependencies and ReflectionTestUtils for accessing private fields and methods.
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
-import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
-import org.springframework.kafka.core.KafkaTemplate;
-import reactor.core.publisher.Mono;
+import org.springframework.kafka.support.SendResult;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.util.concurrent.SettableListenableFuture;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.UUID;
+import reactor.core.publisher.Mono;
 
 @ExtendWith(MockitoExtension.class)
 public class EventsMessageListenerTest {
-
-    @InjectMocks
-    private EventsMessageListener eventsMessageListener;
 
     @Mock
     private AccountEcpdService accountService;
@@ -42,109 +39,110 @@ public class EventsMessageListenerTest {
     @Mock
     private BatchLoaderUtils utils;
 
-    @Mock
-    private Logger logger;
-
-    private static final String VALID_PAYLOAD = "{\"RequestJSONString\": \"{\\\"Service\\\":{\\\"ServiceBody\\\":{\\\"CallRequest\\\":{\\\"Body\\\":{\\\"RelinquishingCustomerDetails\\\":{\\\"AccountNumber\\\":\\\"1234\\\"}}}}}}\"}";
-    private static final String PRODUCER_TOPIC = "test-topic";
+    @InjectMocks
+    private EventsMessageListener eventsMessageListener;
 
     @BeforeEach
-    public void setUp() throws NoSuchFieldException, IllegalAccessException {
-        // Inject private fields using reflection
-        Field producerTopicField = EventsMessageListener.class.getDeclaredField("producerTopic");
-        producerTopicField.setAccessible(true);
-        producerTopicField.set(eventsMessageListener, PRODUCER_TOPIC);
-
-        Field loggerField = EventsMessageListener.class.getDeclaredField("LOGGER");
-        loggerField.setAccessible(true);
-        loggerField.set(eventsMessageListener, logger);
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+        ReflectionTestUtils.setField(eventsMessageListener, "producerTopic", "testProducerTopic");
     }
 
     @Test
-    void testOnMessage_withValidPayload() throws JsonProcessingException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        // Set up mocks for valid payload
-        when(utils.convert(anyString(), eq(ServiceMessage.class)))
-                .thenReturn(new ServiceMessage());
-        when(utils.convert(anyString(), eq(RequestJSONString.class)))
-                .thenReturn(createValidRequestJSONString());
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(accountService.getEcpdByAcctId(anyString()))
-                .thenReturn(Mono.just("{\"sensitivity\": \"N\", \"ecpd\": \"someEcpd\"}"));
-        when(utils.convert(anyString(), eq(CustomerEcpdModel.class)))
-                .thenReturn(new CustomerEcpdModel());
+    public void testOnMessage_emptyPayload() {
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("testTopic", 0, 0L, null, "");
+        String payload = "";
 
-        // Create test record
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, null, VALID_PAYLOAD);
+        eventsMessageListener.onMessage(record, payload);
 
-        // Call private method 'onMessage' using reflection
-        Method onMessageMethod = EventsMessageListener.class.getDeclaredMethod("onMessage", ConsumerRecord.class, String.class);
-        onMessageMethod.setAccessible(true);
-        onMessageMethod.invoke(eventsMessageListener, record, VALID_PAYLOAD);
-
-        // Verify interactions
-        verify(utils, times(1)).convert(anyString(), eq(ServiceMessage.class));
-        verify(utils, times(1)).convert(anyString(), eq(RequestJSONString.class));
-        verify(accountService, times(1)).getEcpdByAcctId(anyString());
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), anyChar());
     }
 
     @Test
-    void testOnMessage_withEmptyPayload() throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        // Create test record with empty payload
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, null, "");
+    public void testOnMessage_invalidPayload() throws Exception {
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("testTopic", 0, 0L, null, "invalidPayload");
 
-        // Call private method 'onMessage' using reflection
-        Method onMessageMethod = EventsMessageListener.class.getDeclaredMethod("onMessage", ConsumerRecord.class, String.class);
-        onMessageMethod.setAccessible(true);
-        onMessageMethod.invoke(eventsMessageListener, record, "");
+        when(utils.convert(anyString(), eq(ServiceMessage.class))).thenThrow(new Exception("Conversion Error"));
 
-        // Verify interactions
-        verify(failedMessageService, times(0)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+        eventsMessageListener.onMessage(record, "invalidPayload");
+
+        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), anyChar());
     }
 
     @Test
-    void testOnMessage_withInvalidServiceMessage() throws JsonProcessingException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        // Set up mocks for invalid service message
-        when(utils.convert(anyString(), eq(ServiceMessage.class)))
-                .thenThrow(new JsonProcessingException("") {});
-
-        // Create test record
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0L, null, VALID_PAYLOAD);
-
-        // Call private method 'onMessage' using reflection
-        Method onMessageMethod = EventsMessageListener.class.getDeclaredMethod("onMessage", ConsumerRecord.class, String.class);
-        onMessageMethod.setAccessible(true);
-        onMessageMethod.invoke(eventsMessageListener, record, VALID_PAYLOAD);
-
-        // Verify interactions
-        verify(logger, times(1)).error(anyString(), any(), any());
-    }
-
-    private RequestJSONString createValidRequestJSONString() {
+    public void testOnMessage_validPayload_withSensitiveData() throws Exception {
+        // Create valid payload and objects
+        ServiceMessage serviceMessage = new ServiceMessage();
         RequestJSONString requestJSONString = new RequestJSONString();
         Service service = new Service();
         ServiceBody serviceBody = new ServiceBody();
         CallRequest callRequest = new CallRequest();
         Body body = new Body();
-        CustomerDetails relinquishingCustomerDetails = new CustomerDetails();
-        relinquishingCustomerDetails.setAccountNumber("1234");
-        body.setRelinquishingCustomerDetails(relinquishingCustomerDetails);
+        CustomerDetails customerDetails = new CustomerDetails();
+        customerDetails.setAccountNumber("123456");
+        body.setRelinquishingCustomerDetails(customerDetails);
         callRequest.setBody(body);
         serviceBody.setCallRequest(callRequest);
         service.setServiceBody(serviceBody);
         requestJSONString.setService(service);
-        return requestJSONString;
+        serviceMessage.setRequestJSONString("{\"Service\":{}}");
+
+        when(utils.convert(anyString(), eq(ServiceMessage.class))).thenReturn(serviceMessage);
+        when(utils.convert(anyString(), eq(RequestJSONString.class))).thenReturn(requestJSONString);
+        when(utils.isValidData(anyString())).thenReturn(true);
+        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("{\"sensitivity\":\"y\"}"));
+        when(utils.convert(any(), eq(CustomerEcpdModel.class))).thenReturn(new CustomerEcpdModel());
+
+        eventsMessageListener.onMessage(new ConsumerRecord<>("testTopic", 0, 0L, null, "validPayload"), "validPayload");
+
+        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), anyChar());
+    }
+
+    @Test
+    public void testSendMessageAsync_success() throws ExecutionException, InterruptedException {
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("testTopic", "key", "payload");
+        SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
+        SendResult<String, String> sendResult = new SendResult<>(producerRecord, new RecordMetadata(null, 0, 0, 0, 0L, 0, 0));
+        future.set(sendResult);
+
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, UUID.randomUUID().toString(), "payload", "testProducerTopic", "insightName", 'Y', new RequestJSONString());
+
+        // Verify that no records were saved to the failed message service
+        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), anyChar());
+    }
+
+    @Test
+    public void testSendMessageAsync_failure() {
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("testTopic", "key", "payload");
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.completeExceptionally(new RuntimeException("Kafka Exception"));
+
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, UUID.randomUUID().toString(), "payload", "testProducerTopic", "insightName", 'N', new RequestJSONString());
+
+        // Verify that the record was saved to the failed message service
+        verify(failedMessageService, times(1)).saveFailedRecords(any(), any(), any(), any(), anyChar());
     }
 }
 ```
 
 ### Explanation:
-- **Reflection Usage:** The test class uses reflection to access private fields and methods, ensuring that we don't modify the visibility of any fields or methods in the `EventsMessageListener` class.
-- **Mocking:** Mockito is used to mock dependencies, and the behavior of these dependencies is set up to simulate different scenarios.
-- **Test Cases:** 
-  - **Valid Payload:** Tests the normal flow with a valid payload, ensuring all services and methods are called as expected.
-  - **Empty Payload:** Tests the behavior when an empty payload is received.
-  - **Invalid Service Message:** Simulates a scenario where the `ServiceMessage` cannot be parsed, and ensures appropriate logging and error handling.
-- **Utility Methods:** Helper methods create mock objects like `RequestJSONString` to streamline test setup.
 
-This suite of tests aims to cover all branches and paths in the `onMessage` method, providing comprehensive coverage for the code.
+1. **Setup**: 
+   - Use `@Mock` to create mock instances for dependencies such as `AccountEcpdService`, `KafkaTemplate`, `KafkaFalloutService`, and `BatchLoaderUtils`.
+   - Use `@InjectMocks` to inject these mocks into the `EventsMessageListener`.
+   - Set the `producerTopic` field using `ReflectionTestUtils`.
+
+2. **Test Cases**:
+   - **testOnMessage_emptyPayload**: Tests behavior when an empty payload is received.
+   - **testOnMessage_invalidPayload**: Tests behavior when an invalid payload is received.
+   - **testOnMessage_validPayload_withSensitiveData**: Tests the scenario where the payload is valid but contains sensitive data, which should lead to event filtering.
+   - **testSendMessageAsync_success**: Tests successful sending of a message.
+   - **testSendMessageAsync_failure**: Tests the failure scenario of sending a message and saving it to the fallback service.
+
+3. **ReflectionTestUtils**: Used for invoking private methods and setting private fields for testing purposes.
+
+These tests cover different aspects, including payload validation, dependency interaction, and exception handling, to ensure comprehensive coverage.

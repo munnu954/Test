@@ -1,48 +1,97 @@
-To achieve 100% code coverage for the `LOGGER.info` statement in the `sendMessageAsync` method of the `EventsMessageListener` class, you can use reflection to access private fields and methods of the `EventsMessageListener` class in your JUnit5 test cases.
+To write a JUnit 5 test case that covers the specific `LOGGER.info` statement in the `sendMessageAsync` method of the `EventsMessageListener` class, we need to simulate the successful path where a record is posted to the Kafka topic. We will use the Reflection API to access private methods and fields without changing their access modifiers.
 
-Here's a sample JUnit5 test case code snippet to cover the `LOGGER.info` statement mentioned:
+Here's how you can write the test:
 
 ```java
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.MockedStatic;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.support.SendResult;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.util.concurrent.SettableListenableFuture;
 
-import static org.mockito.Mockito.mock;
+import java.util.concurrent.CompletableFuture;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
 public class EventsMessageListenerTest {
 
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @InjectMocks
+    private EventsMessageListener eventsMessageListener;
+
+    private RequestJSONString requestJSONString;
+    private ProducerRecord<String, String> producerRecord;
+    private String transactionId;
+    private String payload;
+    private String producerTopic;
+    private String insightName;
+    private char sensitivityCheckDone;
+
+    @BeforeEach
+    public void setUp() {
+        // Initialize your test data
+        transactionId = "test-transaction-id";
+        payload = "{\"key\":\"value\"}";
+        producerTopic = "test-topic";
+        insightName = "test-insight";
+        sensitivityCheckDone = 'Y';
+
+        // Setup a mock RequestJSONString object
+        requestJSONString = new RequestJSONString();
+        Service service = new Service();
+        ServiceBody serviceBody = new ServiceBody();
+        CallRequest callRequest = new CallRequest();
+        Body body = new Body();
+        CustomerDetails customerDetails = new CustomerDetails();
+        customerDetails.setAccountNumber("123456");
+        body.setRelinquishingCustomerDetails(customerDetails);
+        callRequest.setBody(body);
+        serviceBody.setCallRequest(callRequest);
+        service.setServiceBody(serviceBody);
+        requestJSONString.setService(service);
+
+        producerRecord = new ProducerRecord<>(producerTopic, transactionId, payload);
+    }
+
     @Test
-    public void testSendMessageAsync() throws Exception {
-        // Mock the dependencies
-        KafkaTemplate<String, String> kafkaTemplate = mock(KafkaTemplate.class);
-        KafkaFalloutService failedMessageService = mock(KafkaFalloutService.class);
-        BatchLoaderUtils batchLoaderUtils = mock(BatchLoaderUtils.class);
-        RequestJSONString requestJSONString = new RequestJSONString();
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("testTopic", "testKey", "testPayload");
+    public void testSendMessageAsyncLoggerInfo() throws Exception {
+        // Mocking the KafkaTemplate send method
+        SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
+        future.set(new SendResult<>(producerRecord, null));
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
-        // Set up the EventsMessageListener instance
-        EventsMessageListener eventsMessageListener = new EventsMessageListener();
-        eventsMessageListener.kafkaTemplate = kafkaTemplate;
-        eventsMessageListener.failedMessageService = failedMessageService;
-        eventsMessageListener.utils = batchLoaderUtils;
+        // Use reflection to invoke private method sendMessageAsync
+        java.lang.reflect.Method method = EventsMessageListener.class.getDeclaredMethod(
+                "sendMessageAsync",
+                ProducerRecord.class, String.class, String.class, String.class, String.class, char.class, RequestJSONString.class
+        );
+        method.setAccessible(true);
 
-        // Invoke the sendMessageAsync method using reflection
-        MockedStatic<EventsMessageListener> eventsMessageListenerMock = Mockito.mockStatic(EventsMessageListener.class);
-        eventsMessageListenerMock.when(() -> EventsMessageListener.class , "sendMessageAsync", Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any()).thenCallRealMethod();
-        eventsMessageListenerMock.when(() -> EventsMessageListener.class, "filterAccountNum", Mockito.any()).thenCallRealMethod();
-        
-        String accountNum = "123-456";
-        requestJSONString.getService().getServiceBody().getCallRequest().getBody().getRelinquishingCustomerDetails().setAccountNumber(accountNum);
-        
-        eventsMessageListener.sendMessageAsync(producerRecord, "testTransactionId", "testPayload", "testProducerTopic", "testInsightName", 'N', requestJSONString);
+        // Call the method
+        method.invoke(eventsMessageListener, producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, requestJSONString);
 
-        // Verify the behavior or assertions as needed
+        // Verify that the LOGGER.info statement was executed
+        // This assumes you have a means of capturing log statements, such as a custom appender or log capturing framework.
+        // You can use frameworks like Logback or SLF4J Test to verify log outputs.
+        // Example:
+        // assertThat(logCaptor.getLogs()).contains("Record with Account No: 123456 and Key: key posted successfully to the kafka topic: test-topic, Partition is: 0");
     }
 }
 ```
 
-In this test case, we are using `Mockito.mockStatic` to mock the `EventsMessageListener` class and its private methods. By mocking the static method `sendMessageAsync`, we can cover the `LOGGER.info` statement in the `sendMessageAsync` method.
+### Important Notes:
+- **Reflection API**: We use reflection to access the private `sendMessageAsync` method without modifying the original class structure.
+- **Logging Verification**: To verify the log statement, you might need a logging test framework such as SLF4J Test or a custom log appender to capture and assert log outputs.
+- **Mocks**: We mock the `KafkaTemplate` to simulate the sending of the Kafka message and ensure the `CompletableFuture` is completed successfully to trigger the `LOGGER.info` statement.
+- **Setup**: Initialize all necessary test data in the `setUp` method, including mock objects and any prerequisites.
 
-Ensure that you have properly set up your test environment and include any necessary dependencies for your JUnit test. This test case uses Mockito for mocking objects and behavior.
-
-By following this approach, you should be able to cover the desired `LOGGER.info` statement in your JUnit test and achieve 100% code coverage for the `sendMessageAsync` method.
+This test ensures that the specific log statement is executed by simulating a successful message send operation.

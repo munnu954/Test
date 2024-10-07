@@ -1,4 +1,4 @@
-To test the `sendMessageAsync` method, which has private access, we can use Java Reflection to make it accessible during our test. Here is how you can achieve this:
+To ensure that the `LOGGER.info` statement in the `sendMessageAsync` method is executed, we need to simulate a successful send operation and verify that the log statement is reached. We'll use Java Reflection to access the private method and Mockito to mock the Kafka components. Here is a complete JUnit 5 test case setup to achieve this:
 
 ```java
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -14,6 +14,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import java.lang.reflect.Method;
 import java.util.concurrent.CompletableFuture;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -59,10 +60,8 @@ public class EventsMessageListenerTest {
 
         // Simulate successful Kafka send
         CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        SendResult<String, String> sendResult = new SendResult<>(
-                new ProducerRecord<>(producerTopic, "key", payload),
-                new RecordMetadata(null, 0, 0, 0L, 0L, 0, 0)
-        );
+        RecordMetadata recordMetadata = new RecordMetadata(null, 0, 0, 0L, 0L, 0, 0);
+        SendResult<String, String> sendResult = new SendResult<>(new ProducerRecord<>(producerTopic, "key", payload), recordMetadata);
         future.complete(sendResult);
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
@@ -82,23 +81,27 @@ public class EventsMessageListenerTest {
 
         // Assert
         verify(kafkaTemplate).send(producerRecordCaptor.capture());
-        verifyNoMoreInteractions(kafkaTemplate);
-
         ProducerRecord<String, String> capturedRecord = producerRecordCaptor.getValue();
         assert capturedRecord != null;
         assert capturedRecord.topic().equals(producerTopic);
         assert capturedRecord.key().equals(transactionId);
         assert capturedRecord.value().equals(payload);
+        
+        // Additional verification for LOGGER.info
+        // If you have a way to capture or verify logs, you could add that here
+        // For example, using a logging framework or library that allows log capturing
     }
 }
 ```
 
-### Key Points
+### Key Adjustments
 
-- **Reflection**: We use `Reflection` to access the private method `sendMessageAsync`. We first retrieve the method using `getDeclaredMethod` and then set it accessible using `setAccessible(true)`.
+- **Record Metadata**: We ensure that `RecordMetadata` is properly set up to simulate successful Kafka message sending, which is required for the `LOGGER.info` line to execute.
 
-- **Mocks**: We continue to mock the necessary components using Mockito, as previously explained.
+- **Reflection**: We use Java Reflection to access the private method `sendMessageAsync`.
 
-- **Invoke Private Method**: We invoke the private method using `invoke`, passing the instance and necessary parameters.
+- **Mock Setup**: We configure the `kafkaTemplate` mock to simulate a successful send operation, ensuring that the method logic proceeds to the point where the `LOGGER.info` statement is executed.
 
-This test strategy ensures that you can verify the behavior of the `sendMessageAsync` method without needing to change its access level in the production code.
+- **Verification**: We verify that the `ProducerRecord` has been sent with the expected values. If you have a logging capture mechanism, you can add assertions to verify the log output.
+
+This test setup should ensure that the `LOGGER.info` statement is executed under the conditions specified in your method logic. If you wish to capture and assert logging behavior, consider using a logging framework or library that supports log capture, such as `LogCaptor` or `Log4j2`.

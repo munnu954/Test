@@ -1,31 +1,121 @@
-To achieve 100% code coverage for the `sendMessageAsync` method in the `EventsMessageListener` class, particularly focusing on the `else` condition, we will construct JUnit 5 test cases. We will use reflection to access the private method `sendMessageAsync`, and we will mock the necessary dependencies to simulate the behavior of the method.
+To achieve 100% code coverage for the `NetworkOutageEventsMessageListener` and `BatchLoaderUtils` classes, we need to write JUnit 5 test cases that cover all possible branches in the `onMessage` method's catch blocks, as well as test the methods in the `BatchLoaderUtils` class.
 
-Here's a sample test class that covers the required functionality:
+### JUnit 5 Test Cases for `NetworkOutageEventsMessageListener`
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
-import reactor.core.publisher.Mono;
+import org.mockito.MockitoAnnotations;
+import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.client.api.Schema;
 
-import java.lang.reflect.Method;
-
-@ExtendWith(MockitoExtension.class)
-public class EventsMessageListenerTest {
+public class NetworkOutageEventsMessageListenerTest {
 
     @InjectMocks
-    private EventsMessageListener eventsMessageListener;
+    private NetworkOutageEventsMessageListener listener;
 
     @Mock
-    private AccountEcpdService accountService;
+    private BatchLoaderUtils utils;
+
+    @Mock
+    private Message<GenericRecord> message;
+
+    private String producerTopic = "test-topic";
+    private String payload = "{\"EVENT_ID\":\"12345\"}";
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+        listener.producerTopic = producerTopic;
+    }
+
+    @Test
+    public void testOnMessage_EmptyPayload() {
+        when(message.getData()).thenReturn(new byte[0]);
+
+        Exception exception = assertThrows(SystemException.class, () -> {
+            listener.onMessage(message);
+        });
+
+        assertEquals("NetworkOutageEventsMessageListener: Empty payload received from NSP topic", exception.getMessage());
+    }
+
+    @Test
+    public void testOnMessage_InvalidJson() throws Exception {
+        when(message.getData()).thenReturn(payload.getBytes());
+        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenThrow(new JsonProcessingException("Invalid JSON") {});
+
+        Exception exception = assertThrows(SystemException.class, () -> {
+            listener.onMessage(message);
+        });
+
+        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()), anyString());
+        assertEquals("NetworkOutageEventsMessageListener:: Erroneous payload received from NSP topic", exception.getMessage());
+    }
+
+    @Test
+    public void testOnMessage_NullEventId() throws Exception {
+        when(message.getData()).thenReturn(payload.getBytes());
+        OutageDetailsEvent event = new OutageDetailsEvent();
+        event.setEventId(null);
+        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenReturn(event);
+
+        listener.onMessage(message);
+
+        // Verify nothing is sent
+        verify(utils, never()).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
+    }
+
+    @Test
+    public void testOnMessage_Success() throws Exception {
+        when(message.getData()).thenReturn(payload.getBytes());
+        OutageDetailsEvent event = new OutageDetailsEvent();
+        event.setEventId("12345");
+        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenReturn(event);
+
+        listener.onMessage(message);
+
+        // Verify that the message was sent
+        verify(utils).sendMessageAsync(any(), anyString(), eq(payload), eq(producerTopic), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()));
+    }
+
+    @Test
+    public void testOnMessage_KafkaSendError() throws Exception {
+        when(message.getData()).thenReturn(payload.getBytes());
+        OutageDetailsEvent event = new OutageDetailsEvent();
+        event.setEventId("12345");
+        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenReturn(event);
+        doThrow(new RuntimeException("Kafka error")).when(utils).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
+
+        listener.onMessage(message);
+
+        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()), anyString());
+    }
+}
+```
+
+### JUnit 5 Test Cases for `BatchLoaderUtils`
+
+```java
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.kafka.core.KafkaTemplate;
+
+public class BatchLoaderUtilsTest {
+
+    @InjectMocks
+    private BatchLoaderUtils utils;
 
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
@@ -33,89 +123,71 @@ public class EventsMessageListenerTest {
     @Mock
     private KafkaFalloutService failedMessageService;
 
-    @Mock
-    private BatchLoaderUtils utils;
-
     @BeforeEach
     public void setUp() {
-        // Set up necessary mocks, if required.
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    public void testReturnHeaders_NonEmptyValue() {
+        List<Header> headers = utils.returnHeaders("TestType");
+        assertEquals(1, headers.size());
+        assertEquals("TestType".getBytes(), headers.get(0).value());
+    }
+
+    @Test
+    public void testReturnHeaders_EmptyValue() {
+        List<Header> headers = utils.returnHeaders("");
+        assertTrue(headers.isEmpty());
     }
 
     @Test
     public void testSendMessageAsync_Success() throws Exception {
-        // Create the necessary input objects
-        String transactionId = "test-transaction-id";
-        String payload = "{\"key\":\"value\"}";
-        String producerTopic = "test-topic";
-        String insightName = "test-insight";
-        char sensitivityCheckDone = 'Y';
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
+        doReturn(CompletableFuture.completedFuture(new SendResult<>(producerRecord, new RecordMetadata()))).when(kafkaTemplate).send(producerRecord);
 
-        RequestJSONString requestJSONString = new RequestJSONString();
-        // Set up the requestJSONString as needed
+        utils.sendMessageAsync(producerRecord, "transactionId", "payload", "topic", "insightName", 'N', "errorCategory");
 
-        // Prepare a ProducerRecord mock
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>(producerTopic, null, transactionId, payload);
-
-        // Mock the KafkaTemplate behavior
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.complete(new SendResult<>(producerRecord, new RecordMetadata(new TopicPartition(producerTopic, 0), 0, 0, 0, 0, 0, 0)));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        // Use reflection to call the private method
-        Method method = EventsMessageListener.class.getDeclaredMethod("sendMessageAsync", ProducerRecord.class, String.class, String.class, String.class, String.class, char.class, RequestJSONString.class);
-        method.setAccessible(true);
-
-        // Call the method
-        method.invoke(eventsMessageListener, producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, requestJSONString);
-
-        // Verify that the message was sent successfully
-        verify(kafkaTemplate).send(producerRecord);
-        // Additional verifications can be added as necessary
+        // Verify that success message is logged (you would need to use a logging framework to capture this in a real test)
     }
 
     @Test
-    public void testSendMessageAsync_Failure() throws Exception {
-        // Create the necessary input objects
-        String transactionId = "test-transaction-id";
-        String payload = "{\"key\":\"value\"}";
-        String producerTopic = "test-topic";
-        String insightName = "test-insight";
-        char sensitivityCheckDone = 'Y';
+    public void testSendMessageAsync_Error() throws Exception {
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
+        doReturn(CompletableFuture.failedFuture(new RuntimeException("Kafka error"))).when(kafkaTemplate).send(producerRecord);
 
-        RequestJSONString requestJSONString = new RequestJSONString();
-        // Set up the requestJSONString as needed
+        utils.sendMessageAsync(producerRecord, "transactionId", "payload", "topic", "insightName", 'N', "errorCategory");
 
-        // Prepare a ProducerRecord mock
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>(producerTopic, null, transactionId, payload);
+        verify(failedMessageService).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar(), anyString(), anyString());
+    }
 
-        // Mock the KafkaTemplate behavior to simulate an error
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.completeExceptionally(new RuntimeException("Kafka error"));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+    @Test
+    public void testConvert_ValidJson() throws Exception {
+        String json = "{\"EVENT_ID\":\"123\"}";
+        OutageDetailsEvent event = utils.convert(json, OutageDetailsEvent.class);
+        assertNotNull(event);
+        assertEquals("123", event.getEventId());
+    }
 
-        // Use reflection to call the private method
-        Method method = EventsMessageListener.class.getDeclaredMethod("sendMessageAsync", ProducerRecord.class, String.class, String.class, String.class, String.class, char.class, RequestJSONString.class);
-        method.setAccessible(true);
+    @Test
+    public void testConvert_InvalidJson() {
+        String json = "Invalid JSON";
+        assertThrows(JsonProcessingException.class, () -> {
+            utils.convert(json, OutageDetailsEvent.class);
+        });
+    }
 
-        // Call the method
-        method.invoke(eventsMessageListener, producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, requestJSONString);
-
-        // Verify that the failed message service was called to save the failed record
-        verify(failedMessageService).saveFailedRecords(eq(producerTopic), eq(transactionId), eq(payload), eq(insightName), eq(sensitivityCheckDone));
+    @Test
+    public void testSaveFailedRecords() {
+        utils.saveFailedRecords("topic", "transactionId", "payload", "insightName", 'N', "errorCategory", "errorMessage");
+        verify(failedMessageService).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar(), anyString(), anyString());
     }
 }
 ```
 
-### Explanation:
+### Explanation
+1. **`NetworkOutageEventsMessageListenerTest`**: This test class covers all branches of the `onMessage` method by simulating different scenarios, such as receiving an empty payload, an invalid JSON payload, a valid event ID, and handling Kafka send errors.
 
-1. **Dependencies**: The necessary services (`AccountEcpdService`, `KafkaTemplate`, `KafkaFalloutService`, and `BatchLoaderUtils`) are mocked using Mockito.
+2. **`BatchLoaderUtilsTest`**: This test class covers all methods in the `BatchLoaderUtils` class, including the successful and error scenarios for sending messages, header generation, JSON conversion, and saving failed records.
 
-2. **Reflection**: Since the `sendMessageAsync` method is private, we access it using reflection. This allows us to invoke the method without changing its access modifier.
-
-3. **Test Cases**:
-   - **Success Case**: In the first test case, we simulate a successful message send operation and verify that the `send` method of `KafkaTemplate` is invoked.
-   - **Failure Case**: In the second test case, we simulate a failure during message sending and verify that the `saveFailedRecords` method of `KafkaFalloutService` is called.
-
-4. **Setup**: You can add necessary setup steps in the `setUp` method if you need to configure certain aspects of your mocks or the class under test.
-
-This test class will cover the else conditional statement of the `sendMessageAsync` method, ensuring full code coverage.
+By running these tests, you should achieve 100% code coverage for both classes.

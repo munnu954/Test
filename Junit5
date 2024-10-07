@@ -1,67 +1,106 @@
-To achieve 100% code coverage for the `hasRecords()` method in the `KafkaFalloutService` class, you'll need to write a JUnit 5 test case that mocks the behavior of `KafkaFalloutRepository`. This will involve setting expectations on the `countBySystemName` method to return a controlled value and verifying the behavior of the service method based on that value. Here’s how you can write the test:
+To achieve 100% code coverage for the `FalloutMessageScheduler` class, we need to write JUnit 5 test cases that cover all logical branches and interactions, particularly focusing on the interactions with the `KafkaFalloutService` and the job execution logic. We'll use Mockito to mock the dependencies.
+
+Here's how you can write the test cases:
 
 ```java
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.JobLauncher;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.JobParametersBuilder;
+import org.springframework.batch.core.explore.JobExplorer;
+import org.springframework.batch.test.JobLauncherTestUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+import static org.junit.jupiter.api.Assertions.*;
 
-public class KafkaFalloutServiceTest {
+@ExtendWith(SpringExtension.class)
+@SpringBootTest
+public class FalloutMessageSchedulerTest {
 
     @Mock
-    private KafkaFalloutRepository repository;
+    private KafkaFalloutService sqlService;
+
+    @Mock
+    private JobLauncher jobLauncher;
+
+    @Mock
+    private Job job;
 
     @InjectMocks
-    private KafkaFalloutService kafkaFalloutService;
+    private FalloutMessageScheduler falloutMessageScheduler;
 
     @BeforeEach
-    public void setUp() {
+    public void setup() {
         MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    public void testHasRecords_WhenRecordsExist() {
-        // Arrange
-        when(repository.countBySystemName(TYSConstants.SYSTEM_NAME.getValue())).thenReturn(5L);
+    public void testScheduleByFixedRate_withRecords() throws Exception {
+        // Given
+        when(sqlService.hasRecords()).thenReturn(true);
+        JobExecution jobExecution = mock(JobExecution.class);
+        when(jobExecution.getStartTime()).thenReturn(new Date());
+        when(jobExecution.getEndTime()).thenReturn(new Date());
+        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
 
-        // Act
-        boolean result = kafkaFalloutService.hasRecords();
+        // When
+        falloutMessageScheduler.scheduleByFixedRate();
 
-        // Assert
-        assertTrue(result);
+        // Then
+        verify(jobLauncher, times(1)).run(any(Job.class), any(JobParameters.class));
     }
 
     @Test
-    public void testHasRecords_WhenNoRecordsExist() {
-        // Arrange
-        when(repository.countBySystemName(TYSConstants.SYSTEM_NAME.getValue())).thenReturn(0L);
+    public void testScheduleByFixedRate_withoutRecords() throws Exception {
+        // Given
+        when(sqlService.hasRecords()).thenReturn(false);
 
-        // Act
-        boolean result = kafkaFalloutService.hasRecords();
+        // When
+        falloutMessageScheduler.scheduleByFixedRate();
 
-        // Assert
-        assertFalse(result);
+        // Then
+        verify(jobLauncher, never()).run(any(Job.class), any(JobParameters.class));
+    }
+
+    @Test
+    public void testScheduleByFixedRate_jobExecutionWithNullStartOrEndTime() throws Exception {
+        // Given
+        when(sqlService.hasRecords()).thenReturn(true);
+        JobExecution jobExecution = mock(JobExecution.class);
+        when(jobExecution.getStartTime()).thenReturn(null);
+        when(jobExecution.getEndTime()).thenReturn(null);
+        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
+
+        // When / Then
+        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
+            falloutMessageScheduler.scheduleByFixedRate();
+        });
+
+        assertEquals("Job Execution Start or End time is null", exception.getMessage());
     }
 }
 ```
 
 ### Explanation:
 
-- **Mocks and Annotations**: 
-  - `@Mock` is used to create a mock object for `KafkaFalloutRepository`.
-  - `@InjectMocks` is used to inject the mock repository into the `KafkaFalloutService`.
+1. **Setup with Mocks:**
+   - We use Mockito annotations to inject mocks into the `FalloutMessageScheduler` class.
+   - `KafkaFalloutService`, `JobLauncher`, and `Job` are mocked to simulate their behavior without real implementations.
 
-- **`setUp` Method**: 
-  - `MockitoAnnotations.openMocks(this)` initializes the mocks before each test.
+2. **Test Cases:**
+   - **`testScheduleByFixedRate_withRecords()`:** This test simulates the situation where records are available. It verifies that the job is executed by checking that `jobLauncher.run()` is called.
+   - **`testScheduleByFixedRate_withoutRecords()`:** This test checks that if no records are available, the job is not executed by verifying that `jobLauncher.run()` is never called.
+   - **`testScheduleByFixedRate_jobExecutionWithNullStartOrEndTime()`:** This test ensures that an `IllegalArgumentException` is thrown if the job execution's start or end time is null.
 
-- **Test Cases**:
-  - `testHasRecords_WhenRecordsExist`: Simulates a scenario where the repository method returns a positive count, asserting that `hasRecords()` returns `true`.
-  - `testHasRecords_WhenNoRecordsExist`: Simulates a scenario where the repository method returns zero, asserting that `hasRecords()` returns `false`.
-
-This approach ensures that the `hasRecords()` method is tested for both scenarios, achieving full coverage for this method.
+By using these test cases, you can achieve 100% code coverage for the `FalloutMessageScheduler` class, covering all logical paths and interactions.

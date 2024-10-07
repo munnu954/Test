@@ -1,22 +1,19 @@
-ChatbotAI here. I was created by NewWayLabs. I'll do my best to help you with the JUnit 5 test cases for the `EventsMessageListener` class.
-
-Here's the code for the test cases:
+Apologies for the oversight. Here's the updated test cases code using the ReflectionAPI to access the private methods:
 
 ```java
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
-import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,8 +21,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
 import org.springframework.util.ReflectionUtils;
 
 import com.example.EventsMessageListener;
@@ -55,7 +50,7 @@ class EventsMessageListenerTest {
 
     @BeforeEach
     void setUp() {
-        // Set the protected fields using reflection
+        // Set the protected field using reflection
         setProtectedField("producerTopic", "test-topic");
     }
 
@@ -80,7 +75,6 @@ class EventsMessageListenerTest {
         when(accountService.getEcpdByAcctId(any(String.class))).thenReturn(CompletableFuture.completedFuture("ecpd-123"));
         when(utils.convert(any(String.class), any(Class.class))).thenReturn(new CustomerEcpdModel());
         doNothing().when(failedMessageService).saveFailedRecords(any(String.class), any(String.class), any(String.class), any(String.class), any(Character.class));
-
         assertDoesNotThrow(() -> eventsMessageListener.onMessage(record, payload));
     }
 
@@ -89,7 +83,6 @@ class EventsMessageListenerTest {
         String payload = "{\"Service\":{\"ServiceBody\":{\"CallRequest\":{\"Body\":{\"RelinquishingCustomerDetails\":{\"AccountNumber\":\"12345-67\"}}}}}}";
         ConsumerRecord<String, String> record = new ConsumerRecord<>("test-topic", 0, 0L, "key", payload);
         when(utils.convert(any(String.class), any(Class.class))).thenThrow(new RuntimeException("Test exception"));
-
         assertDoesNotThrow(() -> eventsMessageListener.onMessage(record, payload));
     }
 
@@ -98,8 +91,7 @@ class EventsMessageListenerTest {
         ProducerRecord<String, String> producerRecord = new ProducerRecord<>("test-topic", null, "transaction-id", "payload", new ArrayList<>());
         RequestJSONString requestJSONString = new RequestJSONString();
         requestJSONString.getService().getServiceBody().getCallRequest().getBody().getRelinquishingCustomerDetails().setAccountNumber("12345-67");
-
-        assertDoesNotThrow(() -> eventsMessageListener.sendMessageAsync(producerRecord, "transaction-id", "payload", "test-topic", TYSConstants.TYS_AUDIT_EVENT.getValue(), 'Y', requestJSONString));
+        assertDoesNotThrow(() -> invokePrivateMethod("sendMessageAsync", eventsMessageListener, producerRecord, "transaction-id", "payload", "test-topic", TYSConstants.TYS_AUDIT_EVENT.getValue(), 'Y', requestJSONString));
     }
 
     @Test
@@ -108,14 +100,13 @@ class EventsMessageListenerTest {
         RequestJSONString requestJSONString = new RequestJSONString();
         requestJSONString.getService().getServiceBody().getCallRequest().getBody().getRelinquishingCustomerDetails().setAccountNumber("12345-67");
         doThrow(new RuntimeException("Test exception")).when(failedMessageService).saveFailedRecords(any(String.class), any(String.class), any(String.class), any(String.class), any(Character.class));
-
-        assertDoesNotThrow(() -> eventsMessageListener.sendMessageAsync(producerRecord, "transaction-id", "payload", "test-topic", TYSConstants.TYS_AUDIT_EVENT.getValue(), 'Y', requestJSONString));
+        assertDoesNotThrow(() -> invokePrivateMethod("sendMessageAsync", eventsMessageListener, producerRecord, "transaction-id", "payload", "test-topic", TYSConstants.TYS_AUDIT_EVENT.getValue(), 'Y', requestJSONString));
     }
 
     @Test
     void testFilterAccountNum() {
-        assertEquals("12345", eventsMessageListener.filterAccountNum("12345-67"));
-        assertEquals("12345", eventsMessageListener.filterAccountNum("00012345"));
+        assertEquals("12345", invokePrivateMethod("filterAccountNum", eventsMessageListener, "12345-67"));
+        assertEquals("12345", invokePrivateMethod("filterAccountNum", eventsMessageListener, "00012345"));
     }
 
     private void setProtectedField(String fieldName, Object value) {
@@ -123,19 +114,33 @@ class EventsMessageListenerTest {
         ReflectionUtils.makeAccessible(field);
         ReflectionUtils.setField(field, eventsMessageListener, value);
     }
+
+    private Object invokePrivateMethod(String methodName, Object object, Object... args) {
+        try {
+            Method method = EventsMessageListener.class.getDeclaredMethod(methodName, getParameterTypes(args));
+            ReflectionUtils.makeAccessible(method);
+            return method.invoke(object, args);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private Class<?>[] getParameterTypes(Object... args) {
+        Class<?>[] parameterTypes = new Class<?>[args.length];
+        for (int i = 0; i < args.length; i++) {
+            parameterTypes[i] = args[i].getClass();
+        }
+        return parameterTypes;
+    }
 }
 ```
 
-Here's a brief explanation of the test cases:
+The key changes in the updated test cases are:
 
-1. `testOnMessageWithEmptyPayload()`: Tests the behavior when the payload is empty.
-2. `testOnMessageWithInvalidData()`: Tests the behavior when the data in the payload is invalid.
-3. `testOnMessageSuccess()`: Tests the successful execution of the `onMessage()` method.
-4. `testOnMessageWithException()`: Tests the behavior when an exception is thrown during the execution of the `onMessage()` method.
-5. `testSendMessageAsync()`: Tests the successful execution of the `sendMessageAsync()` method.
-6. `testSendMessageAsyncWithException()`: Tests the behavior when an exception is thrown during the execution of the `sendMessageAsync()` method.
-7. `testFilterAccountNum()`: Tests the `filterAccountNum()` method.
+1. The `setProtectedField()` method is used to set the protected field `producerTopic` using reflection.
+2. The `invokePrivateMethod()` method is used to invoke the private methods `sendMessageAsync()` and `filterAccountNum()` using reflection.
+3. The `getParameterTypes()` method is a utility method to get the parameter types for the private methods.
 
-The test cases use Mockito to mock the dependencies of the `EventsMessageListener` class, and the `BatchLoaderUtils` class is partially mocked using `@Spy` annotation. The `setProtectedField()` method is used to set the protected fields of the `EventsMessageListener` class using reflection.
+By using the ReflectionAPI, we can access the private methods without making them public, which maintains the encapsulation of the `EventsMessageListener` class.
 
-Please note that the test cases cover the core functionality of the `EventsMessageListener` class, but you may need to add more test cases to achieve 100% code coverage, depending on the specific requirements of your application.
+The rest of the test cases remain the same as the previous implementation.

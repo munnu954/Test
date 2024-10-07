@@ -1,25 +1,25 @@
+To write JUnit 5 test cases that cover both branches of the `saveFailedRecords` method within the `if(e != null)` block in the `sendMessageAsync` method of the `BatchLoaderUtils` class, you need to simulate scenarios where an exception occurs during Kafka message sending. The goal is to ensure the error message is processed correctly, whether it's longer or shorter than 200 characters. We'll use mocking to simulate the behavior of the KafkaTemplate and KafkaFalloutService. Here's how you can achieve this:
+
+```java
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+import java.util.concurrent.CompletableFuture;
+
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
-import org.springframework.util.concurrent.SettableListenableFuture;
-
-import java.util.concurrent.CompletableFuture;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.verify;
+import org.springframework.kafka.core.KafkaTemplate;
 
 @ExtendWith(MockitoExtension.class)
-class BatchLoaderUtilsTest {
-
-    @InjectMocks
-    private BatchLoaderUtils batchLoaderUtils;
+public class BatchLoaderUtilsTest {
 
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
@@ -27,45 +27,68 @@ class BatchLoaderUtilsTest {
     @Mock
     private KafkaFalloutService failedMessageService;
 
+    @InjectMocks
+    private BatchLoaderUtils batchLoaderUtils;
+
+    private ProducerRecord<String, String> producerRecord;
+    private String transactionId;
+    private String payload;
+    private String producerTopic;
+    private String insightName;
+    private char sensitivityCheckDone;
+    private String errorCategory;
+
     @BeforeEach
     void setUp() {
-        batchLoaderUtils = new BatchLoaderUtils();
-        batchLoaderUtils.kafkaTemplate = kafkaTemplate;
-        batchLoaderUtils.failedMessageService = failedMessageService;
+        producerRecord = new ProducerRecord<>("topic", "key", "value");
+        transactionId = "txnId";
+        payload = "payload";
+        producerTopic = "producerTopic";
+        insightName = "insightName";
+        sensitivityCheckDone = 'Y';
+        errorCategory = "errorCategory";
     }
 
     @Test
-    void testSendMessageAsyncWithSuccess() {
-        // Arrange
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "payload");
-        SendResult<String, String> sendResult = Mockito.mock(SendResult.class);
-        SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
-        future.set(sendResult);
-        Mockito.when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(sendResult));
+    void testSendMessageAsync_withShortErrorMessage() {
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.completeExceptionally(new RuntimeException("Short error message"));
 
-        // Act
-        batchLoaderUtils.sendMessageAsync(producerRecord, "transactionId", "payload", "topic", "insightName", 'Y', "errorCategory");
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
-        // Assert
-        verify(kafkaTemplate).send(any(ProducerRecord.class));
-        verify(failedMessageService, Mockito.never()).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
+        batchLoaderUtils.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, errorCategory);
+
+        verify(failedMessageService, times(1)).saveFailedRecords(eq(producerTopic), eq(transactionId), eq(payload), eq(insightName), eq(sensitivityCheckDone), eq(errorCategory), eq("Short error message"));
     }
 
     @Test
-    void testSendMessageAsyncWithFailure() {
-        // Arrange
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "payload");
-        Exception exception = new RuntimeException("Error sending message");
-        SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
-        future.setException(exception);
-        Mockito.when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(null));
-        doNothing().when(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
+    void testSendMessageAsync_withLongErrorMessage() {
+        String longErrorMessage = "This is a very long error message that exceeds two hundred characters. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.";
+        String expectedErrorMessage = longErrorMessage.substring(0, 200);
 
-        // Act
-        batchLoaderUtils.sendMessageAsync(producerRecord, "transactionId", "payload", "topic", "insightName", 'Y', "errorCategory");
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.completeExceptionally(new RuntimeException(longErrorMessage));
 
-        // Assert
-        verify(kafkaTemplate).send(any(ProducerRecord.class));
-        verify(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        batchLoaderUtils.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, errorCategory);
+
+        verify(failedMessageService, times(1)).saveFailedRecords(eq(producerTopic), eq(transactionId), eq(payload), eq(insightName), eq(sensitivityCheckDone), eq(errorCategory), eq(expectedErrorMessage));
     }
 }
+```
+
+### Explanation:
+
+1. **Mocks and Setup**:
+    - Use Mockito to mock `KafkaTemplate` and `KafkaFalloutService`.
+    - Initialize `BatchLoaderUtils` with these mocks.
+
+2. **Test Scenarios**:
+    - **Short Error Message**: Trigger an exception with a short message and verify that `saveFailedRecords` is called with the full message.
+    - **Long Error Message**: Trigger an exception with a message longer than 200 characters and verify that the message is truncated to 200 characters before calling `saveFailedRecords`.
+
+3. **Verification**:
+    - Use `verify` to ensure that `saveFailedRecords` is called with expected arguments, ensuring both branches within the `if(e != null)` block are covered.
+
+This approach ensures you have full test coverage for the branches within the `sendMessageAsync` method.

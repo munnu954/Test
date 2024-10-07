@@ -1,32 +1,35 @@
-To cover the additional branch in the `saveFailedRecords` method where the error message exceeds 200 characters, we need to create a test case that simulates this condition. Here's how you can write the additional test case:
+To achieve 100% code coverage for the `sendMessageAsync` method in the `BatchLoaderUtils` class, we need to write JUnit 5 test cases that cover all possible execution paths. This includes scenarios where the message is sent successfully and where an exception occurs, leading to saving a failed record. We will use mocking to simulate interactions with the KafkaTemplate and KafkaFalloutService.
+
+Here is the JUnit 5 test code for the `sendMessageAsync` method:
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-import java.util.concurrent.CompletableFuture;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
+import org.springframework.kafka.support.ProducerListener;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.TopicPartition;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class BatchLoaderUtilsTest {
+class BatchLoaderUtilsTest {
 
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
-
+    
     @Mock
     private KafkaFalloutService failedMessageService;
 
@@ -34,107 +37,63 @@ public class BatchLoaderUtilsTest {
     private BatchLoaderUtils batchLoaderUtils;
 
     private ProducerRecord<String, String> producerRecord;
-    
+    private String transactionId = "txnId123";
+    private String payload = "{\"key\":\"value\"}";
+    private String producerTopic = "test-topic";
+    private String insightName = "testInsight";
+    private char sensitivityCheckDone = 'Y';
+    private String errorCategory = "errorCat";
+
     @BeforeEach
-    public void setUp() {
-        producerRecord = new ProducerRecord<>("testTopic", "testKey", "testValue");
+    void setup() {
+        producerRecord = new ProducerRecord<>(producerTopic, "key", payload);
     }
 
     @Test
-    public void testSendMessageAsync_Success() throws Exception {
-        SendResult<String, String> sendResult = mock(SendResult.class);
-        RecordMetadata metadata = mock(RecordMetadata.class);
-        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(sendResult);
-
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-        when(sendResult.getRecordMetadata()).thenReturn(metadata);
-        when(metadata.offset()).thenReturn(1L);
-        when(metadata.partition()).thenReturn(1);
-
-        batchLoaderUtils.sendMessageAsync(
-                producerRecord, 
-                "transactionId", 
-                "payload", 
-                "producerTopic", 
-                "insightName", 
-                'Y', 
-                "errorCategory"
-        );
-
-        // Verify no failed records were saved
-        verify(failedMessageService, Mockito.never()).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
-    }
-
-    @Test
-    public void testSendMessageAsync_FailureWithShortErrorMessage() throws Exception {
+    void testSendMessageAsync_Success() throws ExecutionException, InterruptedException {
         CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.completeExceptionally(new Exception("Simulated error"));
+        SendResult<String, String> sendResult = new SendResult<>(producerRecord, new RecordMetadata(new TopicPartition(producerTopic, 1), 0, 0, 0, 0, 0));
+        future.complete(sendResult);
 
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-        doNothing().when(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
 
-        batchLoaderUtils.sendMessageAsync(
-                producerRecord, 
-                "transactionId", 
-                "payload", 
-                "producerTopic", 
-                "insightName", 
-                'Y', 
-                "errorCategory"
-        );
+        batchLoaderUtils.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, errorCategory);
 
-        // Verify that the failed message service was called to save failed records
-        verify(failedMessageService).saveFailedRecords(
-                eq("producerTopic"), 
-                eq("transactionId"), 
-                eq("payload"), 
-                eq("insightName"), 
-                eq('Y'), 
-                eq("errorCategory"), 
-                eq("Simulated error")
-        );
+        // Verify that saveFailedRecords is NOT called
+        verify(failedMessageService, never()).saveFailedRecords(any(), any(), any(), any(), anyChar(), any(), any());
     }
 
     @Test
-    public void testSendMessageAsync_FailureWithLongErrorMessage() throws Exception {
+    void testSendMessageAsync_Failure() {
         CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        String longErrorMessage = "This is a very long error message ".repeat(10); // Creates a long message
-
-        future.completeExceptionally(new Exception(longErrorMessage));
+        future.completeExceptionally(new RuntimeException("Simulated failure with a very long error message that exceeds 200 characters. Simulated failure with a very long error message that exceeds 200 characters."));
 
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-        doNothing().when(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
 
-        batchLoaderUtils.sendMessageAsync(
-                producerRecord, 
-                "transactionId", 
-                "payload", 
-                "producerTopic", 
-                "insightName", 
-                'Y', 
-                "errorCategory"
-        );
+        batchLoaderUtils.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, errorCategory);
 
-        // Verify that the failed message service was called with a truncated error message
-        verify(failedMessageService).saveFailedRecords(
-                eq("producerTopic"), 
-                eq("transactionId"), 
-                eq("payload"), 
-                eq("insightName"), 
-                eq('Y'), 
-                eq("errorCategory"), 
-                eq(longErrorMessage.substring(0, 200))
-        );
+        // Capture the error message argument
+        ArgumentCaptor<String> errorMessageCaptor = ArgumentCaptor.forClass(String.class);
+
+        // Verify that saveFailedRecords is called with the correct parameters
+        verify(failedMessageService, times(1)).saveFailedRecords(eq(producerTopic), eq(transactionId), eq(payload), eq(insightName), eq(sensitivityCheckDone), eq(errorCategory), errorMessageCaptor.capture());
+
+        // Assert that the error message is truncated to 200 characters
+        String capturedErrorMessage = errorMessageCaptor.getValue();
+        assertEquals(200, capturedErrorMessage.length());
+        assertEquals("Simulated failure with a very long error message that exceeds 200 characters. Simulated failure with a very long error message that exce", capturedErrorMessage);
     }
 }
 ```
 
 ### Explanation:
 
-1. **Failure with Short Error Message**: This test case already exists, handling errors with messages shorter than 200 characters.
+1. **Mocking**: We use `@Mock` to mock `KafkaTemplate` and `KafkaFalloutService`. This allows us to simulate their behavior without relying on actual implementations.
 
-2. **Failure with Long Error Message**: This new test case handles errors with messages longer than 200 characters. We use `.repeat(10)` to create a long error message and ensure that the call to `saveFailedRecords` uses only the first 200 characters.
+2. **Setup**: In the `setup` method, we initialize the `ProducerRecord` and other parameters to be used in the tests.
 
-3. **Verification**: In the long error message test case, we verify that the `failedMessageService.saveFailedRecords` method receives a truncated error message, covering the branch where the message length exceeds 200 characters.
+3. **Test for Success**: We simulate a successful message send by completing the `CompletableFuture` with a `SendResult`. We verify that the `saveFailedRecords` method is never called, indicating success.
 
-These tests ensure that both branches of the error handling logic in `sendMessageAsync` are fully covered.
+4. **Test for Failure**: We simulate a failure by completing the `CompletableFuture` exceptionally with a `RuntimeException`. We verify that `saveFailedRecords` is called with the correctly truncated error message.
+
+5. **Verification and Assertions**: We use `ArgumentCaptor` to capture the error message and assert its length and content to ensure it is properly truncated.

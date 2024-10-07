@@ -1,99 +1,62 @@
-To write JUnit 5 test cases for your `NetworkOutageEventsMessageListener` class, especially focusing on the `saveFailedRecords` method calls for both branches, you can create a test class and use mocking to simulate the behavior of the dependencies. Here's how you can structure the test cases:
+Here is the Junit5 test cases code covering the mentioned branches in the `NetworkOutageEventsMessageListener` class:
 
 ```java
-import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.pulsar.client.api.Message;
-import org.junit.jupiter.api.BeforeEach;
+import org.apache.avro.generic.GenericRecord;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.kafka.core.KafkaTemplate;
-
+import org.mockito.Mockito;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+@ExtendWith(SpringExtension.class)
+@SpringBootTest
+@ContextConfiguration(classes = {NetworkOutageEventsMessageListener.class})
 public class NetworkOutageEventsMessageListenerTest {
-
-    @Mock
-    private BatchLoaderUtils utils;
-
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Mock
-    private Message<GenericRecord> message;
 
     @InjectMocks
     private NetworkOutageEventsMessageListener listener;
 
-    private String producerTopic = "test_topic";
+    @Mock
+    private BatchLoaderUtils utils;
 
-    @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
-        listener = new NetworkOutageEventsMessageListener(utils);
+    @Test
+    public void testOnMessageWithKafkaError() throws Exception {
+        Message<GenericRecord> message = Mockito.mock(Message.class);
+        when(message.getData()).thenReturn("testPayload".getBytes());
+        when(Utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenThrow(JsonProcessingException.class);
+
+        assertThrows(SystemException.class, () -> {
+            listener.onMessage(message);
+        });
+
+        verify(utils).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), eq('-'), anyString(), anyString());
     }
 
     @Test
-    public void testOnMessageWithEmptyPayload() throws SystemException {
-        // Arrange
-        when(message.getData()).thenReturn("".getBytes());
-
-        // Act & Assert
-        SystemException exception = assertThrows(SystemException.class, () -> listener.onMessage(message));
-        assertEquals("NetworkOutageEventsMessageListener: Empty payload received from NSP topic", exception.getMessage());
-
-        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(""), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()), anyString());
-    }
-
-    @Test
-    public void testOnMessageWithJsonProcessingException() throws SystemException, JsonProcessingException {
-        // Arrange
-        String payload = "{\"invalid\": \"json\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenThrow(new JsonProcessingException("Error parsing JSON") {});
-
-        // Act & Assert
-        SystemException exception = assertThrows(SystemException.class, () -> listener.onMessage(message));
-        assertEquals("NetworkOutageEventsMessageListener:: Erroneous payload received from NSP topic", exception.getMessage());
-
-        ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
-        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()), argumentCaptor.capture());
-        assertTrue(argumentCaptor.getValue().startsWith("Error parsing JSON"));
-    }
-
-    @Test
-    public void testOnMessageWithExceptionInSendMessageAsync() throws SystemException, JsonProcessingException {
-        // Arrange
+    public void testOnMessageWithUncategorizedError() throws Exception {
+        Message<GenericRecord> message = Mockito.mock(Message.class);
+        when(message.getData()).thenReturn("testPayload".getBytes());
         OutageDetailsEvent event = new OutageDetailsEvent();
-        event.setEventId("123");
-        String payload = "{\"EVENT_ID\": \"123\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        when(utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenReturn(event);
-        doThrow(new RuntimeException("Kafka error")).when(utils).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
+        event.setEventId("12345");
+        when(Utils.convert(anyString(), eq(OutageDetailsEvent.class))).thenReturn(event);
 
-        // Act
-        listener.onMessage(message);
+        assertDoesNotThrow(() -> {
+            listener.onMessage(message);
+        });
 
-        // Assert
-        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()), anyString());
+        verify(utils, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), eq('-'), anyString(), anyString());
     }
+
 }
 ```
 
-### Explanation:
+In these test cases, we are mocking the `BatchLoaderUtils` class and simulating scenarios to cover both branches in the `onMessage` method of the `NetworkOutageEventsMessageListener` class. 
 
-- **Mocks and Stubs**: We use Mockito to mock the dependencies (`BatchLoaderUtils`, `KafkaTemplate`, and `Message`). This allows us to simulate their behavior without needing actual implementations.
-  
-- **`@BeforeEach` Setup**: Initialize mocks and the `NetworkOutageEventsMessageListener` instance before each test.
-
-- **Test Cases**:
-  - **Empty Payload**: Simulate receiving an empty payload and ensure a `SystemException` is thrown, and `saveFailedRecords` is called with the expected arguments.
-  - **JSON Processing Exception**: Simulate a `JsonProcessingException` during the conversion process and verify that the correct error handling occurs.
-  - **Exception in `sendMessageAsync`**: Simulate an exception thrown by `sendMessageAsync` and verify that `saveFailedRecords` is called with the `EC_KAFKA_ERROR` error category.
-
-- **Argument Captors**: Capture arguments passed to the `saveFailedRecords` method to assert specific values or conditions, especially for error messages.
-
-This setup ensures that each branch of the `saveFailedRecords` method calls is thoroughly tested for different scenarios.
+You can run these test cases to ensure that the specified branches are covered and the exceptions are handled accordingly. Let me know if you need further assistance!

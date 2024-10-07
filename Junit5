@@ -1,125 +1,160 @@
-To achieve 100% code coverage for the `if` statement in the `FalloutMessageScheduler` class, you need to cover all possible branches:
-
-1. Both `getStartTime()` and `getEndTime()` are not null.
-2. `getStartTime()` is null.
-3. `getEndTime()` is null.
-4. Both `getStartTime()` and `getEndTime()` are null.
-
-The existing test cases already cover cases 1, 2, and 4. To complete the coverage, we need a test case where `getStartTime()` is not null, but `getEndTime()` is null. Here's how you can add that test case:
+To create JUnit 5 test cases for the `BatchLoaderUtils` class with 100% code coverage, we need to mock the dependencies and handle all the branches in the code effectively. Below is a sample implementation of the test cases using Mockito and JUnit 5:
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-import java.time.LocalDateTime;
-
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.SendResult;
+import org.apache.kafka.common.header.Header;
+import org.apache.kafka.common.header.RecordHeader;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobLauncher;
-import org.springframework.batch.core.JobParameters;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
-@ExtendWith(SpringExtension.class)
-@SpringBootTest
-public class FalloutMessageSchedulerTest {
-
-    @Mock
-    private KafkaFalloutService sqlService;
-
-    @Mock
-    private JobLauncher jobLauncher;
-
-    @Mock
-    private Job job;
+@ExtendWith(MockitoExtension.class)
+class BatchLoaderUtilsTest {
 
     @InjectMocks
-    private FalloutMessageScheduler falloutMessageScheduler;
+    private BatchLoaderUtils batchLoaderUtils;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Mock
+    private KafkaFalloutService failedMessageService;
 
     @BeforeEach
-    public void setup() {
-        MockitoAnnotations.openMocks(this);
+    void setUp() {
+        // No specific setup needed for this example
     }
 
     @Test
-    public void testScheduleByFixedRate_withRecords() throws Exception {
-        // Given
-        when(sqlService.hasRecords()).thenReturn(true);
-        JobExecution jobExecution = mock(JobExecution.class);
-        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
+    void testReturnHeaders_withNonEmptyValue() {
+        List<Header> headers = batchLoaderUtils.returnHeaders("testValue");
+        assertEquals(1, headers.size());
+        assertEquals("testValue", new String(headers.get(0).value()));
+    }
+
+    @Test
+    void testReturnHeaders_withEmptyValue() {
+        List<Header> headers = batchLoaderUtils.returnHeaders("");
+        assertTrue(headers.isEmpty());
+    }
+
+    @Test
+    void testSendMessageAsync_success() {
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
+        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(mock(SendResult.class));
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        batchLoaderUtils.sendMessageAsync(producerRecord, "transactionId", "payload", "topic", "insightName", 'Y', "errorCategory");
+
+        // Verify that the log message was created (you may need to check your logging framework)
+    }
+
+    @Test
+    void testSendMessageAsync_failure() {
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.completeExceptionally(new RuntimeException("Kafka exception"));
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        batchLoaderUtils.sendMessageAsync(producerRecord, "transactionId", "payload", "topic", "insightName", 'Y', "errorCategory");
+
+        // Capture arguments for verification
+        ArgumentCaptor<String> topicCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> transactionIdCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> insightNameCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Character> sensitivityCheckCaptor = ArgumentCaptor.forClass(char.class);
+        ArgumentCaptor<String> errorCategoryCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> errorMessageCaptor = ArgumentCaptor.forClass(String.class);
         
-        // Set specific behavior for jobExecution
-        when(jobExecution.getStartTime()).thenReturn(LocalDateTime.now());
-        when(jobExecution.getEndTime()).thenReturn(LocalDateTime.now());
+        verify(failedMessageService).saveFailedRecords(
+            topicCaptor.capture(),
+            transactionIdCaptor.capture(),
+            payloadCaptor.capture(),
+            insightNameCaptor.capture(),
+            sensitivityCheckCaptor.capture(),
+            errorCategoryCaptor.capture(),
+            errorMessageCaptor.capture()
+        );
 
-        // When
-        falloutMessageScheduler.scheduleByFixedRate();
-
-        // Then
-        verify(jobLauncher, times(1)).run(any(Job.class), any(JobParameters.class));
+        assertEquals("topic", topicCaptor.getValue());
+        assertEquals("transactionId", transactionIdCaptor.getValue());
+        assertEquals("payload", payloadCaptor.getValue());
+        assertEquals("insightName", insightNameCaptor.getValue());
+        assertEquals('Y', sensitivityCheckCaptor.getValue());
+        assertEquals("errorCategory", errorCategoryCaptor.getValue());
+        assertEquals("Kafka exception", errorMessageCaptor.getValue());
     }
 
     @Test
-    public void testScheduleByFixedRate_withoutRecords() throws Exception {
-        // Given
-        when(sqlService.hasRecords()).thenReturn(false);
-
-        // When
-        falloutMessageScheduler.scheduleByFixedRate();
-
-        // Then
-        verify(jobLauncher, never()).run(any(Job.class), any(JobParameters.class));
+    void testConvert_success() throws JsonProcessingException {
+        String json = "{\"key\":\"value\"}";
+        MyClass result = batchLoaderUtils.convert(json, MyClass.class);
+        assertNotNull(result);
+        assertEquals("value", result.getKey());
     }
 
     @Test
-    public void testScheduleByFixedRate_jobExecutionWithNullStartOrEndTime() throws Exception {
-        // Given
-        when(sqlService.hasRecords()).thenReturn(true);
-        JobExecution jobExecution = mock(JobExecution.class);
-        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
-
-        // Set start or end time to null
-        when(jobExecution.getStartTime()).thenReturn(null);
-        when(jobExecution.getEndTime()).thenReturn(null);
-
-        // When / Then
-        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
-            falloutMessageScheduler.scheduleByFixedRate();
+    void testConvert_failure() {
+        String invalidJson = "{invalidJson}";
+        assertThrows(JsonProcessingException.class, () -> {
+            batchLoaderUtils.convert(invalidJson, MyClass.class);
         });
-
-        assertEquals("Job Execution Start or End time is null", exception.getMessage());
     }
 
     @Test
-    public void testScheduleByFixedRate_jobExecutionWithEndTimeNull() throws Exception {
-        // Given
-        when(sqlService.hasRecords()).thenReturn(true);
-        JobExecution jobExecution = mock(JobExecution.class);
-        when(jobLauncher.run(any(Job.class), any(JobParameters.class))).thenReturn(jobExecution);
+    void testSaveFailedRecords() {
+        batchLoaderUtils.saveFailedRecords("topic", "transactionId", "payload", "insightName", 'Y', "errorCategory", "errorMessage");
 
-        // Set getEndTime() to null
-        when(jobExecution.getStartTime()).thenReturn(LocalDateTime.now());
-        when(jobExecution.getEndTime()).thenReturn(null);
+        verify(failedMessageService).saveFailedRecords("topic", "transactionId", "payload", "insightName", 'Y', "errorCategory", "errorMessage");
+    }
+}
 
-        // When / Then
-        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
-            falloutMessageScheduler.scheduleByFixedRate();
-        });
+// Sample class used for the convert test case
+class MyClass {
+    private String key;
 
-        assertEquals("Job Execution Start or End time is null", exception.getMessage());
+    // Getters and Setters
+    public String getKey() {
+        return key;
+    }
+
+    public void setKey(String key) {
+        this.key = key;
     }
 }
 ```
 
-### Explanation of the New Test Case:
+### Explanation:
+1. **Mocks and Setup**: The `@Mock` annotations create mock instances of `KafkaTemplate` and `KafkaFalloutService`, while the `@InjectMocks` annotation initializes the `BatchLoaderUtils` instance with these mocks.
 
-- **`testScheduleByFixedRate_jobExecutionWithEndTimeNull()`:** This test case specifically addresses the branch where `getStartTime()` is not null, but `getEndTime()` is null. It ensures that an `IllegalArgumentException` is thrown, covering this path in the conditional logic.
+2. **Testing `returnHeaders` Method**: Two test cases check both the non-empty and empty scenarios.
 
-By adding this test, all branches of the `if` statement should be covered, achieving 100% code coverage.
+3. **Testing `sendMessageAsync` Method**: 
+   - One test checks the successful case, while another handles the failure scenario.
+   - We use `CompletableFuture` to simulate the asynchronous behavior of sending messages.
+
+4. **Testing `convert` Method**: Two tests check both valid and invalid JSON inputs.
+
+5. **Testing `saveFailedRecords` Method**: This verifies that the method interacts with `KafkaFalloutService` as expected.
+
+### Note:
+Make sure to adjust the logging verification according to the logging framework you are using. The above implementation uses common practices for unit testing with Mockito and JUnit 5 and should provide you with robust test coverage for the `BatchLoaderUtils` class.

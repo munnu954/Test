@@ -1,11 +1,12 @@
-The error you're encountering suggests that the type used in the `thenReturn` call doesn't match the expected return type of the mocked method. The `KafkaTemplate.send` method returns a `ListenableFuture<SendResult<K, V>>`, so ensure that the mock setup aligns with this.
+To achieve 100% code coverage for the `sendMessageAsync` method in the `EventsMessageListener` class, particularly focusing on the `else` condition, we will construct JUnit 5 test cases. We will use reflection to access the private method `sendMessageAsync`, and we will mock the necessary dependencies to simulate the behavior of the method.
 
-Here's an updated version of the test case:
+Here's a sample test class that covers the required functionality:
 
 ```java
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
-import org.apache.kafka.clients.producer.SendResult;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,75 +14,108 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.util.concurrent.ListenableFuture;
-import org.springframework.util.concurrent.ListenableFutureCallback;
-import org.springframework.util.concurrent.SettableListenableFuture;
+import reactor.core.publisher.Mono;
 
 import java.lang.reflect.Method;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class EventsMessageListenerTest {
 
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
     @InjectMocks
     private EventsMessageListener eventsMessageListener;
 
-    private RequestJSONString requestJSONString;
-    private ProducerRecord<String, String> producerRecord;
-    private String transactionId;
-    private String payload;
-    private String producerTopic;
-    private String insightName;
-    private char sensitivityCheckDone;
+    @Mock
+    private AccountEcpdService accountService;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Mock
+    private KafkaFalloutService failedMessageService;
+
+    @Mock
+    private BatchLoaderUtils utils;
 
     @BeforeEach
     public void setUp() {
-        transactionId = "transactionId";
-        payload = "{}";
-        producerTopic = "topicName";
-        insightName = "insightName";
-        sensitivityCheckDone = 'Y';
-        requestJSONString = new RequestJSONString();
-
-        producerRecord = new ProducerRecord<>(producerTopic, null, transactionId, payload);
+        // Set up necessary mocks, if required.
     }
 
     @Test
-    public void testSendMessageAsyncElseCondition() throws Exception {
-        // Mock the KafkaTemplate behavior
-        SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
-        RecordMetadata recordMetadata = new RecordMetadata(null, 0, 0, 0L, null, 0, 0);
-        SendResult<String, String> sendResult = new SendResult<>(producerRecord, recordMetadata);
-        future.set(sendResult);
+    public void testSendMessageAsync_Success() throws Exception {
+        // Create the necessary input objects
+        String transactionId = "test-transaction-id";
+        String payload = "{\"key\":\"value\"}";
+        String producerTopic = "test-topic";
+        String insightName = "test-insight";
+        char sensitivityCheckDone = 'Y';
 
+        RequestJSONString requestJSONString = new RequestJSONString();
+        // Set up the requestJSONString as needed
+
+        // Prepare a ProducerRecord mock
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>(producerTopic, null, transactionId, payload);
+
+        // Mock the KafkaTemplate behavior
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.complete(new SendResult<>(producerRecord, new RecordMetadata(new TopicPartition(producerTopic, 0), 0, 0, 0, 0, 0, 0)));
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
-        // Use reflection to access and invoke the private method
-        Method sendMessageAsyncMethod = EventsMessageListener.class.getDeclaredMethod(
-            "sendMessageAsync", ProducerRecord.class, String.class, String.class, String.class, String.class, char.class, RequestJSONString.class);
-        sendMessageAsyncMethod.setAccessible(true);
+        // Use reflection to call the private method
+        Method method = EventsMessageListener.class.getDeclaredMethod("sendMessageAsync", ProducerRecord.class, String.class, String.class, String.class, String.class, char.class, RequestJSONString.class);
+        method.setAccessible(true);
 
-        // Invoke the private method
-        sendMessageAsyncMethod.invoke(eventsMessageListener, producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, requestJSONString);
+        // Call the method
+        method.invoke(eventsMessageListener, producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, requestJSONString);
 
-        // Verify that kafkaTemplate.send was called
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+        // Verify that the message was sent successfully
+        verify(kafkaTemplate).send(producerRecord);
+        // Additional verifications can be added as necessary
+    }
+
+    @Test
+    public void testSendMessageAsync_Failure() throws Exception {
+        // Create the necessary input objects
+        String transactionId = "test-transaction-id";
+        String payload = "{\"key\":\"value\"}";
+        String producerTopic = "test-topic";
+        String insightName = "test-insight";
+        char sensitivityCheckDone = 'Y';
+
+        RequestJSONString requestJSONString = new RequestJSONString();
+        // Set up the requestJSONString as needed
+
+        // Prepare a ProducerRecord mock
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>(producerTopic, null, transactionId, payload);
+
+        // Mock the KafkaTemplate behavior to simulate an error
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.completeExceptionally(new RuntimeException("Kafka error"));
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        // Use reflection to call the private method
+        Method method = EventsMessageListener.class.getDeclaredMethod("sendMessageAsync", ProducerRecord.class, String.class, String.class, String.class, String.class, char.class, RequestJSONString.class);
+        method.setAccessible(true);
+
+        // Call the method
+        method.invoke(eventsMessageListener, producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, requestJSONString);
+
+        // Verify that the failed message service was called to save the failed record
+        verify(failedMessageService).saveFailedRecords(eq(producerTopic), eq(transactionId), eq(payload), eq(insightName), eq(sensitivityCheckDone));
     }
 }
 ```
 
 ### Explanation:
-- **SettableListenableFuture**: This class is used to create a future that you can manually complete by calling `set()`. It's suitable for testing asynchronous code.
 
-- **RecordMetadata**: A `RecordMetadata` object is created to simulate a successful Kafka send operation.
+1. **Dependencies**: The necessary services (`AccountEcpdService`, `KafkaTemplate`, `KafkaFalloutService`, and `BatchLoaderUtils`) are mocked using Mockito.
 
-- **SendResult**: A `SendResult` object is created using the `producerRecord` and `recordMetadata`, which is then set on the future to mimic a successful send operation.
+2. **Reflection**: Since the `sendMessageAsync` method is private, we access it using reflection. This allows us to invoke the method without changing its access modifier.
 
-- **Mock Setup**: The `when(...).thenReturn(...)` call is used to set up the mock to return the prepared future.
+3. **Test Cases**:
+   - **Success Case**: In the first test case, we simulate a successful message send operation and verify that the `send` method of `KafkaTemplate` is invoked.
+   - **Failure Case**: In the second test case, we simulate a failure during message sending and verify that the `saveFailedRecords` method of `KafkaFalloutService` is called.
 
-This should resolve the type error and provide the necessary setup to test the desired condition.
+4. **Setup**: You can add necessary setup steps in the `setUp` method if you need to configure certain aspects of your mocks or the class under test.
+
+This test class will cover the else conditional statement of the `sendMessageAsync` method, ensuring full code coverage.

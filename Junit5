@@ -1,52 +1,87 @@
-To achieve 100% code coverage for the "NetworkOutageEventsMessageListener" class, specifically for the two branches you mentioned, we need to write JUnit5 test cases with Mockito framework. Below is a sample code snippet to provide an overview of how these test cases would look:
+**JUnit5 Test Case Covering Both Branches**
 
 ```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.ProducerRecord;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class NetworkOutageEventsMessageListenerTest {
 
-    @InjectMocks
-    private NetworkOutageEventsMessageListener listener;
+    @Mock
+    private BatchLoaderUtils batchLoaderUtils;
 
     @Mock
-    private BatchLoaderUtils utils;
+    private KafkaTemplate<String, String> kafkaTemplate;
 
-    @Test
-    void testOnMessageWithKafkaError() throws Exception {
-        // Prepare test data
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn("test data".getBytes());
+    private NetworkOutageEventsMessageListener messageListener;
 
-        // Mock the behavior of utils.saveFailedRecords to throw a Kafka error
-        String errorMessage = "Kafka error message";
-        doThrow(new RuntimeException(errorMessage)).when(utils).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar(), anyString(), anyString());
-
-        // Invoke the method under test
-        assertThrows(SystemException.class, () -> listener.onMessage(message));
-
-        // Verify that the saveFailedRecords method was called with the expected arguments
-        verify(utils).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), eq('-'), anyString(), eq(errorMessage));
+    @BeforeEach
+    public void setUp() {
+        messageListener = new NetworkOutageEventsMessageListener(batchLoaderUtils);
     }
 
     @Test
-    void testOnMessageWithUncategorizedError() throws Exception {
-        // Prepare test data
+    public void testEmptyPayload() throws Exception {
         Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn("test data".getBytes());
+        when(message.getData()).thenReturn(new byte[]{});
 
-        // Mock the behavior of utils.convert to throw a JsonProcessingException
-        doThrow(new JsonProcessingException("JSON processing error") {}).when(utils).convert(anyString(), eq(OutageDetailsEvent.class));
+        messageListener.onMessage(message);
 
-        // Invoke the method under test
-        assertThrows(SystemException.class, () -> listener.onMessage(message));
+        verify(batchLoaderUtils).saveFailedRecords(
+                anyString(), anyString(), eq(""),
+                eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()),
+                anyString());
+    }
 
-        // Verify that the saveFailedRecords method was called with the expected arguments
-        verify(utils).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), eq('-'), anyString(), anyString());
+    @Test
+    public void testJsonProcessingException() throws Exception {
+        Message<GenericRecord> message = mock(Message.class);
+        when(message.getData()).thenReturn("invalid json".getBytes());
+
+        messageListener.onMessage(message);
+
+        verify(batchLoaderUtils).saveFailedRecords(
+                anyString(), anyString(), anyString(),
+                eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()),
+                anyString());
+    }
+
+    @Test
+    public void testKafkaSendError() throws Exception {
+        Message<GenericRecord> message = mock(Message.class);
+        when(message.getData()).thenReturn("{\"eventId\": \"123\"}".getBytes());
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "payload");
+        when(batchLoaderUtils.returnHeaders(anyString())).thenReturn(new ArrayList<>());
+
+        doThrow(new RuntimeException()).when(kafkaTemplate).send(any());
+
+        messageListener.onMessage(message);
+
+        verify(batchLoaderUtils).saveFailedRecords(
+                anyString(), anyString(), eq("{\"eventId\": \"123\"}"),
+                eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('-'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()),
+                anyString());
+    }
+
+    @Test
+    public void testSuccessfulKafkaSend() throws Exception {
+        Message<GenericRecord> message = mock(Message.class);
+        when(message.getData()).thenReturn("{\"eventId\": \"123\"}".getBytes());
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "payload");
+        when(batchLoaderUtils.returnHeaders(anyString())).thenReturn(new ArrayList<>());
+
+        messageListener.onMessage(message);
+
+        verify(kafkaTemplate).send(producerRecord);
     }
 }
 ```
-
-In the above test cases, we use Mockito to mock the behavior of the `BatchLoaderUtils` class methods and simulate the conditions where the `saveFailedRecords` method is called with different error scenarios. By doing this, we can ensure that both branches of code are covered in the testing process.
-
-You can further expand the test cases to cover additional scenarios and assertions as needed for complete code coverage validation.

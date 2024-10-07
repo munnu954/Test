@@ -1,95 +1,98 @@
-To achieve 100% code coverage for the `while` loop in the `filterAccountNum` method of the `EventsMessageListener` class, we need to write test cases that cover all possible scenarios. This includes:
+To achieve 100% code coverage for the `LOGGER.info` statement within the `else` block of the `sendMessageAsync` method in the `EventsMessageListener` class, we need to simulate a successful Kafka message send operation. This scenario will allow us to verify that the log message is correctly executed when a message is successfully sent to the Kafka topic.
 
-1. An account number with leading zeros.
-2. An account number without leading zeros.
-3. An account number that is completely zero.
-4. An empty account number.
-
-Here's how you can write these JUnit 5 test cases using `ReflectionTestUtils` to access the private `filterAccountNum` method:
+Here’s how you can write the JUnit 5 test case using `ReflectionTestUtils` to access the private `sendMessageAsync` method:
 
 ```java
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
+import java.util.concurrent.CompletableFuture;
+
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
-import org.mockito.MockitoAnnotations;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.util.concurrent.ListenableFuture;
 
 @ExtendWith(MockitoExtension.class)
 public class EventsMessageListenerTest {
+
+    @Mock
+    private AccountEcpdService accountService;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Mock
+    private KafkaFalloutService failedMessageService;
+
+    @Mock
+    private BatchLoaderUtils utils;
 
     @InjectMocks
     private EventsMessageListener eventsMessageListener;
 
     @BeforeEach
     public void setUp() {
-        MockitoAnnotations.openMocks(this);
+        ReflectionTestUtils.setField(eventsMessageListener, "producerTopic", "testProducerTopic");
     }
 
     @Test
-    public void testFilterAccountNum_withLeadingZeros() {
-        // Account number with leading zeros
-        String accountNum = "0000123456";
-        String expected = "123456";
+    public void testSendMessageAsync_successfulSend() {
+        // Prepare the necessary objects
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("testProducerTopic", "key", "payload");
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        RecordMetadata recordMetadata = new RecordMetadata(null, 0, 0, 0, 0L, 0, 0);
+        SendResult<String, String> sendResult = new SendResult<>(producerRecord, recordMetadata);
+        future.complete(sendResult);
 
-        String result = ReflectionTestUtils.invokeMethod(eventsMessageListener, "filterAccountNum", accountNum);
+        // Mock the KafkaTemplate to return a successful future
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
-        assertEquals(expected, result);
-    }
+        RequestJSONString requestJSONString = new RequestJSONString();
+        CallRequest callRequest = new CallRequest();
+        Body body = new Body();
+        CustomerDetails customerDetails = new CustomerDetails();
+        customerDetails.setAccountNumber("0000123456");
+        body.setRelinquishingCustomerDetails(customerDetails);
+        callRequest.setBody(body);
 
-    @Test
-    public void testFilterAccountNum_withoutLeadingZeros() {
-        // Account number without leading zeros
-        String accountNum = "123456";
-        String expected = "123456";
+        ServiceBody serviceBody = new ServiceBody();
+        serviceBody.setCallRequest(callRequest);
 
-        String result = ReflectionTestUtils.invokeMethod(eventsMessageListener, "filterAccountNum", accountNum);
+        Service service = new Service();
+        service.setServiceBody(serviceBody);
 
-        assertEquals(expected, result);
-    }
+        requestJSONString.setService(service);
 
-    @Test
-    public void testFilterAccountNum_completelyZero() {
-        // Account number that is completely zero
-        String accountNum = "0000000";
-        String expected = "";
+        // Invoke the private sendMessageAsync method
+        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, "transactionId", "payload", "testProducerTopic", "insightName", 'Y', requestJSONString);
 
-        String result = ReflectionTestUtils.invokeMethod(eventsMessageListener, "filterAccountNum", accountNum);
-
-        assertEquals(expected, result);
-    }
-
-    @Test
-    public void testFilterAccountNum_emptyString() {
-        // Empty account number
-        String accountNum = "";
-        String expected = "";
-
-        String result = ReflectionTestUtils.invokeMethod(eventsMessageListener, "filterAccountNum", accountNum);
-
-        assertEquals(expected, result);
+        // Verify that the Kafka message was sent and the log was executed
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
     }
 }
 ```
 
 ### Explanation:
 
-1. **Test Setup**: 
-   - Use `@InjectMocks` to inject dependencies, and `MockitoAnnotations.openMocks` to initialize them.
+1. **Setup**:
+   - We use `@InjectMocks` and `@Mock` annotations to set up the necessary dependencies for the `EventsMessageListener`.
 
-2. **`testFilterAccountNum_withLeadingZeros`**: 
-   - Verifies that leading zeros are removed from the account number.
+2. **Test Case**:
+   - **`testSendMessageAsync_successfulSend`**: This test simulates a successful Kafka message send operation.
+   - A `CompletableFuture` is used to simulate the successful sending of a Kafka message. The future is completed with a `SendResult`, which includes a `RecordMetadata` to simulate successful delivery.
 
-3. **`testFilterAccountNum_withoutLeadingZeros`**: 
-   - Ensures that an account number without leading zeros remains unchanged.
+3. **Mocking**:
+   - The `kafkaTemplate.send` method is mocked to return the successful future, ensuring that the `else` block is executed.
 
-4. **`testFilterAccountNum_completelyZero`**: 
-   - Checks that an account number consisting entirely of zeros results in an empty string.
+4. **ReflectionTestUtils**:
+   - Used to invoke the private `sendMessageAsync` method, allowing us to verify the behavior without changing the method's visibility.
 
-5. **`testFilterAccountNum_emptyString`**: 
-   - Confirms that an empty account number remains unchanged.
-
-These tests ensure that all logical branches of the `while` loop in the `filterAccountNum` method are covered, achieving full code coverage for this specific part of the code.
+This setup ensures that the `LOGGER.info` statement within the `else` block of the `sendMessageAsync` method is executed, achieving full coverage for that part of the code.

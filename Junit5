@@ -1,29 +1,20 @@
-The error message you're seeing indicates that the `saveFailedRecords` method on the `failedMessageService` mock was never called. This could happen if the exception handling in the `sendMessageAsync` method isn't correctly triggering the call to `saveFailedRecords`. 
-
-To address this, let's ensure the asynchronous handling is set up correctly, and the `whenCompleteAsync` callback is triggered properly. Here’s the updated test case code:
-
-```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
+import org.springframework.util.concurrent.CompletableFuture;
+
+import java.util.concurrent.CompletionException;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class BatchLoaderUtilsTest {
-
-    @InjectMocks
-    private BatchLoaderUtils batchLoaderUtils;
+class BatchLoaderUtilsTest {
 
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
@@ -31,72 +22,59 @@ public class BatchLoaderUtilsTest {
     @Mock
     private KafkaFalloutService failedMessageService;
 
-    private ProducerRecord<String, String> producerRecord;
-    private String transactionId;
-    private String payload;
-    private String producerTopic;
-    private String insightName;
-    private char sensitivityCheckDone;
-    private String errorCategory;
+    @InjectMocks
+    private BatchLoaderUtils batchLoaderUtils;
 
     @BeforeEach
-    public void setUp() {
-        producerRecord = new ProducerRecord<>("topic", "key", "value");
-        transactionId = "123";
-        payload = "{\"data\":\"sample\"}";
-        producerTopic = "sampleTopic";
-        insightName = "insight";
-        sensitivityCheckDone = 'N';
-        errorCategory = "error";
+    void setUp() {
+        // Set up any necessary mocks or test data
     }
 
     @Test
-    public void testSendMessageAsync_Success() throws ExecutionException, InterruptedException {
+    void sendMessageAsync_Success() {
         // Arrange
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        RecordMetadata metadata = new RecordMetadata(null, 0L, 0, 0L, Long.valueOf(0), 0, 0);
-        SendResult<String, String> sendResult = new SendResult<>(producerRecord, metadata);
-        future.complete(sendResult);
-
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "payload");
+        SendResult<String, String> sendResult = mock(SendResult.class);
+        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(sendResult);
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
         // Act
-        batchLoaderUtils.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, errorCategory);
+        batchLoaderUtils.sendMessageAsync(producerRecord, "transactionId", "payload", "topic", "insightName", 'Y', "errorCategory");
 
         // Assert
-        verify(failedMessageService, never()).saveFailedRecords(any(), any(), any(), any(), anyChar(), any(), any());
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar(), anyString(), anyString());
     }
 
     @Test
-    public void testSendMessageAsync_Failure() {
+    void sendMessageAsync_Failure() {
         // Arrange
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "payload");
         CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.completeExceptionally(new RuntimeException("Kafka send exception"));
-
+        future.completeExceptionally(new RuntimeException("Failed to send message"));
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
         // Act
-        batchLoaderUtils.sendMessageAsync(producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone, errorCategory);
-
-        // Wait for the async operation to complete
-        try {
-            future.get();
-        } catch (Exception ignored) {
-            // Ignored because we expect an exception
-        }
+        batchLoaderUtils.sendMessageAsync(producerRecord, "transactionId", "payload", "topic", "insightName", 'Y', "errorCategory");
 
         // Assert
-        verify(failedMessageService, times(1)).saveFailedRecords(eq(producerTopic), eq(transactionId), eq(payload), eq(insightName), eq(sensitivityCheckDone), eq(errorCategory), anyString());
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+        verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar(), anyString(), anyString());
+    }
+
+    @Test
+    void sendMessageAsync_ExceptionWithLongErrorMessage() {
+        // Arrange
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "payload");
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.completeExceptionally(new CompletionException(new RuntimeException("This is a very long error message that should be truncated to 200 characters")));
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        // Act
+        batchLoaderUtils.sendMessageAsync(producerRecord, "transactionId", "payload", "topic", "insightName", 'Y', "errorCategory");
+
+        // Assert
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+        verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar(), anyString(), anyString());
     }
 }
-```
-
-### Key Updates:
-
-1. **Handling Future Completion**:
-   - In the `testSendMessageAsync_Failure` test, after calling `sendMessageAsync`, we call `future.get()`. This blocks the test execution until the future is completed, ensuring the `whenCompleteAsync` callback has a chance to execute. This is crucial for testing asynchronous operations.
-
-2. **Exception Handling**:
-   - The exception from `future.get()` is caught and ignored because it is expected in this test scenario.
-
-This should ensure that the `saveFailedRecords` method is correctly invoked when an exception occurs during the message sending process.

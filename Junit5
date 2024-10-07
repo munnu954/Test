@@ -1,69 +1,170 @@
-Here is the Junit5 test cases code covering the else conditional statement of the `sendMessageAsync` method of the `EventsMessageListener` class for 100% code coverage:
+```
+//import and initialize appropriate classes
 
-```java
-import com.verizon.vbg.ledger.listener.EventsMessageListener;
-import com.verizon.vbg.ledger.model.RequestJSONString;
-import com.verizon.vbg.ledger.service.AccountEcpdService;
-import com.verizon.vbg.ledger.service.KafkaFalloutService;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.clients.producer.SendResult;
+import org.apache.kafka.common.header.Header;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.function.Executable;
+import org.mockito.BDDMockito;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
+import org.mockito.invocation.InvocationOnMock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.stubbing.Answer;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.kafka.support.SendResult;
+import reactor.core.publisher.Mono;
 
-import java.lang.reflect.Method;
-
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class EventsMessageListenerTest {
+class EventsMessageListenerPrivateElseTest {
 
     @InjectMocks
-    private EventsMessageListener eventsMessageListener;
-
+    private EventsMessageListener classUnderTest;
     @Mock
     private AccountEcpdService accountEcpdService;
-
-    @Mock
-    private KafkaFalloutService kafkaFalloutService;
-
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
+    @Mock
+    private KafkaFalloutService failedMessageService;
+    @Mock
+    private BatchLoaderUtils utils;
+
+    @Value("${topics.outbound.tys-event:none}")
+    private String producerTopic;
+    @Value("${topics.inbound.tys-event:none")
+    private String inboundTopic;
+
+    private Method filterAccountNumMethod = getMethodToTest("filterAccountNum", 1);
+    private Method sendMessageAsyncMethod = getMethodToTest("sendMessageAsync", 6);
 
     @BeforeEach
     void setUp() {
-        ReflectionTestUtils.setField(eventsMessageListener, "producerTopic", "test-topic");
+        producerTopic = "topic-name";
+        inboundTopic = "test-topic";
     }
 
     @Test
-    void testSendMessageAsync_ExceptionInSending() throws Exception {
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("test-topic", null, "transactionId", "payload", null);
-        RequestJSONString requestJSONString = new RequestJSONString();
-        requestJSONString.getService().getServiceBody().getCallRequest().getBody().getRelinquishingCustomerDetails().setAccountNumber("123456789");
+    void filterAccountNum_withCorrectInput_shouldReturnCorrectValue() throws NoSuchMethodException, ExecutionException, InterruptedException {
+        // arrange
+        String input = "1234-123456";
 
-        when(kafkaTemplate.send(producerRecord)).thenThrow(new RuntimeException("Test exception"));
-        doNothing().when(kafkaFalloutService).saveFailedRecords(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyChar());
+        // act
+        String result = (String) filterAccountNumMethod.invoke(classUnderTest, input);
 
-        Method method = ReflectionTestUtils.findMethod(EventsMessageListener.class, "sendMessageAsync", ProducerRecord.class, String.class, String.class, String.class, String.class, char.class, RequestJSONString.class);
-        method.setAccessible(true);
-        method.invoke(eventsMessageListener, producerRecord, "transactionId", "payload", "test-topic", "TYS_AUDIT_EVENT", 'Y', requestJSONString);
+        // assert
+        assertEquals("123456", result);
+    }
+
+    @Test
+    void sendMessageAsync_withCorrectInput() throws Exception {
+        // arrange
+        when(failedMessageService.saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar())).thenReturn(null);
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("mock-topic", "mock-key", "mock-value");
+        String transactionID = "mock-transaction-id";
+        String payload = "mock-payload";
+        Mono<SendResult<String, String>> future = Mono.just(new SendResult<>(producerRecord, new RecordMetadata(1L, 1L, "1", 1L, 1L, 1L, 1L)));
+
+        BDDMockito.given(kafkaTemplate.send(producerRecord)).willReturn(future);
+
+        // act
+        sendMessageAsyncMethod.invoke(classUnderTest, producerRecord, transactionID, payload, producerTopic, "TYS_AUDIT_EVENT", 'Y', null);
+
+        // assert
+        verify(kafkaTemplate, times(1)).send(producerRecord);
+        verify(failedMessageService, times(0)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), 'Y');
+    }
+
+    @Test
+    void sendMessageAsync_withFailedSend_shouldCallSaveFailedRecords() throws Exception {
+        // arrange
+        CompletableFuture<SendResult<String, String>> badFuture = new CompletableFuture<>();
+        badFuture.completeExceptionally(new Exception());
+
+        ProducerRecord<String, String> producerRecord = new ProducerRecord("mock-topic", "mock-value");
+        String message = "mock-message";
+        String key = "mock-key";
+        String topic = "mock-topic";
+
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(badFuture);
+
+        // act
+        sendMessageAsyncMethod.invoke(classUnderTest, producerRecord, key, message, topic, "mock", 'N', null);
+
+        // assert
+        verify(kafkaTemplate, times(1)).send(producerRecord);
+        verify(failedMessageService, times(1)).saveFailedRecords(topic, key, message, "mock", 'N');
+    }
+
+    @Test
+    void throwException_filterAccountNum_withNoInput_shouldThrowException() {
+        // act + assert
+        String result = assertThrows(IllegalArgumentException.class, () -> {
+            classUnderTest.filterAccountNum("");
+        }).getMessage();
+
+        // assert
+        assertEquals("filterAccountNum: 'input' cannot be empty or null.", result);
+    }
+
+    @Test
+    void throwException_filterAccountNum_withMultipleInputs_shouldThrowWrongArgumentsException() {
+        // act + assert
+        String result = assertThrows(IllegalArgumentException.class, () -> {
+            methodWithVariousArgs().invoke(classUnderTest, "1234-123456", "123456");
+        }).getMessage();
+
+        // assert
+        assertEquals("Method 'filterAccountNum' in 'EventsMessageListener' expects 1 argument(s) but got 2.", result);
+    }
+
+    @Test
+    void throwException_sendMessageAsync_withInvalidInput_throwsException() {
+        assertThrows(IllegalArgumentException.class,
+                new Executable() {
+                    @Override
+                    public void execute() throws Throwable {
+                        sendMessageAsyncMethod.invoke(classUnderTest, null, "mock-key", "mock-message", inboundTopic, "mock-insight", 'N' , null);
+                    }
+                }
+        );
+    }
+
+
+    private Method getMethodToTest(String methodName, int index) {
+        for (Method method : EventsMessageListener.class.getDeclaredMethods()) {
+            if (method.getName().equals(methodName) && method.getParameterTypes().length == index) {
+                method.setAccessible(true);
+                return method;
+            }
+        }
+
+        throw new RuntimeException("Could not find method: " + methodName);
+    }
+
+    private Method methodWithVariousArgs() {
+        try {
+            return EventsMessageListener.class.getDeclaredMethod("methodWithVariousArgs", String.class, String.class);
+        } catch (NoSuchMethodException e) {
+            throw new RuntimeException("Could not find method: methodWithVariousArgs");
+        }
     }
 }
 ```
-
-Explanation:
-
-1. The test class `EventsMessageListenerTest` is annotated with `@ExtendWith(MockitoExtension.class)` to use Mockito for mocking the dependencies.
-2. The `setUp()` method is used to set the `producerTopic` field of the `EventsMessageListener` class using `ReflectionTestUtils.setField()`.
-3. The `testSendMessageAsync_ExceptionInSending()` method tests the else conditional statement of the `sendMessageAsync` method.
-4. In this test case, we mock the `kafkaTemplate.send()` method to throw a `RuntimeException`, simulating an exception during the sending of the message.
-5. We also mock the `kafkaFalloutService.saveFailedRecords()` method to verify that it is called when an exception occurs.
-6. To access the private `sendMessageAsync` method, we use `ReflectionTestUtils.findMethod()` to get the method, make it accessible, and then invoke it using `method.invoke()`.
-
-By running this test case, you can ensure that the else conditional statement of the `sendMessageAsync` method is covered, and the `KafkaFalloutService` is called when an exception occurs during the sending of the message.

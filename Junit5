@@ -1,12 +1,11 @@
-To achieve 100% code coverage for the catch block in the `onMessage` method, we need to trigger exceptions during the execution of the `sendMessageAsync` method. We'll cover the scenarios where an exception is thrown and ensure that the `saveFailedRecords` method is called appropriately with the correct parameters.
+To achieve 100% code coverage for the `catch(JsonProcessingException e)` block, you need to test both scenarios where a `JsonProcessingException` might occur: with a short error message and with a long error message that requires truncation. Since one branch has already been tested, I'll focus on the remaining branch.
 
-Here's how you can write additional JUnit 5 test cases to cover these branches:
+Here's how you can write a JUnit 5 test case to cover the missed branch:
 
 ```java
 import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.schema.GenericRecord;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,9 +14,10 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.kafka.core.KafkaTemplate;
+import com.fasterxml.jackson.core.JsonProcessingException;
+
 import java.lang.reflect.Field;
 import java.util.ArrayList;
-import java.util.concurrent.CompletableFuture;
 
 public class OutageLocationEventsMessageListenerTest {
 
@@ -52,48 +52,27 @@ public class OutageLocationEventsMessageListenerTest {
     }
 
     @Test
-    public void testOnMessageWithExceptionDuringSendMessageAsync() throws JsonProcessingException {
-        OutageGeolocation event = new OutageGeolocation();
-        event.setOutageId("123");
-        String validJson = "{\"outage_id\":\"123\",\"geojson\":\"{}\"}";
-
+    public void testOnMessageWithJsonProcessingExceptionLongMessage() throws JsonProcessingException {
+        String payload = "{\"outage_id\":\"123\",\"geojson\":\"{}}";
         Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn(validJson.getBytes());
-        when(utils.convert(anyString(), eq(OutageGeolocation.class))).thenReturn(event);
+        when(message.getData()).thenReturn(payload.getBytes());
 
-        // Simulate exception during async message sending
-        doThrow(new RuntimeException("Kafka send failure")).when(utils).sendMessageAsync(any(ProducerRecord.class), anyString(), anyString(), anyString(), any(), anyChar(), any());
-
-        assertDoesNotThrow(() -> listener.onMessage(message));
-
-        verify(utils).saveFailedRecords(eq(PRODUCER_TOPIC), anyString(), eq(validJson), any(), anyChar(), any(), contains("Kafka send failure"));
-    }
-
-    @Test
-    public void testOnMessageWithLongExceptionMessage() throws JsonProcessingException {
-        OutageGeolocation event = new OutageGeolocation();
-        event.setOutageId("123");
-        String validJson = "{\"outage_id\":\"123\",\"geojson\":\"{}\"}";
-
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn(validJson.getBytes());
-        when(utils.convert(anyString(), eq(OutageGeolocation.class))).thenReturn(event);
-
-        // Simulate exception with a long message during async message sending
-        String longErrorMessage = "This is a very long error message that exceeds 200 characters to test the truncation logic in the exception handling block. " +
+        // Simulate a JsonProcessingException with a long error message
+        String longErrorMessage = "This is a very long JSON processing error message that exceeds 200 characters to test the truncation logic in the exception handling block. " +
                                   "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque ultricies metus vel mi volutpat, at fermentum nulla vehicula.";
-        doThrow(new RuntimeException(longErrorMessage)).when(utils).sendMessageAsync(any(ProducerRecord.class), anyString(), anyString(), anyString(), any(), anyChar(), any());
+        doThrow(new JsonProcessingException(longErrorMessage) {}).when(utils).convert(anyString(), eq(OutageGeolocation.class));
 
-        assertDoesNotThrow(() -> listener.onMessage(message));
+        SystemException thrown = assertThrows(SystemException.class, () -> listener.onMessage(message));
 
-        verify(utils).saveFailedRecords(eq(PRODUCER_TOPIC), anyString(), eq(validJson), any(), anyChar(), any(), argThat(message -> message.length() <= 200 && longErrorMessage.startsWith(message)));
+        assertTrue(thrown.getMessage().contains("Erroneous payload received from NSP topic"));
+        verify(utils).saveFailedRecords(eq(PRODUCER_TOPIC), anyString(), eq(payload), eq(TYSConstants.OUTAGE_GEOLOCATION.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()), argThat(msg -> msg.length() <= 200 && longErrorMessage.startsWith(msg)));
     }
 }
 ```
 
 ### Explanation:
-- **testOnMessageWithExceptionDuringSendMessageAsync**: This test case simulates a scenario where an exception is thrown during the call to `sendMessageAsync`. We use `doThrow` to mimic the behavior when a runtime exception occurs, and we verify that `saveFailedRecords` is called with the correct message.
+- **testOnMessageWithJsonProcessingExceptionLongMessage**: This test case simulates a `JsonProcessingException` with a long error message that exceeds 200 characters. The test ensures that the error message is truncated correctly when passed to `saveFailedRecords`.
 
-- **testOnMessageWithLongExceptionMessage**: This case tests the scenario where the exception message is longer than 200 characters. The test ensures that the message is truncated to 200 characters before being passed to `saveFailedRecords`.
+- **Verification**: The `verify` call checks that `saveFailedRecords` is called with the truncated message, ensuring the truncation logic is tested.
 
-These test cases ensure that both branches of the catch block are covered by triggering different types of exceptions and checking the behavior of the error handling logic.
+This test case, combined with the previous ones, achieves full coverage of the `catch(JsonProcessingException e)` block by testing both a short error message and a long one requiring truncation.

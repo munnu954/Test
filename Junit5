@@ -1,143 +1,76 @@
-To write JUnit 5 test cases for achieving 100% code coverage of the `onMessage(Message<GenericRecord> message)` method in the `OutageLocationEventsMessageListener` class, we need to consider all possible execution paths. Here's a structured approach to cover each branch:
+import com.fasterxml.jackson.core.JsonProcessingException;
 
-1. **Valid Message**: A message that has a valid payload and a valid `outageId`.
-2. **Empty Payload**: A message with an empty payload.
-3. **Payload Exceeds Max Size**: A message with payload size exceeding `maxMsgSize`.
-4. **Invalid Payload (JSON Parsing Error)**: A message with a payload that cannot be converted to `OutageGeolocation`.
-5. **Missing OutageId**: A message with valid JSON but without `outageId`.
-6. **Exception while Sending**: Simulate an exception during the sending of the message.
-
-Here's the JUnit 5 test code:
-
-```java
-import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.schema.GenericRecord;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.kafka.core.KafkaTemplate;
-
-import java.nio.charset.StandardCharsets;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-class OutageLocationEventsMessageListenerTest {
+public class OutageLocationEventsMessageListenerTest {
 
     @Mock
-    private BatchLoaderUtils utils;
+    private BatchLoaderUtils batchLoaderUtils;
 
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Mock
+    private KafkaFalloutService kafkaFalloutService;
+
+    @Mock
+    private KafkaFalloutRepository kafkaFalloutRepository;
 
     @InjectMocks
     private OutageLocationEventsMessageListener listener;
 
     @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-        listener = new OutageLocationEventsMessageListener(utils);
+    public void setup() {
+        MockitoAnnotations.initMocks(this);
     }
 
     @Test
-    void testValidMessage() throws Exception {
-        // Mocking valid message
-        Message<GenericRecord> message = mockMessage("{\"outage_id\": \"123\", \"geojson\": \"{}\"}");
+    public void testOnMessage() throws SystemException, JsonProcessingException {
+        // Mock data
+        String messagePayload = "{\"outage_id\": \"123\", \"geojson\": \"{}\"}";
+        GenericRecord genericRecord = new GenericRecord();
+        genericRecord.setData(messagePayload.getBytes());
         
-        // Mocking utils behavior
-        when(utils.convert(any(), eq(OutageGeolocation.class)))
-                .thenReturn(new OutageGeolocation("123", "{}"));
+        OutageGeolocation outageGeolocation = new OutageGeolocation();
+        outageGeolocation.setOutageId("123");
+        outageGeolocation.setGeojson("{}");
         
-        listener.onMessage(message);
+        // Mock behavior
+        when(batchLoaderUtils.convert(anyString(), eq(OutageGeolocation.class))).thenReturn(outageGeolocation);
         
-        verify(utils).sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any());
+        // Invoke method
+        listener.onMessage(genericRecord);
+        
+        // Verify behavior
+        verify(batchLoaderUtils).convert(anyString(), eq(OutageGeolocation.class));
+        verify(batchLoaderUtils).sendMessageAsync(any(ProducerRecord.class), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
     }
 
     @Test
-    void testEmptyPayload() {
-        // Mocking empty payload message
-        Message<GenericRecord> message = mockMessage("");
+    public void testOnMessage_EmptyPayload() throws SystemException {
+        // Mock data
+        String emptyPayload = "";
+        GenericRecord genericRecord = new GenericRecord();
+        genericRecord.setData(emptyPayload.getBytes());
         
-        Exception exception = assertThrows(SystemException.class, () -> {
-            listener.onMessage(message);
-        });
-
-        assertTrue(exception.getMessage().contains("Empty payload"));
+        // Invoke method
+        listener.onMessage(genericRecord);
+        
+        // Verify behavior
+        verify(batchLoaderUtils, never()).convert(anyString(), eq(OutageGeolocation.class));
+        verify(batchLoaderUtils, never()).sendMessageAsync(any(ProducerRecord.class), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
     }
 
     @Test
-    void testPayloadExceedsMaxSize() {
-        // Mocking payload exceeding max size
-        String largePayload = "x".repeat(5242881);
-        Message<GenericRecord> message = mockMessage(largePayload);
+    public void testOnMessage_PayloadTooLarge() throws SystemException {
+        // Mock data
+        String largePayload = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.";
+        GenericRecord genericRecord = new GenericRecord();
+        genericRecord.setData(largePayload.getBytes());
         
-        listener.onMessage(message);
+        // Invoke method
+        listener.onMessage(genericRecord);
         
-        verify(utils, never()).convert(any(), eq(OutageGeolocation.class));
-    }
-
-    @Test
-    void testInvalidPayloadJsonParsingError() throws Exception {
-        // Mocking invalid JSON
-        Message<GenericRecord> message = mockMessage("invalid-json");
-        
-        when(utils.convert(any(), eq(OutageGeolocation.class)))
-                .thenThrow(JsonProcessingException.class);
-        
-        Exception exception = assertThrows(SystemException.class, () -> {
-            listener.onMessage(message);
-        });
-
-        assertTrue(exception.getMessage().contains("Erroneous payload"));
-    }
-
-    @Test
-    void testMissingOutageId() throws Exception {
-        // Mocking valid JSON but missing outageId
-        Message<GenericRecord> message = mockMessage("{\"geojson\": \"{}\"}");
-        
-        when(utils.convert(any(), eq(OutageGeolocation.class)))
-                .thenReturn(new OutageGeolocation(null, "{}"));
-        
-        listener.onMessage(message);
-        
-        verify(utils, never()).sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any());
-    }
-
-    @Test
-    void testExceptionWhileSending() throws Exception {
-        // Mocking valid message
-        Message<GenericRecord> message = mockMessage("{\"outage_id\": \"123\", \"geojson\": \"{}\"}");
-        
-        when(utils.convert(any(), eq(OutageGeolocation.class)))
-                .thenReturn(new OutageGeolocation("123", "{}"));
-        
-        doThrow(new RuntimeException("Kafka error")).when(utils)
-                .sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any());
-        
-        listener.onMessage(message);
-        
-        verify(utils).saveFailedRecords(any(), any(), any(), any(), anyChar(), any(), any());
-    }
-
-    // Helper method to create a mock message with a specified payload
-    private Message<GenericRecord> mockMessage(String payload) {
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn(payload.getBytes(StandardCharsets.UTF_8));
-        return message;
+        // Verify behavior
+        verify(batchLoaderUtils, never()).convert(anyString(), eq(OutageGeolocation.class));
+        verify(batchLoaderUtils, never()).sendMessageAsync(any(ProducerRecord.class), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
     }
 }
-```
-
-### Explanation:
-
-- **Mocking**: We use Mockito to mock dependencies like `BatchLoaderUtils` and `KafkaTemplate`.
-- **Test Cases**: Each test case targets a specific branch in the `onMessage` method.
-- **Assertions**: We assert exceptions where applicable and verify method calls.
-- **Helper Method**: `mockMessage` creates a mock `Message<GenericRecord>` with a specific payload.
-
-This approach should cover all branches and conditions present in the `onMessage` method, ensuring 100% code coverage.

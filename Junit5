@@ -1,4 +1,6 @@
-To modify the test cases to use the Reflection API for accessing private fields like `producerTopic` and `maxMsgSize` in the `OutageLocationEventsMessageListener` class, you can use Java's reflection capabilities. Here's the updated test code:
+To achieve 100% code coverage for the catch block in the `onMessage` method, we need to trigger exceptions during the execution of the `sendMessageAsync` method. We'll cover the scenarios where an exception is thrown and ensure that the `saveFailedRecords` method is called appropriately with the correct parameters.
+
+Here's how you can write additional JUnit 5 test cases to cover these branches:
 
 ```java
 import static org.mockito.Mockito.*;
@@ -13,9 +15,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.kafka.core.KafkaTemplate;
-
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.concurrent.CompletableFuture;
 
 public class OutageLocationEventsMessageListenerTest {
 
@@ -50,44 +52,7 @@ public class OutageLocationEventsMessageListenerTest {
     }
 
     @Test
-    public void testOnMessageWithEmptyPayload() {
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn(new byte[0]);
-
-        SystemException thrown = assertThrows(SystemException.class, () -> {
-            listener.onMessage(message);
-        });
-
-        assertEquals("OutageLocationEventsMessageListener: Empty payload received from NSP topic", thrown.getMessage());
-    }
-
-    @Test
-    public void testOnMessageWithLargePayload() {
-        byte[] largePayload = new byte[MAX_MSG_SIZE + 1];
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn(largePayload);
-
-        // No exception should be thrown, and processing should stop.
-        assertDoesNotThrow(() -> listener.onMessage(message));
-    }
-
-    @Test
-    public void testOnMessageWithInvalidJson() throws JsonProcessingException {
-        String invalidJson = "invalid json";
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn(invalidJson.getBytes());
-        doThrow(JsonProcessingException.class).when(utils).convert(any(), eq(OutageGeolocation.class));
-
-        SystemException thrown = assertThrows(SystemException.class, () -> {
-            listener.onMessage(message);
-        });
-
-        assertTrue(thrown.getMessage().contains("Erroneous payload received from NSP topic"));
-        verify(utils).saveFailedRecords(eq(PRODUCER_TOPIC), anyString(), eq(invalidJson), any(), anyChar(), any(), any());
-    }
-
-    @Test
-    public void testOnMessageWithValidPayload() throws JsonProcessingException {
+    public void testOnMessageWithExceptionDuringSendMessageAsync() throws JsonProcessingException {
         OutageGeolocation event = new OutageGeolocation();
         event.setOutageId("123");
         String validJson = "{\"outage_id\":\"123\",\"geojson\":\"{}\"}";
@@ -96,32 +61,39 @@ public class OutageLocationEventsMessageListenerTest {
         when(message.getData()).thenReturn(validJson.getBytes());
         when(utils.convert(anyString(), eq(OutageGeolocation.class))).thenReturn(event);
 
+        // Simulate exception during async message sending
+        doThrow(new RuntimeException("Kafka send failure")).when(utils).sendMessageAsync(any(ProducerRecord.class), anyString(), anyString(), anyString(), any(), anyChar(), any());
+
         assertDoesNotThrow(() -> listener.onMessage(message));
 
-        verify(utils, never()).saveFailedRecords(any(), any(), any(), any(), anyChar(), any(), any());
-        verify(utils).sendMessageAsync(any(ProducerRecord.class), anyString(), eq(validJson), eq(PRODUCER_TOPIC), any(), anyChar(), any());
+        verify(utils).saveFailedRecords(eq(PRODUCER_TOPIC), anyString(), eq(validJson), any(), anyChar(), any(), contains("Kafka send failure"));
     }
 
     @Test
-    public void testOnMessageWithMissingOutageId() throws JsonProcessingException {
+    public void testOnMessageWithLongExceptionMessage() throws JsonProcessingException {
         OutageGeolocation event = new OutageGeolocation();
-        String validJson = "{\"geojson\":\"{}\"}";
+        event.setOutageId("123");
+        String validJson = "{\"outage_id\":\"123\",\"geojson\":\"{}\"}";
 
         Message<GenericRecord> message = mock(Message.class);
         when(message.getData()).thenReturn(validJson.getBytes());
         when(utils.convert(anyString(), eq(OutageGeolocation.class))).thenReturn(event);
 
+        // Simulate exception with a long message during async message sending
+        String longErrorMessage = "This is a very long error message that exceeds 200 characters to test the truncation logic in the exception handling block. " +
+                                  "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque ultricies metus vel mi volutpat, at fermentum nulla vehicula.";
+        doThrow(new RuntimeException(longErrorMessage)).when(utils).sendMessageAsync(any(ProducerRecord.class), anyString(), anyString(), anyString(), any(), anyChar(), any());
+
         assertDoesNotThrow(() -> listener.onMessage(message));
 
-        // Message should be dropped due to missing outageId
-        verify(utils, never()).sendMessageAsync(any(), anyString(), anyString(), any(), any(), anyChar(), any());
+        verify(utils).saveFailedRecords(eq(PRODUCER_TOPIC), anyString(), eq(validJson), any(), anyChar(), any(), argThat(message -> message.length() <= 200 && longErrorMessage.startsWith(message)));
     }
 }
 ```
 
 ### Explanation:
-- **Reflection API**: We use the `setPrivateField` method to access and set the private fields `producerTopic` and `maxMsgSize` using reflection. The `setAccessible(true)` call allows us to bypass Java's access control checks for these private fields.
+- **testOnMessageWithExceptionDuringSendMessageAsync**: This test case simulates a scenario where an exception is thrown during the call to `sendMessageAsync`. We use `doThrow` to mimic the behavior when a runtime exception occurs, and we verify that `saveFailedRecords` is called with the correct message.
 
-- **Test Cases**: Each test case remains the same in terms of logic, but it now relies on the fields set via reflection to ensure the `OutageLocationEventsMessageListener` instance is configured properly.
+- **testOnMessageWithLongExceptionMessage**: This case tests the scenario where the exception message is longer than 200 characters. The test ensures that the message is truncated to 200 characters before being passed to `saveFailedRecords`.
 
-This approach ensures that your test code doesn't require changing the visibility of the private fields in your production code, maintaining encapsulation while still achieving full test coverage.
+These test cases ensure that both branches of the catch block are covered by triggering different types of exceptions and checking the behavior of the error handling logic.

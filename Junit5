@@ -1,157 +1,143 @@
-```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
+To write JUnit 5 test cases for achieving 100% code coverage of the `onMessage(Message<GenericRecord> message)` method in the `OutageLocationEventsMessageListener` class, we need to consider all possible execution paths. Here's a structured approach to cover each branch:
 
-import com.zensar.volery.batch.BatchLoaderUtils;
-import com.zensar.volery.batch.KafkaFalloutService;
-import com.zensar.volery.batch.listener.OutageLocationEventsMessageListener;
-import com.zensar.volery.batch.model.KafkaFailedMessagesEntity;
-import com.zensar.volery.batch.model.KafkaFailedMessagesPK;
-import com.zensar.volery.batch.model.OutageGeolocation;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
-import org.apache.kafka.common.header.Header;
-import org.apache.kafka.common.header.internals.RecordHeader;
-import org.apache.kafka.common.serialization.StringSerializer;
+1. **Valid Message**: A message that has a valid payload and a valid `outageId`.
+2. **Empty Payload**: A message with an empty payload.
+3. **Payload Exceeds Max Size**: A message with payload size exceeding `maxMsgSize`.
+4. **Invalid Payload (JSON Parsing Error)**: A message with a payload that cannot be converted to `OutageGeolocation`.
+5. **Missing OutageId**: A message with valid JSON but without `outageId`.
+6. **Exception while Sending**: Simulate an exception during the sending of the message.
+
+Here's the JUnit 5 test code:
+
+```java
 import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.SchemaType;
-import org.apache.pulsar.client.api.SubscriptionType;
+import org.apache.pulsar.client.api.schema.GenericRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.MockitoAnnotations;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
 
-@ExtendWith(MockitoExtension.class)
-public class OutageLocationEventsMessageListenerTest {
+import java.nio.charset.StandardCharsets;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+class OutageLocationEventsMessageListenerTest {
 
     @Mock
-    private BatchLoaderUtils utilities;
-
-    @Mock
-    private KafkaFalloutService failedMessageService;
-
-    @InjectMocks
-    private OutageLocationEventsMessageListener messageListener;
+    private BatchLoaderUtils utils;
 
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
 
-    private OutageGeolocation outageGeolocation;
-    private KafkaFailedMessagesEntity messageEntity;
-    private Header header;
-    private String testHeader;
-    private String jsonPayload;
-    private Message<GenericRecord> pulsarMessage;
-    private ProducerRecord<String, String> producerRecord;
+    @InjectMocks
+    private OutageLocationEventsMessageListener listener;
 
     @BeforeEach
-    public void setUp() {
-        testHeader = "MessageType";
-        outageGeolocation = new OutageGeolocation();
-        outageGeolocation.setOutageId("outage_id_test");
-        outageGeolocation.setGeojson("geojson_test");
-
-        header = new RecordHeader(testHeader.getBytes(StandardCharsets.UTF_8), "Flow360AuditEvent".getBytes(StandardCharsets.UTF_8));
-        messageEntity = new KafkaFailedMessagesEntity();
-        KafkaFailedMessagesPK messageId = new KafkaFailedMessagesPK();
-        messageId.setTopicName("topic_name_test");
-        messageId.setTransactionId("transaction_id_test");
-        messageEntity.setId(messageId);
-        jsonPayload = "{\"outage_id\":\"outage_id_test\", \"geojson\":\"geojson_test\"}";
-
-        pulsarMessage = Mockito.mock(Message.class);
-
-        producerRecord = new ProducerRecord<>("producer_topic_test", null, "transaction_id_test", jsonPayload, List.of(header));
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        listener = new OutageLocationEventsMessageListener(utils);
     }
 
     @Test
-    public void testOnMessage_PayloadIsEmpty_ShouldThrowSystemException() throws Exception {
-        when(pulsarMessage.getData()).thenReturn("".getBytes(StandardCharsets.UTF_8));
-
-        messageListener.onMessage(pulsarMessage);
-        verify(kafkaTemplate, never()).send(any());
-        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
+    void testValidMessage() throws Exception {
+        // Mocking valid message
+        Message<GenericRecord> message = mockMessage("{\"outage_id\": \"123\", \"geojson\": \"{}\"}");
+        
+        // Mocking utils behavior
+        when(utils.convert(any(), eq(OutageGeolocation.class)))
+                .thenReturn(new OutageGeolocation("123", "{}"));
+        
+        listener.onMessage(message);
+        
+        verify(utils).sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any());
     }
 
     @Test
-    public void testOnMessage_OutageId_IsEmpty_ShouldNotSaveRecord() throws SystemException, JsonProcessingException {
-        outageGeolocation.setOutageId(null);
-        when(utilities.convert(jsonPayload, OutageGeolocation.class)).thenReturn(outageGeolocation);
-        when(pulsarMessage.getData()).thenReturn(jsonPayload.getBytes(StandardCharsets.UTF_8));
+    void testEmptyPayload() {
+        // Mocking empty payload message
+        Message<GenericRecord> message = mockMessage("");
+        
+        Exception exception = assertThrows(SystemException.class, () -> {
+            listener.onMessage(message);
+        });
 
-        messageListener.onMessage(pulsarMessage);
-        verify(kafkaTemplate, never()).send(any());
-        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
+        assertTrue(exception.getMessage().contains("Empty payload"));
     }
 
     @Test
-    public void testOnMessage_MalformedJSONObject_ShouldThrowSystemException() throws SystemException, JsonProcessingException {
-        when(utilities.convert(anyString(), eq(OutageGeolocation.class))).thenThrow(JsonProcessingException.class);
-        when(pulsarMessage.getData()).thenReturn(jsonPayload.getBytes(StandardCharsets.UTF_8));
-
-        messageListener.onMessage(pulsarMessage);
-        verify(kafkaTemplate, never()).send(any());
-        verify(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
-    }
-
-
-
-    @Test
-    public void testOnMessage_SystemException_ShouldSaveFailedRecord() throws SystemException, JsonProcessingException {
-        when(utilities.convert(jsonPayload, OutageGeolocation.class)).thenReturn(outageGeolocation);
-        when(pulsarMessage.getData()).thenReturn(jsonPayload.getBytes(StandardCharsets.UTF_8));
-        doThrow(SystemException.class).when(kafkaTemplate).send(producerRecord);
-
-        messageListener.onMessage(pulsarMessage);
-        verify(utilities, times(1)).convert(anyString(), eq(OutageGeolocation.class));
-        verify(kafkaTemplate).send(producerRecord);
-        verify(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
+    void testPayloadExceedsMaxSize() {
+        // Mocking payload exceeding max size
+        String largePayload = "x".repeat(5242881);
+        Message<GenericRecord> message = mockMessage(largePayload);
+        
+        listener.onMessage(message);
+        
+        verify(utils, never()).convert(any(), eq(OutageGeolocation.class));
     }
 
     @Test
-    public void testOnMessage_ProperMessage_ShouldSaveRecord() throws SystemException, JsonProcessingException {
-        when(utilities.convert(jsonPayload, OutageGeolocation.class)).thenReturn(outageGeolocation);
-        when(pulsarMessage.getData()).thenReturn(jsonPayload.getBytes(StandardCharsets.UTF_8));
-        SendResult<String, String> sendResult = new SendResult<>(new RecordMetadata(null, 1, 1, 1L, 1L, 1L, 1L), StringSerializer.EMPTY);
-        when(kafkaTemplate.send(producerRecord)).thenReturn(CompletableFuture.completedFuture(sendResult));
+    void testInvalidPayloadJsonParsingError() throws Exception {
+        // Mocking invalid JSON
+        Message<GenericRecord> message = mockMessage("invalid-json");
+        
+        when(utils.convert(any(), eq(OutageGeolocation.class)))
+                .thenThrow(JsonProcessingException.class);
+        
+        Exception exception = assertThrows(SystemException.class, () -> {
+            listener.onMessage(message);
+        });
 
-        messageListener.onMessage(pulsarMessage);
-        verify(utilities, times(1)).convert(anyString(), eq(OutageGeolocation.class));
-        verify(kafkaTemplate, times(1)).send(producerRecord);
-        verify(failedMessageService, never()).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
+        assertTrue(exception.getMessage().contains("Erroneous payload"));
     }
 
     @Test
-    public void testOnMessage_BatchLoaderUtilsReturnsEmptyList_ShouldNotPassOnToKafka() throws SystemException, JsonProcessingException {
-        when(pulsarMessage.getData()).thenReturn(jsonPayload.getBytes(StandardCharsets.UTF_8));
-        when(utilities.returnHeaders(anyString())).thenReturn(new ArrayList<>());
-
-        messageListener.onMessage(pulsarMessage);
-
-        verify(utilities).returnHeaders(anyString());
-        verify(kafkaTemplate, never()).send(any());
+    void testMissingOutageId() throws Exception {
+        // Mocking valid JSON but missing outageId
+        Message<GenericRecord> message = mockMessage("{\"geojson\": \"{}\"}");
+        
+        when(utils.convert(any(), eq(OutageGeolocation.class)))
+                .thenReturn(new OutageGeolocation(null, "{}"));
+        
+        listener.onMessage(message);
+        
+        verify(utils, never()).sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any());
     }
 
     @Test
-    public void testOnMessageFullBranchCoverage() throws SystemException, JsonProcessingException {
-        when(pulsarMessage.getData()).thenReturn(jsonPayload.getBytes(StandardCharsets.UTF_8));
-        when(utilities.convert(jsonPayload, OutageGeolocation.class)).thenReturn(outageGeolocation);
-        SendResult<String, String> sendResult = new SendResult<>(new RecordMetadata(null, 1, 1, 1L, 1L, 1L, 1L), StringSerializer.EMPTY);
-        when(kafkaTemplate.send(producerRecord)).thenReturn(CompletableFuture.completedFuture(sendResult));
+    void testExceptionWhileSending() throws Exception {
+        // Mocking valid message
+        Message<GenericRecord> message = mockMessage("{\"outage_id\": \"123\", \"geojson\": \"{}\"}");
+        
+        when(utils.convert(any(), eq(OutageGeolocation.class)))
+                .thenReturn(new OutageGeolocation("123", "{}"));
+        
+        doThrow(new RuntimeException("Kafka error")).when(utils)
+                .sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any());
+        
+        listener.onMessage(message);
+        
+        verify(utils).saveFailedRecords(any(), any(), any(), any(), anyChar(), any(), any());
+    }
 
-        messageListener.onMessage(pulsarMessage);
-
-        verify(utilities).returnHeaders(anyString());
-        verify(kafkaTemplate).send(any(ProducerRecord.class));
+    // Helper method to create a mock message with a specified payload
+    private Message<GenericRecord> mockMessage(String payload) {
+        Message<GenericRecord> message = mock(Message.class);
+        when(message.getData()).thenReturn(payload.getBytes(StandardCharsets.UTF_8));
+        return message;
     }
 }
 ```
+
+### Explanation:
+
+- **Mocking**: We use Mockito to mock dependencies like `BatchLoaderUtils` and `KafkaTemplate`.
+- **Test Cases**: Each test case targets a specific branch in the `onMessage` method.
+- **Assertions**: We assert exceptions where applicable and verify method calls.
+- **Helper Method**: `mockMessage` creates a mock `Message<GenericRecord>` with a specific payload.
+
+This approach should cover all branches and conditions present in the `onMessage` method, ensuring 100% code coverage.

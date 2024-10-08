@@ -1,22 +1,7 @@
-To create positive and negative test cases for the `EventsMessageListener` class, we will use the JUnit framework along with Mockito for mocking dependencies. Here’s how you can structure your test cases to cover various conditions and branches in the code.
-
-### Positive Test Cases
-
-1. **Test Successful Message Processing**
-2. **Test Valid Data with Sensitivity Check Passed**
-3. **Test Successful Message Sent to Kafka**
-
-### Negative Test Cases
-
-1. **Test Empty Payload Handling**
-2. **Test Invalid Payload Parsing**
-3. **Test Missing RequestJSONString**
-4. **Test Sensitivity Check Failed**
-5. **Test Exception in Message Sending**
-
-### Test Code
+To achieve 100% code coverage for the `FalloutBatchConfiguration` class using JUnit 5, you'll need to create a test class that mocks the dependencies and tests each method. Below is an example test class for `FalloutBatchConfiguration`. This assumes you have the necessary testing libraries such as Mockito and Spring Test in your project.
 
 ```java
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -26,161 +11,135 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.listener.MessageListenerContainer;
-import org.springframework.kafka.support.SendResult;
-import org.springframework.messaging.support.Header;
-import reactor.core.publisher.Mono;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.batch.item.ItemReader;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.database.JdbcCursorItemReader;
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
+import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.core.launch.support.RunIdIncrementer;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
 
-import java.util.Collections;
+import javax.sql.DataSource;
 
 @ExtendWith(MockitoExtension.class)
-public class EventsMessageListenerTest {
+@EnableBatchProcessing
+public class FalloutBatchConfigurationTest {
 
     @InjectMocks
-    private EventsMessageListener eventsMessageListener;
+    private FalloutBatchConfiguration configuration;
 
     @Mock
-    private AccountEcpdService accountService;
+    private DataSource dataSource;
+
+    @Mock
+    private KafkaFailedMessageService failedMessageService;
 
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
 
     @Mock
-    private KafkaFalloutService failedMessageService;
+    private SensitiveProfileManager profileManager;
 
     @Mock
     private BatchLoaderUtils utils;
 
-    private String validPayload;
-    private String invalidPayload;
-    private ConsumerRecord<String, String> consumerRecord;
+    @Mock
+    private JobRepository jobRepository;
+
+    @Value("${kafka-fallout-batch.query-noofdays:2}")
+    private int noofDays;
+
+    @Value("${kafka-fallout-batch.max-rows:20000}")
+    private int maxRows;
 
     @BeforeEach
     public void setUp() {
-        validPayload = "{\"RequestJSONString\": \"{...}\", ... }"; // Mock a valid payload
-        invalidPayload = ""; // Mock an invalid payload
-        consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", validPayload);
+        // Set the values for noofDays and maxRows if needed
     }
 
     @Test
-    public void testOnMessage_SuccessfulProcessing() {
-        // Mock necessary methods
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-
-        // Test the method
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
-
-        // Verify interactions
-        verify(kafkaTemplate).send(any());
+    public void testTransactionManager() {
+        PlatformTransactionManager transactionManager = configuration.transactionManager();
+        assertNotNull(transactionManager);
+        assertTrue(transactionManager instanceof DataSourceTransactionManager);
     }
 
     @Test
-    public void testOnMessage_ValidDataWithSensitivityCheckPassed() {
-        // Mock necessary methods
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just(new CustomerEcpdModel()));
-
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
-
-        // Verify that message is sent to Kafka
-        verify(kafkaTemplate).send(any());
+    public void testNspKafkaFalloutJob() {
+        Step step = mock(Step.class);
+        Job job = configuration.nspkafkaFalloutJob(jobRepository, step, new FalloutJobExecutionListener());
+        assertNotNull(job);
+        assertEquals("nspKafkaFalloutJob", job.getName());
     }
 
     @Test
-    public void testOnMessage_SuccessfulMessageSentToKafka() {
-        // Arrange
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
-
-        // Assert
-        verify(kafkaTemplate).send(any());
-    }
-
-    // Negative Test Cases
-
-    @Test
-    public void testOnMessage_EmptyPayload() {
-        // Arrange
-        consumerRecord = new ConsumerRecord<>("topic", 0, 0, "key", invalidPayload);
-
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, invalidPayload);
-
-        // Assert
-        verify(failedMessageService).saveFailedRecords(any(), any(), eq(invalidPayload), any(), any());
+    public void testNspKafkaFalloutStep() {
+        Step step = configuration.nspKafkaFalloutStep(jobRepository, configuration.transactionManager());
+        assertNotNull(step);
+        assertEquals("nspKafkaFalloutStep", step.getName());
     }
 
     @Test
-    public void testOnMessage_InvalidPayloadParsing() {
-        // Arrange
-        when(utils.convert(invalidPayload, ServiceMessage.class)).thenThrow(new JsonProcessingException(""));
-
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, invalidPayload);
-
-        // Assert
-        verify(failedMessageService).saveFailedRecords(any(), any(), eq(invalidPayload), any(), any());
+    public void testKafkaFalloutReader() {
+        JdbcCursorItemReader<KafkaFailedMessagesEntity> reader = configuration.kafkaFalloutReader();
+        assertNotNull(reader);
+        assertEquals("KafkaFalloutReader", reader.getName());
     }
 
     @Test
-    public void testOnMessage_MissingRequestJSONString() {
-        // Arrange
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
+    public void testKafkaFalloutProcessor() {
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = configuration.kafkaFalloutProcessor();
+        assertNotNull(processor);
 
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
+        // Define test input
+        KafkaFailedMessagesEntity testEntity = new KafkaFailedMessagesEntity();
+        testEntity.setPayload("{\"ECPD_ID\": \"testId\"}");
+        testEntity.setSensitivityChecked('N');
 
-        // Assert
-        verify(failedMessageService).saveFailedRecords(any(), any(), eq(validPayload), any(), any());
+        // Execute processor
+        KafkaFailedMessagesEntity result = processor.process(testEntity);
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
     }
 
     @Test
-    public void testOnMessage_SensitivityCheckFailed() {
-        // Mock necessary methods
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just(new CustomerEcpdModel("ecpdId", "id", "y")));
+    public void testKafkaFalloutWriter() {
+        ItemWriter<KafkaFailedMessagesEntity> writer = configuration.kafkaFalloutWriter();
+        assertNotNull(writer);
 
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
+        // Define test input
+        KafkaFailedMessagesEntity testEntity = new KafkaFailedMessagesEntity();
+        testEntity.setId(new KafkaFailedMessagesPK());
+        testEntity.setPayload("testPayload");
 
-        // Assert
-        verify(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any());
-    }
+        // Execute writer
+        writer.write(List.of(testEntity));
 
-    @Test
-    public void testOnMessage_ExceptionInMessageSending() {
-        // Mock necessary methods
-        when(utils.convert(validPayload, ServiceMessage.class)).thenReturn(new ServiceMessage());
-        when(accountService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-
-        doThrow(new RuntimeException("Kafka exception")).when(kafkaTemplate).send(any());
-
-        // Act
-        eventsMessageListener.onMessage(consumerRecord, validPayload);
-
-        // Assert
-        verify(failedMessageService).saveFailedRecords(any(), any(), any(), any(), any());
+        // Add assertions or verifications as needed
+        verify(kafkaTemplate, times(1)).send(any(String.class), any(String.class));
     }
 }
 ```
 
-### Explanation
+### Explanation:
+1. **Mocks**: The necessary dependencies are mocked using Mockito.
+2. **InjectMocks**: The `FalloutBatchConfiguration` is instantiated with the mocked dependencies.
+3. **Tests**: Each method of the `FalloutBatchConfiguration` class is tested to ensure it behaves as expected. 
+   - The `transactionManager`, `nspkafkaFalloutJob`, and `nspKafkaFalloutStep` methods are tested to ensure they return the correct objects.
+   - The `kafkaFalloutReader` method is tested to check if it initializes correctly.
+   - The `kafkaFalloutProcessor` method is verified by simulating a processing scenario.
+   - The `kafkaFalloutWriter` method is tested by verifying that it attempts to send a message to Kafka.
 
-1. **Positive Test Cases**:
-   - Test scenarios where the message is processed successfully, valid data is handled correctly, and messages are sent to Kafka.
-
-2. **Negative Test Cases**:
-   - Test scenarios where invalid inputs (empty payload, parsing errors, missing fields) result in the appropriate error handling and logging.
-
-3. **Mocking**: The `@Mock` annotation is used to create mock instances of the dependencies so that you can simulate their behavior without relying on actual implementations.
-
-4. **Verification**: The `verify` method checks that the correct methods are called on the mocks, ensuring that the business logic behaves as expected.
-
-This code provides a comprehensive set of test cases that cover the possible branches and conditions in the `EventsMessageListener` class. Adjust the payloads and expected behavior according to your actual implementation details.
+### Note:
+- Adjustments may be needed based on your actual implementation details, especially for mocking behavior and verifying interactions.
+- Add additional assertions and verifications as necessary to ensure comprehensive coverage of edge cases and error conditions.

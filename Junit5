@@ -1,17 +1,12 @@
-To write JUnit 5 test cases covering all branches of the `onMessage(Message<GenericRecord> message)` method in the `OutageLocationEventsMessageListener` class, we'll need to create a test class and mock the necessary dependencies. We'll use Mockito to mock the dependencies like `BatchLoaderUtils` and `KafkaTemplate`.
-
-Here's how you can write the test cases:
+To modify the test cases to use the Reflection API for accessing private fields like `producerTopic` and `maxMsgSize` in the `OutageLocationEventsMessageListener` class, you can use Java's reflection capabilities. Here's the updated test code:
 
 ```java
 import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.Schema;
-import org.apache.pulsar.client.impl.schema.StringSchema;
+import org.apache.pulsar.client.api.schema.GenericRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
@@ -19,7 +14,8 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.kafka.core.KafkaTemplate;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import java.lang.reflect.Field;
+import java.util.ArrayList;
 
 public class OutageLocationEventsMessageListenerTest {
 
@@ -33,14 +29,24 @@ public class OutageLocationEventsMessageListenerTest {
     private OutageLocationEventsMessageListener listener;
 
     private static final String PRODUCER_TOPIC = "test-topic";
+    private static final int MAX_MSG_SIZE = 5242880; // 5 MB
 
     @BeforeEach
-    public void setup() {
+    public void setup() throws Exception {
         MockitoAnnotations.openMocks(this);
         when(utils.returnHeaders(any())).thenReturn(new ArrayList<>());
+
         listener = new OutageLocationEventsMessageListener(utils);
-        listener.producerTopic = PRODUCER_TOPIC;
-        listener.maxMsgSize = 5242880; // 5 MB
+
+        // Set private fields using reflection
+        setPrivateField(listener, "producerTopic", PRODUCER_TOPIC);
+        setPrivateField(listener, "maxMsgSize", MAX_MSG_SIZE);
+    }
+
+    private void setPrivateField(Object target, String fieldName, Object value) throws Exception {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 
     @Test
@@ -57,7 +63,7 @@ public class OutageLocationEventsMessageListenerTest {
 
     @Test
     public void testOnMessageWithLargePayload() {
-        byte[] largePayload = new byte[listener.maxMsgSize + 1];
+        byte[] largePayload = new byte[MAX_MSG_SIZE + 1];
         Message<GenericRecord> message = mock(Message.class);
         when(message.getData()).thenReturn(largePayload);
 
@@ -114,13 +120,8 @@ public class OutageLocationEventsMessageListenerTest {
 ```
 
 ### Explanation:
-- **Mocks and Setup**: We mock `BatchLoaderUtils` and `KafkaTemplate`, as they are external dependencies. The `@BeforeEach` method initializes these mocks and sets up the listener with necessary values.
+- **Reflection API**: We use the `setPrivateField` method to access and set the private fields `producerTopic` and `maxMsgSize` using reflection. The `setAccessible(true)` call allows us to bypass Java's access control checks for these private fields.
 
-- **Test Cases**:
-  - **testOnMessageWithEmptyPayload**: Tests handling of an empty payload and expects a `SystemException`.
-  - **testOnMessageWithLargePayload**: Tests payload larger than the maximum size and expects no exception, as the message should be ignored.
-  - **testOnMessageWithInvalidJson**: Tests behavior when JSON parsing fails, expecting a `SystemException`.
-  - **testOnMessageWithValidPayload**: Tests successful processing of a valid message.
-  - **testOnMessageWithMissingOutageId**: Tests behavior when the `OutageGeolocation` event is missing an `outageId`, and the message should be ignored without sending to Kafka.
+- **Test Cases**: Each test case remains the same in terms of logic, but it now relies on the fields set via reflection to ensure the `OutageLocationEventsMessageListener` instance is configured properly.
 
-These test cases aim to cover all branches and conditions of the `onMessage` method.
+This approach ensures that your test code doesn't require changing the visibility of the private fields in your production code, maintaining encapsulation while still achieving full test coverage.

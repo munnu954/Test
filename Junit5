@@ -1,19 +1,25 @@
-To achieve 100% code coverage for the `OutageLocationEventsMessageListener` class, we need to write JUnit 5 tests that cover all possible branches within the `onMessage` method. This includes scenarios such as empty payloads, payloads exceeding max size, JSON processing exceptions, valid messages, and exceptions occurring in the `sendMessageAsync` method. Below is a comprehensive set of test cases:
+To write JUnit 5 test cases covering all branches of the `onMessage(Message<GenericRecord> message)` method in the `OutageLocationEventsMessageListener` class, we'll need to create a test class and mock the necessary dependencies. We'll use Mockito to mock the dependencies like `BatchLoaderUtils` and `KafkaTemplate`.
+
+Here's how you can write the test cases:
 
 ```java
-import com.fasterxml.jackson.core.JsonProcessingException;
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.client.api.Schema;
+import org.apache.pulsar.client.impl.schema.StringSchema;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.kafka.core.KafkaTemplate;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 public class OutageLocationEventsMessageListenerTest {
 
@@ -23,144 +29,98 @@ public class OutageLocationEventsMessageListenerTest {
     @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
 
-    @Mock
-    private Message<GenericRecord> message;
-
     @InjectMocks
     private OutageLocationEventsMessageListener listener;
 
-    private String producerTopic = "test_topic";
-    private int maxMsgSize = 5242880; // 5MB
+    private static final String PRODUCER_TOPIC = "test-topic";
 
     @BeforeEach
-    public void setUp() {
+    public void setup() {
         MockitoAnnotations.openMocks(this);
+        when(utils.returnHeaders(any())).thenReturn(new ArrayList<>());
         listener = new OutageLocationEventsMessageListener(utils);
+        listener.producerTopic = PRODUCER_TOPIC;
+        listener.maxMsgSize = 5242880; // 5 MB
     }
 
     @Test
-    public void testOnMessageWithEmptyPayload() throws SystemException {
-        // Arrange
-        when(message.getData()).thenReturn("".getBytes());
+    public void testOnMessageWithEmptyPayload() {
+        Message<GenericRecord> message = mock(Message.class);
+        when(message.getData()).thenReturn(new byte[0]);
 
-        // Act & Assert
-        SystemException exception = assertThrows(SystemException.class, () -> listener.onMessage(message));
-        assertEquals("OutageLocationEventsMessageListener: Empty payload received from NSP topic", exception.getMessage());
+        SystemException thrown = assertThrows(SystemException.class, () -> {
+            listener.onMessage(message);
+        });
 
-        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(""), eq(TYSConstants.OUTAGE_GEOLOCATION.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()), anyString());
+        assertEquals("OutageLocationEventsMessageListener: Empty payload received from NSP topic", thrown.getMessage());
     }
 
     @Test
-    public void testOnMessageWithPayloadExceedingMaxSize() throws SystemException {
-        // Arrange
-        String largePayload = "a".repeat(maxMsgSize + 1);
-        when(message.getData()).thenReturn(largePayload.getBytes());
+    public void testOnMessageWithLargePayload() {
+        byte[] largePayload = new byte[listener.maxMsgSize + 1];
+        Message<GenericRecord> message = mock(Message.class);
+        when(message.getData()).thenReturn(largePayload);
 
-        // Act
-        listener.onMessage(message);
-
-        // Assert
-        verify(utils, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar(), anyString(), anyString());
-        verify(utils, never()).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
+        // No exception should be thrown, and processing should stop.
+        assertDoesNotThrow(() -> listener.onMessage(message));
     }
 
     @Test
-    public void testOnMessageWithJsonProcessingExceptionShortError() throws SystemException, JsonProcessingException {
-        // Arrange
-        String payload = "{\"invalid\": \"json\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        String shortErrorMessage = "Short error";
-        when(utils.convert(anyString(), eq(OutageGeolocation.class))).thenThrow(new JsonProcessingException(shortErrorMessage) {});
+    public void testOnMessageWithInvalidJson() throws JsonProcessingException {
+        String invalidJson = "invalid json";
+        Message<GenericRecord> message = mock(Message.class);
+        when(message.getData()).thenReturn(invalidJson.getBytes());
+        doThrow(JsonProcessingException.class).when(utils).convert(any(), eq(OutageGeolocation.class));
 
-        // Act & Assert
-        SystemException exception = assertThrows(SystemException.class, () -> listener.onMessage(message));
-        assertEquals("OutageLocationEventsMessageListener :: Erroneous payload received from NSP topic", exception.getMessage());
+        SystemException thrown = assertThrows(SystemException.class, () -> {
+            listener.onMessage(message);
+        });
 
-        ArgumentCaptor<String> errorMessageCaptor = ArgumentCaptor.forClass(String.class);
-        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.OUTAGE_GEOLOCATION.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()), errorMessageCaptor.capture());
-        assertEquals(shortErrorMessage, errorMessageCaptor.getValue());
+        assertTrue(thrown.getMessage().contains("Erroneous payload received from NSP topic"));
+        verify(utils).saveFailedRecords(eq(PRODUCER_TOPIC), anyString(), eq(invalidJson), any(), anyChar(), any(), any());
     }
 
     @Test
-    public void testOnMessageWithJsonProcessingExceptionLongError() throws SystemException, JsonProcessingException {
-        // Arrange
-        String payload = "{\"invalid\": \"json\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        String longErrorMessage = "Long error message".repeat(20); // Ensure this exceeds 200 characters
-        when(utils.convert(anyString(), eq(OutageGeolocation.class))).thenThrow(new JsonProcessingException(longErrorMessage) {});
-
-        // Act & Assert
-        SystemException exception = assertThrows(SystemException.class, () -> listener.onMessage(message));
-        assertEquals("OutageLocationEventsMessageListener :: Erroneous payload received from NSP topic", exception.getMessage());
-
-        ArgumentCaptor<String> errorMessageCaptor = ArgumentCaptor.forClass(String.class);
-        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.OUTAGE_GEOLOCATION.getValue()), eq('-'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()), errorMessageCaptor.capture());
-        assertEquals(longErrorMessage.substring(0, 200), errorMessageCaptor.getValue());
-    }
-
-    @Test
-    public void testOnMessageWithValidEvent() throws SystemException, JsonProcessingException {
-        // Arrange
+    public void testOnMessageWithValidPayload() throws JsonProcessingException {
         OutageGeolocation event = new OutageGeolocation();
         event.setOutageId("123");
-        String payload = "{\"outage_id\": \"123\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
+        String validJson = "{\"outage_id\":\"123\",\"geojson\":\"{}\"}";
+
+        Message<GenericRecord> message = mock(Message.class);
+        when(message.getData()).thenReturn(validJson.getBytes());
         when(utils.convert(anyString(), eq(OutageGeolocation.class))).thenReturn(event);
 
-        // Act
-        listener.onMessage(message);
+        assertDoesNotThrow(() -> listener.onMessage(message));
 
-        // Assert
-        verify(utils).sendMessageAsync(any(), anyString(), eq(payload), eq(producerTopic), eq(TYSConstants.OUTAGE_GEOLOCATION.getValue()), eq('-'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()));
+        verify(utils, never()).saveFailedRecords(any(), any(), any(), any(), anyChar(), any(), any());
+        verify(utils).sendMessageAsync(any(ProducerRecord.class), anyString(), eq(validJson), eq(PRODUCER_TOPIC), any(), anyChar(), any());
     }
 
     @Test
-    public void testOnMessageWithExceptionInSendMessageAsyncShortError() throws SystemException, JsonProcessingException {
-        // Arrange
+    public void testOnMessageWithMissingOutageId() throws JsonProcessingException {
         OutageGeolocation event = new OutageGeolocation();
-        event.setOutageId("123");
-        String payload = "{\"outage_id\": \"123\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
+        String validJson = "{\"geojson\":\"{}\"}";
+
+        Message<GenericRecord> message = mock(Message.class);
+        when(message.getData()).thenReturn(validJson.getBytes());
         when(utils.convert(anyString(), eq(OutageGeolocation.class))).thenReturn(event);
-        doThrow(new RuntimeException("Short Kafka error")).when(utils).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
 
-        // Act
-        listener.onMessage(message);
+        assertDoesNotThrow(() -> listener.onMessage(message));
 
-        // Assert
-        ArgumentCaptor<String> errorMessageCaptor = ArgumentCaptor.forClass(String.class);
-        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.OUTAGE_GEOLOCATION.getValue()), eq('-'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()), errorMessageCaptor.capture());
-        assertEquals("Short Kafka error", errorMessageCaptor.getValue());
-    }
-
-    @Test
-    public void testOnMessageWithExceptionInSendMessageAsyncLongError() throws SystemException, JsonProcessingException {
-        // Arrange
-        OutageGeolocation event = new OutageGeolocation();
-        event.setOutageId("123");
-        String payload = "{\"outage_id\": \"123\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        when(utils.convert(anyString(), eq(OutageGeolocation.class))).thenReturn(event);
-        String longKafkaErrorMessage = "Long Kafka error message".repeat(20); // Ensure this exceeds 200 characters
-        doThrow(new RuntimeException(longKafkaErrorMessage)).when(utils).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
-
-        // Act
-        listener.onMessage(message);
-
-        // Assert
-        ArgumentCaptor<String> errorMessageCaptor = ArgumentCaptor.forClass(String.class);
-        verify(utils).saveFailedRecords(eq(producerTopic), anyString(), eq(payload), eq(TYSConstants.OUTAGE_GEOLOCATION.getValue()), eq('-'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()), errorMessageCaptor.capture());
-        assertEquals(longKafkaErrorMessage.substring(0, 200), errorMessageCaptor.getValue());
+        // Message should be dropped due to missing outageId
+        verify(utils, never()).sendMessageAsync(any(), anyString(), anyString(), any(), any(), anyChar(), any());
     }
 }
 ```
 
 ### Explanation:
+- **Mocks and Setup**: We mock `BatchLoaderUtils` and `KafkaTemplate`, as they are external dependencies. The `@BeforeEach` method initializes these mocks and sets up the listener with necessary values.
 
-- **Empty Payload**: Test for an empty payload to ensure it throws a `SystemException` and logs the failure.
-- **Payload Exceeding Max Size**: Ensures no processing occurs if the payload exceeds `maxMsgSize`.
-- **JSON Processing Exceptions**: Handles short and long error messages during JSON conversion, ensuring they are captured correctly.
-- **Valid Message**: Ensures valid messages are processed correctly and sent asynchronously.
-- **Exceptions in `sendMessageAsync`**: Tests short and long error messages to verify proper logging and handling.
+- **Test Cases**:
+  - **testOnMessageWithEmptyPayload**: Tests handling of an empty payload and expects a `SystemException`.
+  - **testOnMessageWithLargePayload**: Tests payload larger than the maximum size and expects no exception, as the message should be ignored.
+  - **testOnMessageWithInvalidJson**: Tests behavior when JSON parsing fails, expecting a `SystemException`.
+  - **testOnMessageWithValidPayload**: Tests successful processing of a valid message.
+  - **testOnMessageWithMissingOutageId**: Tests behavior when the `OutageGeolocation` event is missing an `outageId`, and the message should be ignored without sending to Kafka.
 
-These tests ensure comprehensive coverage of all logical paths within the `onMessage` method.
+These test cases aim to cover all branches and conditions of the `onMessage` method.

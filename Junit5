@@ -1,8 +1,7 @@
-To achieve 100% code coverage for the `SHAEventMessageListener` class, we need to write JUnit 5 test cases covering all possible branches and scenarios in the `onMessage` method. Below, I have outlined additional test cases that cover different branches and exceptions that could occur in the method:
+To achieve 100% code coverage for the `ProducerRecord` creation and the subsequent call to `sendMessageAsync`, we need to ensure that this branch of the `onMessage` method is thoroughly tested. This involves testing scenarios where the `ProducerRecord` is correctly constructed and the `sendMessageAsync` method is invoked. Here are additional test cases to cover these aspects:
 
 ```java
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -13,6 +12,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.Arrays;
+import java.util.List;
 
 @ExtendWith(MockitoExtension.class)
 public class SHAEventMessageListenerTest {
@@ -30,48 +32,7 @@ public class SHAEventMessageListenerTest {
     private Message<GenericRecord> message;
 
     @Test
-    void testOnMessage_EmptyPayload() {
-        // Arrange
-        when(message.getData()).thenReturn(new byte[0]);
-
-        // Act and Assert
-        assertThrows(SystemException.class, () -> shaEventMessageListener.onMessage(message));
-        verify(batchLoaderUtils, never()).convert(any(), any());
-    }
-
-    @Test
-    void testOnMessage_NullEcpdId() {
-        // Arrange
-        String payload = "{\"mdn\":\"1234567890\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId(null);
-        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
-
-        // Act and Assert
-        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-        verify(batchLoaderUtils, never()).sendMessageAsync(any());
-    }
-
-    @Test
-    void testOnMessage_SensitiveAccount() throws JsonProcessingException {
-        // Arrange
-        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId("1234567890");
-        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
-        SensitiveResponse sensitiveResponse = new SensitiveResponse();
-        sensitiveResponse.setSensitive(true);
-        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
-
-        // Act and Assert
-        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-        verify(batchLoaderUtils, never()).sendMessageAsync(any());
-    }
-
-    @Test
-    void testOnMessage_NonSensitiveAccount() throws JsonProcessingException {
+    void testOnMessage_NonSensitiveAccount_SendProducerRecord() throws JsonProcessingException {
         // Arrange
         String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
         when(message.getData()).thenReturn(payload.getBytes());
@@ -81,39 +42,63 @@ public class SHAEventMessageListenerTest {
         SensitiveResponse sensitiveResponse = new SensitiveResponse();
         sensitiveResponse.setSensitive(false);
         when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
-        when(batchLoaderUtils.returnHeaders(anyString())).thenReturn(new ArrayList<>());
-        
+
+        List<Header> headers = Arrays.asList(new RecordHeader("key", "value".getBytes()));
+        when(batchLoaderUtils.returnHeaders(TYSConstants.SHA_VBSM_MSG.getValue())).thenReturn(headers);
+
         // Act
         assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-        
+
         // Assert
-        verify(batchLoaderUtils).sendMessageAsync(any(ProducerRecord.class), anyString(), anyString(), anyString(), anyString(), eq('Y'), anyString());
+        verify(batchLoaderUtils).sendMessageAsync(argThat(producerRecord -> 
+            producerRecord.topic().equals("your_topic_name") && 
+            producerRecord.headers().equals(headers)
+        ), anyString(), anyString(), anyString(), anyString(), eq('Y'), anyString());
     }
 
+    // Additional test case to ensure sendMessageAsync is called with correct arguments
     @Test
-    void testOnMessage_ExceptionDuringProcessing() throws JsonProcessingException {
+    void testOnMessage_ProducerRecordConstructionAndSend() throws JsonProcessingException {
         // Arrange
-        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
+        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"0987654321\"}";
         when(message.getData()).thenReturn(payload.getBytes());
-        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenThrow(new JsonProcessingException("Error") {});
+        SHAVbsmEvent event = new SHAVbsmEvent();
+        event.setEcpdId("1234567890");
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
+        
+        SensitiveResponse nonSensitiveResponse = new SensitiveResponse();
+        nonSensitiveResponse.setSensitive(false);
+        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(nonSensitiveResponse);
+        
+        List<Header> headers = List.of(new RecordHeader("MessageType", "SHA_VBSM_MSG".getBytes()));
+        when(batchLoaderUtils.returnHeaders(TYSConstants.SHA_VBSM_MSG.getValue())).thenReturn(headers);
 
-        // Act and Assert
+        // Act
         assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-        verify(batchLoaderUtils, never()).sendMessageAsync(any());
+
+        // Assert
+        verify(batchLoaderUtils).sendMessageAsync(
+            argThat(producerRecord -> 
+                producerRecord.topic().equals("your_topic_name") && 
+                producerRecord.key() == null && 
+                producerRecord.value().equals(payload) &&
+                producerRecord.headers().equals(headers)
+            ),
+            anyString(), // transactionId
+            eq(payload),
+            eq("your_topic_name"),
+            eq(TYSConstants.SHA_VBSM_MSG.getValue()),
+            eq('Y'),
+            eq(TYSConstants.EC_KAFKA_ERROR.getValue())
+        );
     }
 }
 ```
 
 ### Explanation:
 
-1. **Empty Payload:** This test ensures that an exception is thrown when an empty payload is received, as specified in the `onMessage` method.
+1. **`testOnMessage_NonSensitiveAccount_SendProducerRecord`:** This test checks that when the account is non-sensitive, the `sendMessageAsync` method is invoked with a correctly constructed `ProducerRecord`. It verifies the topic, headers, and other attributes of the `ProducerRecord`.
 
-2. **Null EcpdId:** This test checks the behavior when `ecpdId` is null, ensuring no message is sent.
+2. **`testOnMessage_ProducerRecordConstructionAndSend`:** This test verifies the construction of the `ProducerRecord` and checks that `sendMessageAsync` is called with the right arguments, including verifying that the headers match the expected values.
 
-3. **Sensitive Account:** This test validates that if the account is sensitive, the message is not processed further.
-
-4. **Non-Sensitive Account:** The test case checks that when the account is not sensitive, the message is processed and sent.
-
-5. **Exception During Processing:** This test ensures that if an exception occurs during the conversion of the payload, it is caught, and no further actions are taken.
-
-These tests ensure that all logical branches and exceptions within the `onMessage` method are covered, aiming for 100% code coverage.
+In these test cases, you might need to replace `"your_topic_name"` with the actual topic name used in your configuration. Also, ensure that the `BatchLoaderUtils` and other dependencies are appropriately mocked to return the expected values for headers and other configurations.

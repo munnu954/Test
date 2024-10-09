@@ -1,79 +1,125 @@
-import com.fasterxml.jackson.databind.JsonMappingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.header.Header;
-import org.apache.kafka.common.header.internals.RecordHeader;
+To write JUnit 5 test cases for the `SHAEventMessageListener` class, we need to cover all branches and paths through the `onMessage` method to achieve 100% code coverage. Below is a possible implementation of the test class that covers different scenarios:
+
+```java
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
 import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.client.api.Schema;
+import org.apache.pulsar.client.api.schema.GenericRecord;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.annotation.Value;
-import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.kafka.core.KafkaTemplate;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class SHAEventMessageListenerTest {
 
+    @Mock
+    private SensitiveProfileManager profileManager;
+
+    @Mock
+    private BatchLoaderUtils utils;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
     @InjectMocks
-    private SHAEventMessageListener shaEventMessageListener;
+    private SHAEventMessageListener listener;
 
     @Mock
-    private SensitiveProfileManager sensitiveProfileManager;
+    private Message<GenericRecord> message;
 
-    @Mock
-    private BatchLoaderUtils batchLoaderUtils;
+    private final String producerTopic = "test-topic";
 
-    @Mock
-    private KafkaTemplate kafkaTemplate;
-
-    @Mock
-    private KafkaFalloutService kafkaFalloutService;
-
-    @Test
-    public void testOnMessagePayloadEmpty() throws SystemException {
-        Message<GenericRecord> message = mock(Message.class);
-
-        when(message.getData()).thenReturn(null);
-
-        assertThrows(SystemException.class, () -> shaEventMessageListener.onMessage(message));
+    @BeforeEach
+    public void setUp() {
+        // Set the producer topic value
+        listener.producerTopic = producerTopic;
     }
 
     @Test
-    public void testOnMessageWithSensitiveProfile() throws SystemException, JsonMappingException {
-        Message<GenericRecord> message = mock(Message.class);
-        SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId("123");
+    public void testEmptyPayload() throws Exception {
+        when(message.getData()).thenReturn("".getBytes());
+
+        SystemException exception = assertThrows(SystemException.class, () -> {
+            listener.onMessage(message);
+        });
         
-        when(message.getData()).thenReturn(ObjectMapper.writeValueAsString(event));
-        when(batchLoaderUtils.convert(anyString(), eq(SHAVbsmEvent.class))).thenReturn(event);
-        when(sensitiveProfileManager.getSensitiveAccount(anyString())).thenReturn(new SensitiveResponse("123", "token", true));
-
-        shaEventMessageListener.onMessage(message);
-
-        verify(batchLoaderUtils, times(0)).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
+        assertEquals("Empty payload received from NSP topic", exception.getMessage());
     }
 
     @Test
-    public void testOnMessageWithoutSensitiveProfile() throws SystemException, JsonMappingException {
-        Message<GenericRecord> message = mock(Message.class);
+    public void testValidMessageSensitiveProfile() throws Exception {
+        String payload = "{\"ecpd_profile_id\":\"123\"}";
         SHAVbsmEvent event = new SHAVbsmEvent();
         event.setEcpdId("123");
-        
-        when(message.getData()).thenReturn(ObjectMapper.writeValueAsString(event));
-        when(batchLoaderUtils.convert(anyString(), eq(SHAVbsmEvent.class))).thenReturn(event);
-        when(sensitiveProfileManager.getSensitiveAccount(anyString())).thenReturn(new SensitiveResponse("123", "token", false));
 
-        shaEventMessageListener.onMessage(message);
+        when(message.getData()).thenReturn(payload.getBytes(StandardCharsets.UTF_8));
+        when(utils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
+        when(profileManager.getSensitiveAccount("123")).thenReturn(new SensitiveResponse("123", null, true));
 
-        verify(batchLoaderUtils, times(1)).sendMessageAsync(any(), anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
+        listener.onMessage(message);
+
+        verify(utils, never()).sendMessageAsync(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    public void testValidMessageNonSensitiveProfile() throws Exception {
+        String payload = "{\"ecpd_profile_id\":\"123\"}";
+        SHAVbsmEvent event = new SHAVbsmEvent();
+        event.setEcpdId("123");
+
+        when(message.getData()).thenReturn(payload.getBytes(StandardCharsets.UTF_8));
+        when(utils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
+        when(profileManager.getSensitiveAccount("123")).thenReturn(new SensitiveResponse("123", null, false));
+
+        listener.onMessage(message);
+
+        verify(utils, times(1)).sendMessageAsync(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    public void testInvalidEcpdId() throws Exception {
+        String payload = "{\"ecpd_profile_id\":\"\"}";
+        SHAVbsmEvent event = new SHAVbsmEvent();
+        event.setEcpdId("");
+
+        when(message.getData()).thenReturn(payload.getBytes(StandardCharsets.UTF_8));
+        when(utils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
+
+        listener.onMessage(message);
+
+        verify(utils, never()).sendMessageAsync(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    public void testConversionException() throws Exception {
+        String payload = "{\"ecpd_profile_id\":\"123\"}";
+
+        when(message.getData()).thenReturn(payload.getBytes(StandardCharsets.UTF_8));
+        when(utils.convert(payload, SHAVbsmEvent.class)).thenThrow(new RuntimeException("Conversion failed"));
+
+        assertDoesNotThrow(() -> listener.onMessage(message));
+
+        verify(utils, never()).sendMessageAsync(any(), any(), any(), any(), any(), any(), any());
     }
 }
 ```
+
+### Key Points:
+- **Empty Payload**: Tests the scenario where the payload is empty, expecting a `SystemException`.
+- **Valid Message with Sensitive Profile**: Tests a valid message where the profile is sensitive, expecting no message to be sent.
+- **Valid Message with Non-Sensitive Profile**: Tests a valid message where the profile is not sensitive, expecting the message to be sent.
+- **Invalid ECPD ID**: Tests the scenario where the `ecpdId` is empty, expecting no message to be sent.
+- **Conversion Exception**: Tests handling a conversion exception, ensuring no message is sent and no exceptions are thrown from the listener method itself.
+
+### Note:
+- Mocking is used extensively to simulate the behavior of dependencies like `SensitiveProfileManager` and `BatchLoaderUtils`.
+- The `assertDoesNotThrow` is used in cases where exceptions are caught and handled within the method.

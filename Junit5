@@ -1,82 +1,119 @@
-import static org.junit.jupiter.api.Assertions.*;
+To achieve 100% code coverage for the `SHAEventMessageListener` class, we need to write JUnit 5 test cases covering all possible branches and scenarios in the `onMessage` method. Below, I have outlined additional test cases that cover different branches and exceptions that could occur in the method:
+
+```java
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-import org.apache.pulsar.functions.api.utils.GenericRecord;
-import org.apache.pulsar.io.core.Message;
-import org.junit.jupiter.api.BeforeEach;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.pulsar.client.api.Message;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.springframework.kafka.core.KafkaTemplate;
+import org.mockito.junit.jupiter.MockitoExtension;
 
+@ExtendWith(MockitoExtension.class)
 public class SHAEventMessageListenerTest {
 
+    @InjectMocks
     private SHAEventMessageListener shaEventMessageListener;
 
     @Mock
-    private SensitiveProfileManager profileManager;
+    private SensitiveProfileManager sensitiveProfileManager;
 
     @Mock
     private BatchLoaderUtils batchLoaderUtils;
 
     @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Mock
-    private KafkaFalloutService kafkaFalloutService;
-
-    @BeforeEach
-    void setup() {
-        shaEventMessageListener = new SHAEventMessageListener();
-        shaEventMessageListener.profileManager = profileManager;
-        shaEventMessageListener.utils = batchLoaderUtils;
-        shaEventMessageListener.kafkaTemplate = kafkaTemplate;
-        shaEventMessageListener.failedMessageService = kafkaFalloutService;
-    }
+    private Message<GenericRecord> message;
 
     @Test
-    void testOnMessageEmptyPayload() throws SystemException {
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn(null);
+    void testOnMessage_EmptyPayload() {
+        // Arrange
+        when(message.getData()).thenReturn(new byte[0]);
 
+        // Act and Assert
         assertThrows(SystemException.class, () -> shaEventMessageListener.onMessage(message));
+        verify(batchLoaderUtils, never()).convert(any(), any());
     }
 
     @Test
-    void testOnMessageEventEcpdIdEmpty() throws SystemException {
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn("somePayload");
-        when(batchLoaderUtils.convert(anyString(), eq(SHAVbsmEvent.class))).thenReturn(new SHAVbsmEvent());
+    void testOnMessage_NullEcpdId() {
+        // Arrange
+        String payload = "{\"mdn\":\"1234567890\"}";
+        when(message.getData()).thenReturn(payload.getBytes());
+        SHAVbsmEvent event = new SHAVbsmEvent();
+        event.setEcpdId(null);
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
 
-        shaEventMessageListener.onMessage(message);
-
-        // Add assertions here for event with empty EcpdId
+        // Act and Assert
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+        verify(batchLoaderUtils, never()).sendMessageAsync(any());
     }
 
     @Test
-    void testOnMessageSensitiveProfile() throws SystemException {
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn("somePayload");
-        when(batchLoaderUtils.convert(anyString(), eq(SHAVbsmEvent.class))).thenReturn(new SHAVbsmEvent("ecpdId", "mdn"));
+    void testOnMessage_SensitiveAccount() throws JsonProcessingException {
+        // Arrange
+        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
+        when(message.getData()).thenReturn(payload.getBytes());
+        SHAVbsmEvent event = new SHAVbsmEvent();
+        event.setEcpdId("1234567890");
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
+        SensitiveResponse sensitiveResponse = new SensitiveResponse();
+        sensitiveResponse.setSensitive(true);
+        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
 
-        when(profileManager.getSensitiveAccount(anyString())).thenReturn(new SensitiveResponse("ecpdId", "sensitiveToken", true));
-
-        shaEventMessageListener.onMessage(message);
-
-        // Add assertions here for sensitive profile
+        // Act and Assert
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+        verify(batchLoaderUtils, never()).sendMessageAsync(any());
     }
 
     @Test
-    void testOnMessageNonSensitiveProfile() throws SystemException {
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn("somePayload");
-        when(batchLoaderUtils.convert(anyString(), eq(SHAVbsmEvent.class))).thenReturn(new SHAVbsmEvent("ecpdId", "mdn"));
-
-        when(profileManager.getSensitiveAccount(anyString())).thenReturn(new SensitiveResponse("ecpdId", "sensitiveToken", false));
-
-        shaEventMessageListener.onMessage(message);
-
-        // Add assertions here for non-sensitive profile
+    void testOnMessage_NonSensitiveAccount() throws JsonProcessingException {
+        // Arrange
+        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
+        when(message.getData()).thenReturn(payload.getBytes());
+        SHAVbsmEvent event = new SHAVbsmEvent();
+        event.setEcpdId("1234567890");
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
+        SensitiveResponse sensitiveResponse = new SensitiveResponse();
+        sensitiveResponse.setSensitive(false);
+        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
+        when(batchLoaderUtils.returnHeaders(anyString())).thenReturn(new ArrayList<>());
+        
+        // Act
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+        
+        // Assert
+        verify(batchLoaderUtils).sendMessageAsync(any(ProducerRecord.class), anyString(), anyString(), anyString(), anyString(), eq('Y'), anyString());
     }
-} 
 
-This is a basic structure of the JUnit test class for the SHAEventMessageListener class. You would need to add more test cases to cover all branches of the `onMessage` method based on the logic and flow of your application. In each test case, you can verify the expected behavior by mocking dependencies and making assertions.
+    @Test
+    void testOnMessage_ExceptionDuringProcessing() throws JsonProcessingException {
+        // Arrange
+        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
+        when(message.getData()).thenReturn(payload.getBytes());
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenThrow(new JsonProcessingException("Error") {});
+
+        // Act and Assert
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+        verify(batchLoaderUtils, never()).sendMessageAsync(any());
+    }
+}
+```
+
+### Explanation:
+
+1. **Empty Payload:** This test ensures that an exception is thrown when an empty payload is received, as specified in the `onMessage` method.
+
+2. **Null EcpdId:** This test checks the behavior when `ecpdId` is null, ensuring no message is sent.
+
+3. **Sensitive Account:** This test validates that if the account is sensitive, the message is not processed further.
+
+4. **Non-Sensitive Account:** The test case checks that when the account is not sensitive, the message is processed and sent.
+
+5. **Exception During Processing:** This test ensures that if an exception occurs during the conversion of the payload, it is caught, and no further actions are taken.
+
+These tests ensure that all logical branches and exceptions within the `onMessage` method are covered, aiming for 100% code coverage.

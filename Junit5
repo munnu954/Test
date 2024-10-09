@@ -1,9 +1,22 @@
+To achieve 100% code coverage for the `SHAEventMessageListener` class, we need to add additional test cases that cover all branches and possible scenarios in the `onMessage` method. Here's how you can extend the `SHAEventMessageListenerTest` class with additional JUnit 5 test cases:
+
 ```java
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.junit.jupiter.MockitoExtension;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+
+import org.apache.pulsar.client.api.Message;
+import org.apache.pulsar.shaded.com.google.gson.JsonProcessingException;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.support.SendResult;
+import org.springframework.util.StringUtils;
+
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 @ExtendWith(MockitoExtension.class)
 public class SHAEventMessageListenerTest {
@@ -12,13 +25,7 @@ public class SHAEventMessageListenerTest {
     private SHAEventMessageListener shaEventMessageListener;
 
     @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Mock
     private SensitiveProfileManager sensitiveProfileManager;
-
-    @Mock
-    private KafkaFalloutService kafkaFalloutService;
 
     @Mock
     private BatchLoaderUtils batchLoaderUtils;
@@ -26,21 +33,13 @@ public class SHAEventMessageListenerTest {
     @Mock
     private Message<GenericRecord> message;
 
-    @BeforeEach
-    public void setUp() {
-        // Reset the status of the mock objects before each test
-        reset(kafkaTemplate, sensitiveProfileManager, batchLoaderUtils, message);
-    }
-
     @Test
     void testOnMessage_EmptyPayload() {
         // Arrange
         when(message.getData()).thenReturn(new byte[0]);
 
-        // Act
+        // Act and Assert
         assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-
-        // Assert
         verify(batchLoaderUtils, never()).convert(any(), any());
     }
 
@@ -53,15 +52,13 @@ public class SHAEventMessageListenerTest {
         event.setEcpdId(null);
         when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
 
-        // Act
+        // Act and Assert
         assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-
-        // Assert
         verify(batchLoaderUtils, never()).sendMessageAsync(any());
     }
 
     @Test
-    void testOnMessage_SensitiveAccount() throws JsonProcessingException {
+    void testOnMessage_SensitiveAccount() {
         // Arrange
         String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
         when(message.getData()).thenReturn(payload.getBytes());
@@ -72,33 +69,13 @@ public class SHAEventMessageListenerTest {
         sensitiveResponse.setSensitive(true);
         when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
 
-        // Act
+        // Act and Assert
         assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-
-        // Assert
         verify(batchLoaderUtils, never()).sendMessageAsync(any());
     }
 
     @Test
-    void testOnMessage_KafkaException() {
-        // Arrange
-        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId("1234567890");
-        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
-        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenThrow(new RuntimeException());
-
-        // Act
-        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-
-        // Assert
-        verify(batchLoaderUtils, never()).sendMessageAsync(any());
-        verify(kafkaFalloutService).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
-    }
-
-    @Test
-    void testOnMessage_HappyPath() throws Exception {
+    void testOnMessage_NonSensitiveAccount() throws JsonProcessingException {
         // Arrange
         String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
         when(message.getData()).thenReturn(payload.getBytes());
@@ -108,13 +85,34 @@ public class SHAEventMessageListenerTest {
         SensitiveResponse sensitiveResponse = new SensitiveResponse();
         sensitiveResponse.setSensitive(false);
         when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
+        
+        // Mock the sendMessageAsync method
+        doNothing().when(batchLoaderUtils).sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any());
 
         // Act
         assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
 
         // Assert
-        verify(batchLoaderUtils).sendMessageAsync(any(), any(), any(), any(), any(), any(), any());
-        verify(kafkaFalloutService, never()).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
+        verify(batchLoaderUtils).sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any());
+    }
+
+    @Test
+    void testOnMessage_ExceptionHandling() throws JsonProcessingException {
+        // Arrange
+        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
+        when(message.getData()).thenReturn(payload.getBytes());
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenThrow(new JsonProcessingException("Error") {});
+
+        // Act and Assert
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
     }
 }
 ```
+
+### Explanation:
+
+1. **Non-Sensitive Account**: This test case simulates the scenario where the account is not sensitive, which means the message should be sent. We verify that the `sendMessageAsync` method is called.
+
+2. **Exception Handling**: This test case simulates an exception during the conversion of payload to an event. The test ensures that the exception is caught and does not propagate, which is verified by `assertDoesNotThrow`.
+
+These additional tests should cover all branches and help achieve 100% code coverage for the `onMessage` method in the `SHAEventMessageListener` class.

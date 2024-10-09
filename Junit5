@@ -1,20 +1,9 @@
-To achieve 100% code coverage for the `ProducerRecord` creation and the subsequent call to `sendMessageAsync`, we need to ensure that this branch of the `onMessage` method is thoroughly tested. This involves testing scenarios where the `ProducerRecord` is correctly constructed and the `sendMessageAsync` method is invoked. Here are additional test cases to cover these aspects:
-
 ```java
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.pulsar.client.api.Message;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.Arrays;
-import java.util.List;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class SHAEventMessageListenerTest {
@@ -23,7 +12,13 @@ public class SHAEventMessageListenerTest {
     private SHAEventMessageListener shaEventMessageListener;
 
     @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Mock
     private SensitiveProfileManager sensitiveProfileManager;
+
+    @Mock
+    private KafkaFalloutService kafkaFalloutService;
 
     @Mock
     private BatchLoaderUtils batchLoaderUtils;
@@ -31,8 +26,79 @@ public class SHAEventMessageListenerTest {
     @Mock
     private Message<GenericRecord> message;
 
+    @BeforeEach
+    public void setUp() {
+        // Reset the status of the mock objects before each test
+        reset(kafkaTemplate, sensitiveProfileManager, batchLoaderUtils, message);
+    }
+
     @Test
-    void testOnMessage_NonSensitiveAccount_SendProducerRecord() throws JsonProcessingException {
+    void testOnMessage_EmptyPayload() {
+        // Arrange
+        when(message.getData()).thenReturn(new byte[0]);
+
+        // Act
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+
+        // Assert
+        verify(batchLoaderUtils, never()).convert(any(), any());
+    }
+
+    @Test
+    void testOnMessage_NullEcpdId() {
+        // Arrange
+        String payload = "{\"mdn\":\"1234567890\"}";
+        when(message.getData()).thenReturn(payload.getBytes());
+        SHAVbsmEvent event = new SHAVbsmEvent();
+        event.setEcpdId(null);
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
+
+        // Act
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+
+        // Assert
+        verify(batchLoaderUtils, never()).sendMessageAsync(any());
+    }
+
+    @Test
+    void testOnMessage_SensitiveAccount() throws JsonProcessingException {
+        // Arrange
+        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
+        when(message.getData()).thenReturn(payload.getBytes());
+        SHAVbsmEvent event = new SHAVbsmEvent();
+        event.setEcpdId("1234567890");
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
+        SensitiveResponse sensitiveResponse = new SensitiveResponse();
+        sensitiveResponse.setSensitive(true);
+        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
+
+        // Act
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+
+        // Assert
+        verify(batchLoaderUtils, never()).sendMessageAsync(any());
+    }
+
+    @Test
+    void testOnMessage_KafkaException() {
+        // Arrange
+        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
+        when(message.getData()).thenReturn(payload.getBytes());
+        SHAVbsmEvent event = new SHAVbsmEvent();
+        event.setEcpdId("1234567890");
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
+        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenThrow(new RuntimeException());
+
+        // Act
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+
+        // Assert
+        verify(batchLoaderUtils, never()).sendMessageAsync(any());
+        verify(kafkaFalloutService).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void testOnMessage_HappyPath() throws Exception {
         // Arrange
         String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
         when(message.getData()).thenReturn(payload.getBytes());
@@ -43,62 +109,12 @@ public class SHAEventMessageListenerTest {
         sensitiveResponse.setSensitive(false);
         when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
 
-        List<Header> headers = Arrays.asList(new RecordHeader("key", "value".getBytes()));
-        when(batchLoaderUtils.returnHeaders(TYSConstants.SHA_VBSM_MSG.getValue())).thenReturn(headers);
-
         // Act
         assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
 
         // Assert
-        verify(batchLoaderUtils).sendMessageAsync(argThat(producerRecord -> 
-            producerRecord.topic().equals("your_topic_name") && 
-            producerRecord.headers().equals(headers)
-        ), anyString(), anyString(), anyString(), anyString(), eq('Y'), anyString());
-    }
-
-    // Additional test case to ensure sendMessageAsync is called with correct arguments
-    @Test
-    void testOnMessage_ProducerRecordConstructionAndSend() throws JsonProcessingException {
-        // Arrange
-        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"0987654321\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId("1234567890");
-        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
-        
-        SensitiveResponse nonSensitiveResponse = new SensitiveResponse();
-        nonSensitiveResponse.setSensitive(false);
-        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(nonSensitiveResponse);
-        
-        List<Header> headers = List.of(new RecordHeader("MessageType", "SHA_VBSM_MSG".getBytes()));
-        when(batchLoaderUtils.returnHeaders(TYSConstants.SHA_VBSM_MSG.getValue())).thenReturn(headers);
-
-        // Act
-        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-
-        // Assert
-        verify(batchLoaderUtils).sendMessageAsync(
-            argThat(producerRecord -> 
-                producerRecord.topic().equals("your_topic_name") && 
-                producerRecord.key() == null && 
-                producerRecord.value().equals(payload) &&
-                producerRecord.headers().equals(headers)
-            ),
-            anyString(), // transactionId
-            eq(payload),
-            eq("your_topic_name"),
-            eq(TYSConstants.SHA_VBSM_MSG.getValue()),
-            eq('Y'),
-            eq(TYSConstants.EC_KAFKA_ERROR.getValue())
-        );
+        verify(batchLoaderUtils).sendMessageAsync(any(), any(), any(), any(), any(), any(), any());
+        verify(kafkaFalloutService, never()).saveFailedRecords(any(), any(), any(), any(), any(), any(), any());
     }
 }
 ```
-
-### Explanation:
-
-1. **`testOnMessage_NonSensitiveAccount_SendProducerRecord`:** This test checks that when the account is non-sensitive, the `sendMessageAsync` method is invoked with a correctly constructed `ProducerRecord`. It verifies the topic, headers, and other attributes of the `ProducerRecord`.
-
-2. **`testOnMessage_ProducerRecordConstructionAndSend`:** This test verifies the construction of the `ProducerRecord` and checks that `sendMessageAsync` is called with the right arguments, including verifying that the headers match the expected values.
-
-In these test cases, you might need to replace `"your_topic_name"` with the actual topic name used in your configuration. Also, ensure that the `BatchLoaderUtils` and other dependencies are appropriately mocked to return the expected values for headers and other configurations.

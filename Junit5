@@ -1,9 +1,10 @@
-To cover the two branches of the catch block that handles exceptions during the Kafka message sending process, you need to simulate scenarios where:
+To achieve 100% code coverage for the specified conditions and branches in the `OutageMdnEventsMessageListener` class, let's address the remaining uncovered branches. We'll write test cases for the following scenarios:
 
-1. An exception is thrown with a message shorter than 200 characters.
-2. An exception is thrown with a message longer than 200 characters, requiring truncation.
+1. **Missing `eventId` or `ecpdId`**: Ensure both conditions where either field is missing are covered.
+2. **Exception with a long message during JSON processing**: Ensure the truncation logic is covered.
+3. **Exception with a long message during sensitivity check**: Ensure the truncation logic is tested.
 
-Here's how you can write additional JUnit 5 test cases to cover these branches:
+Here are the additional JUnit 5 test cases:
 
 ```java
 import static org.mockito.Mockito.*;
@@ -18,12 +19,10 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.kafka.core.KafkaTemplate;
-
 import com.fasterxml.jackson.core.JsonProcessingException;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
-import java.util.concurrent.CompletableFuture;
 
 public class OutageMdnEventsMessageListenerTest {
 
@@ -59,29 +58,55 @@ public class OutageMdnEventsMessageListenerTest {
     }
 
     @Test
-    public void testOnMessageWithSendMessageAsyncShortException() throws JsonProcessingException {
+    public void testOnMessageWithMissingEventId() throws JsonProcessingException {
         OutageMdnEvent event = new OutageMdnEvent();
         event.setEcpdId("456");
-        event.setEventId("123");
-        String payload = "{\"EVENT_ID\":\"123\",\"ECPD_ID\":\"456\",\"MDN\":\"789\"}";
+        String payload = "{\"ECPD_ID\":\"456\",\"MDN\":\"789\"}";
 
         Message<GenericRecord> message = mock(Message.class);
         when(message.getData()).thenReturn(payload.getBytes());
         when(utils.convert(anyString(), eq(OutageMdnEvent.class))).thenReturn(event);
 
-        SensitiveResponse sensitiveResponse = new SensitiveResponse();
-        sensitiveResponse.setSensitive(false);
-        when(profileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
-
-        doThrow(new RuntimeException("Short error message")).when(utils).sendMessageAsync(any(ProducerRecord.class), anyString(), anyString(), anyString(), any(), anyChar(), any());
-
         assertDoesNotThrow(() -> listener.onMessage(message));
 
-        verify(utils).saveFailedRecords(eq(PRODUCER_TOPIC), anyString(), eq(payload), eq(TYSConstants.MDN_OUTAGE.getValue()), eq('Y'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()), eq("Short error message"));
+        // Ensure no records are sent if eventId is missing
+        verify(utils, never()).sendMessageAsync(any(), anyString(), anyString(), anyString(), any(), anyChar(), any());
     }
 
     @Test
-    public void testOnMessageWithSendMessageAsyncLongException() throws JsonProcessingException {
+    public void testOnMessageWithMissingEcpdId() throws JsonProcessingException {
+        OutageMdnEvent event = new OutageMdnEvent();
+        event.setEventId("123");
+        String payload = "{\"EVENT_ID\":\"123\",\"MDN\":\"789\"}";
+
+        Message<GenericRecord> message = mock(Message.class);
+        when(message.getData()).thenReturn(payload.getBytes());
+        when(utils.convert(anyString(), eq(OutageMdnEvent.class))).thenReturn(event);
+
+        assertDoesNotThrow(() -> listener.onMessage(message));
+
+        // Ensure no records are sent if ecpdId is missing
+        verify(utils, never()).sendMessageAsync(any(), anyString(), anyString(), anyString(), any(), anyChar(), any());
+    }
+
+    @Test
+    public void testJsonProcessingExceptionWithLongMessage() throws JsonProcessingException {
+        String payload = "{\"EVENT_ID\":\"123\",\"ECPD_ID\":\"456\",\"MDN\":\"789\"}";
+        Message<GenericRecord> message = mock(Message.class);
+        when(message.getData()).thenReturn(payload.getBytes());
+
+        String longErrorMessage = "This is a very long JSON processing error message that exceeds 200 characters to test the truncation logic in the exception handling block. " +
+                                  "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque ultricies metus vel mi volutpat, at fermentum nulla vehicula.";
+        doThrow(new JsonProcessingException(longErrorMessage) {}).when(utils).convert(anyString(), eq(OutageMdnEvent.class));
+
+        SystemException thrown = assertThrows(SystemException.class, () -> listener.onMessage(message));
+
+        assertTrue(thrown.getMessage().contains("Erroneous payload received from NSP topic"));
+        verify(utils).saveFailedRecords(eq(PRODUCER_TOPIC), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('N'), eq(TYSConstants.EC_UNCATEGORIZED.getValue()), argThat(msg -> msg.length() <= 200 && longErrorMessage.startsWith(msg)));
+    }
+
+    @Test
+    public void testSensitivityCheckExceptionWithLongMessage() throws JsonProcessingException {
         OutageMdnEvent event = new OutageMdnEvent();
         event.setEcpdId("456");
         event.setEventId("123");
@@ -91,25 +116,26 @@ public class OutageMdnEventsMessageListenerTest {
         when(message.getData()).thenReturn(payload.getBytes());
         when(utils.convert(anyString(), eq(OutageMdnEvent.class))).thenReturn(event);
 
-        SensitiveResponse sensitiveResponse = new SensitiveResponse();
-        sensitiveResponse.setSensitive(false);
-        when(profileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
-
-        String longErrorMessage = "This is a very long error message that exceeds 200 characters to test the truncation logic in the exception handling block. " +
+        String longErrorMessage = "This is a very long sensitivity check error message that exceeds 200 characters to test the truncation logic in the exception handling block. " +
                                   "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Quisque ultricies metus vel mi volutpat, at fermentum nulla vehicula.";
-        doThrow(new RuntimeException(longErrorMessage)).when(utils).sendMessageAsync(any(ProducerRecord.class), anyString(), anyString(), anyString(), any(), anyChar(), any());
+        when(profileManager.getSensitiveAccount(event.getEcpdId())).thenThrow(new RuntimeException(longErrorMessage));
 
-        assertDoesNotThrow(() -> listener.onMessage(message));
+        SystemException thrown = assertThrows(SystemException.class, () -> listener.onMessage(message));
 
-        verify(utils).saveFailedRecords(eq(PRODUCER_TOPIC), anyString(), eq(payload), eq(TYSConstants.MDN_OUTAGE.getValue()), eq('Y'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()), argThat(msg -> msg.length() <= 200 && longErrorMessage.startsWith(msg)));
+        assertTrue(thrown.getMessage().contains("Sensitivity check failed"));
+        verify(utils).saveFailedRecords(eq(PRODUCER_TOPIC), anyString(), eq(payload), eq(TYSConstants.NETWORK_OUTAGE.getValue()), eq('N'), eq(NSPConstants.EC_SENSITIVITY_CHECK_FAILED.getValue()), argThat(msg -> msg.length() <= 200 && longErrorMessage.startsWith(msg)));
     }
 }
 ```
 
 ### Explanation:
 
-- **testOnMessageWithSendMessageAsyncShortException**: This test simulates a scenario where a short exception message is thrown during the `sendMessageAsync` call. The test verifies that the `saveFailedRecords` method is called with the complete message.
+- **testOnMessageWithMissingEventId**: Tests the scenario where `eventId` is missing, ensuring that no message is processed further.
 
-- **testOnMessageWithSendMessageAsyncLongException**: This test simulates a scenario where a long exception message is thrown, requiring truncation to 200 characters. The test verifies that `saveFailedRecords` is called with the truncated message.
+- **testOnMessageWithMissingEcpdId**: Tests the scenario where `ecpdId` is missing, ensuring that no message is processed further.
 
-These test cases ensure that both branches of the exception handling logic within the catch block are covered, thereby achieving 100% code coverage for that block.
+- **testJsonProcessingExceptionWithLongMessage**: Tests JSON processing exceptions with a long error message to ensure the truncation logic is correctly tested.
+
+- **testSensitivityCheckExceptionWithLongMessage**: Tests sensitivity check exceptions with a long error message to ensure the truncation logic is correctly tested.
+
+These additional test cases cover all the remaining branches of the specified conditions and exceptions in the `onMessage` method.

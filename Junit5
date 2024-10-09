@@ -1,10 +1,6 @@
-Let's address and fix the errors you're encountering in the test cases. The issues seem to be related to:
+The issues you are encountering seem to be related to the expectations set for the `sendMessageAsync` method and handling of exceptions. Let's refine the test cases by ensuring that mock setups and verifications are correctly aligned with the logic in the `SHAEventMessageListener` class.
 
-1. **Verification of `sendMessageAsync`**: Verifying the exact parameters being passed can be tricky. We need to ensure we match the expected arguments precisely.
-
-2. **Handling of `SystemException`**: Ensure that the `SystemException` is thrown as expected when the payload is empty.
-
-Here's how you can adjust the test cases:
+Here's a revised version of the test cases:
 
 ```java
 import static org.mockito.Mockito.*;
@@ -61,9 +57,11 @@ public class SHAEventMessageListenerTest {
 
     @Test
     public void testOnMessageWithEmptyPayload() {
+        // Mock the message to return an empty payload
         Message<GenericRecord> message = mock(Message.class);
         when(message.getData()).thenReturn(new byte[0]);
 
+        // Expect a SystemException due to empty payload
         SystemException thrown = assertThrows(SystemException.class, () -> {
             listener.onMessage(message);
         });
@@ -73,6 +71,7 @@ public class SHAEventMessageListenerTest {
 
     @Test
     public void testOnMessageWithSensitiveAccountFalse() throws JsonProcessingException {
+        // Prepare SHAVbsmEvent with non-sensitive account
         SHAVbsmEvent event = new SHAVbsmEvent();
         event.setEcpdId("456");
         String payload = "{\"ecpd_profile_id\":\"456\",\"mdn\":\"789\"}";
@@ -85,19 +84,21 @@ public class SHAEventMessageListenerTest {
         sensitiveResponse.setSensitive(false);
         when(profileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
 
-        assertDoesNotThrow(() -> listener.onMessage(message));
+        // Invoke the listener
+        listener.onMessage(message);
 
+        // Capture and verify the ProducerRecord sent to sendMessageAsync
         ArgumentCaptor<ProducerRecord<String, String>> recordCaptor = ArgumentCaptor.forClass(ProducerRecord.class);
-        ArgumentCaptor<String> transactionIdCaptor = ArgumentCaptor.forClass(String.class);
+        verify(utils).sendMessageAsync(recordCaptor.capture(), anyString(), eq(payload), eq(PRODUCER_TOPIC), eq(TYSConstants.SHA_VBSM_MSG.getValue()), eq('Y'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()));
 
-        verify(utils).sendMessageAsync(recordCaptor.capture(), transactionIdCaptor.capture(), eq(payload), eq(PRODUCER_TOPIC), eq(TYSConstants.SHA_VBSM_MSG.getValue()), eq('Y'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()));
-
-        assertEquals(PRODUCER_TOPIC, recordCaptor.getValue().topic());
-        assertEquals(payload, recordCaptor.getValue().value());
+        ProducerRecord<String, String> capturedRecord = recordCaptor.getValue();
+        assertEquals(PRODUCER_TOPIC, capturedRecord.topic());
+        assertEquals(payload, capturedRecord.value());
     }
 
     @Test
     public void testOnMessageWithValidPayloadAndSend() throws JsonProcessingException {
+        // Prepare SHAVbsmEvent with valid payload
         SHAVbsmEvent event = new SHAVbsmEvent();
         event.setEcpdId("456");
         String payload = "{\"ecpd_profile_id\":\"456\",\"mdn\":\"789\"}";
@@ -110,25 +111,27 @@ public class SHAEventMessageListenerTest {
         sensitiveResponse.setSensitive(false);
         when(profileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
 
-        assertDoesNotThrow(() -> listener.onMessage(message));
+        // Invoke the listener
+        listener.onMessage(message);
 
+        // Capture and verify the ProducerRecord sent to sendMessageAsync
         ArgumentCaptor<ProducerRecord<String, String>> recordCaptor = ArgumentCaptor.forClass(ProducerRecord.class);
-        ArgumentCaptor<String> transactionIdCaptor = ArgumentCaptor.forClass(String.class);
+        verify(utils).sendMessageAsync(recordCaptor.capture(), anyString(), eq(payload), eq(PRODUCER_TOPIC), eq(TYSConstants.SHA_VBSM_MSG.getValue()), eq('Y'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()));
 
-        verify(utils).sendMessageAsync(recordCaptor.capture(), transactionIdCaptor.capture(), eq(payload), eq(PRODUCER_TOPIC), eq(TYSConstants.SHA_VBSM_MSG.getValue()), eq('Y'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()));
-
-        assertEquals(PRODUCER_TOPIC, recordCaptor.getValue().topic());
-        assertEquals(payload, recordCaptor.getValue().value());
+        ProducerRecord<String, String> capturedRecord = recordCaptor.getValue();
+        assertEquals(PRODUCER_TOPIC, capturedRecord.topic());
+        assertEquals(payload, capturedRecord.value());
     }
 }
 ```
 
-### Adjustments Made:
+### Key Fixes and Adjustments:
 
-- **testOnMessageWithEmptyPayload**: Ensured that `SystemException` is expected and correctly thrown when the payload is empty.
+1. **testOnMessageWithEmptyPayload**:
+   - Ensure `SystemException` is expected and correctly thrown when the payload is empty.
 
-- **testOnMessageWithSensitiveAccountFalse** and **testOnMessageWithValidPayloadAndSend**:
-  - Used `ArgumentCaptor` to capture the actual `ProducerRecord` and `transactionId` passed to `sendMessageAsync` to verify that they match expected values.
-  - Checked that the `ProducerRecord`'s topic and value are correct, ensuring the message is set up appropriately before sending.
+2. **testOnMessageWithSensitiveAccountFalse** and **testOnMessageWithValidPayloadAndSend**:
+   - Used `ArgumentCaptor` to capture the actual `ProducerRecord` passed to `sendMessageAsync` to verify that it matches the expected values.
+   - Verified that the `ProducerRecord`'s topic and value are correct.
 
-These changes should resolve the verification errors and ensure that the tests cover the desired branches correctly.
+These adjustments should help resolve the verification errors and ensure the tests are aligned with the expected behavior of the `SHAEventMessageListener` class.

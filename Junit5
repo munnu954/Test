@@ -1,137 +1,156 @@
-The issues you are encountering seem to be related to the expectations set for the `sendMessageAsync` method and handling of exceptions. Let's refine the test cases by ensuring that mock setups and verifications are correctly aligned with the logic in the `SHAEventMessageListener` class.
-
-Here's a revised version of the test cases:
-
 ```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.schema.GenericRecord;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 import org.springframework.kafka.core.KafkaTemplate;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.example.demo.BatchLoaderUtils;
+import com.example.demo.KafkaFalloutService;
+import com.example.demo.SHAEventMessageListener;
+import com.example.demo.SensitiveProfileManager;
+import com.example.demo.SHAVbsmEvent;
+import com.example.demo.SystemException;
+import com.example.demo.TYSConstants;
 
-import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
-public class SHAEventMessageListenerTest {
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 
-    @Mock
-    private BatchLoaderUtils utils;
 
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Mock
-    private SensitiveProfileManager profileManager;
-
+class SHAEventMessageListenerTest {
     @InjectMocks
-    private SHAEventMessageListener listener;
+    SHAEventMessageListener shaEventMessageListener;
 
-    private static final String PRODUCER_TOPIC = "test-topic";
+    @Mock
+    SensitiveProfileManager profIleManager;
+
+    @Mock
+    BatchLoaderUtils utils;
+
+    @Mock
+    KafkaTemplate<String, String> kafkaTemplate;
+
+    @Mock
+    KafkaFalloutService failedMessageService;
 
     @BeforeEach
-    public void setup() throws Exception {
-        MockitoAnnotations.openMocks(this);
-        when(utils.returnHeaders(any())).thenReturn(new ArrayList<>());
-
-        listener = new SHAEventMessageListener();
-        setPrivateField(listener, "producerTopic", PRODUCER_TOPIC);
-        setPrivateField(listener, "profIleManager", profileManager);
-        setPrivateField(listener, "utils", utils);
-    }
-
-    private void setPrivateField(Object target, String fieldName, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(target, value);
+    void setUp() {
+        MockitoAnnotations.initMocks(this);
     }
 
     @Test
-    public void testOnMessageWithEmptyPayload() {
-        // Mock the message to return an empty payload
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn(new byte[0]);
+    void onMessage_EmptyPayload() {
+        Message<GenericRecord> message = Mockito.mock(Message.class);
+        Mockito.when(message.getData()).thenReturn(new byte[0]);
 
-        // Expect a SystemException due to empty payload
-        SystemException thrown = assertThrows(SystemException.class, () -> {
-            listener.onMessage(message);
-        });
-
-        assertEquals("Empty payload received from NSP topic", thrown.getMessage());
+        Assertions.assertThrows(SystemException.class, () -> shaEventMessageListener.onMessage(message));
     }
 
     @Test
-    public void testOnMessageWithSensitiveAccountFalse() throws JsonProcessingException {
-        // Prepare SHAVbsmEvent with non-sensitive account
+    void onMessage_ConvertPayloadException() {
+        Message<GenericRecord> message = Mockito.mock(Message.class);
+        Mockito.when(message.getData()).thenReturn("payload".getBytes());
+        Mockito.when(utils.convert(anyString(), any())).thenThrow(new RuntimeException());
+
+        Assertions.assertThrows(SystemException.class, () -> shaEventMessageListener.onMessage(message));
+    }
+
+    @Test
+    void onMessage_EcpdIdNotPresent() {
+        Message<GenericRecord> message = Mockito.mock(Message.class);
+        Mockito.when(message.getData()).thenReturn("{\"field\": \"value\"}".getBytes());
+
+        shaEventMessageListener.onMessage(message);
+
+        Mockito.verifyNoInteractions(profIleManager);
+        Mockito.verifyNoInteractions(utils);
+        Mockito.verifyNoInteractions(kafkaTemplate);
+    }
+
+    @Test
+    void onMessage_SensitivityCheckDone() {
+        Message<GenericRecord> message = Mockito.mock(Message.class);
+        Mockito.when(message.getData()).thenReturn("{\"ecpd_profile_id\": \"ecpdId\"}".getBytes());
+
         SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId("456");
-        String payload = "{\"ecpd_profile_id\":\"456\",\"mdn\":\"789\"}";
+        event.setEcpdId("ecpdId");
+        Mockito.when(utils.convert(anyString(), any())).thenReturn(event);
 
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn(payload.getBytes());
-        when(utils.convert(anyString(), eq(SHAVbsmEvent.class))).thenReturn(event);
+        SensitiveProfileManager.SensitiveResponse response = new SensitiveProfileManager.SensitiveResponse();
+        response.setSensitive(true);
+        Mockito.when(profIleManager.getSensitiveAccount(anyString())).thenReturn(response);
 
-        SensitiveResponse sensitiveResponse = new SensitiveResponse();
-        sensitiveResponse.setSensitive(false);
-        when(profileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
+        shaEventMessageListener.onMessage(message);
 
-        // Invoke the listener
-        listener.onMessage(message);
-
-        // Capture and verify the ProducerRecord sent to sendMessageAsync
-        ArgumentCaptor<ProducerRecord<String, String>> recordCaptor = ArgumentCaptor.forClass(ProducerRecord.class);
-        verify(utils).sendMessageAsync(recordCaptor.capture(), anyString(), eq(payload), eq(PRODUCER_TOPIC), eq(TYSConstants.SHA_VBSM_MSG.getValue()), eq('Y'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()));
-
-        ProducerRecord<String, String> capturedRecord = recordCaptor.getValue();
-        assertEquals(PRODUCER_TOPIC, capturedRecord.topic());
-        assertEquals(payload, capturedRecord.value());
+        Mockito.verifyNoInteractions(utils);
+        Mockito.verifyNoInteractions(kafkaTemplate);
     }
 
     @Test
-    public void testOnMessageWithValidPayloadAndSend() throws JsonProcessingException {
-        // Prepare SHAVbsmEvent with valid payload
+    void onMessage_SendMessageSuccess() throws ExecutionException, InterruptedException {
+        Message<GenericRecord> message = Mockito.mock(Message.class);
+        Mockito.when(message.getData()).thenReturn("{\"ecpd_profile_id\": \"ecpdId\"}".getBytes());
+
         SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId("456");
-        String payload = "{\"ecpd_profile_id\":\"456\",\"mdn\":\"789\"}";
+        event.setEcpdId("ecpdId");
+        Mockito.when(utils.convert(anyString(), any())).thenReturn(event);
 
-        Message<GenericRecord> message = mock(Message.class);
-        when(message.getData()).thenReturn(payload.getBytes());
-        when(utils.convert(anyString(), eq(SHAVbsmEvent.class))).thenReturn(event);
+        SensitiveProfileManager.SensitiveResponse response = new SensitiveProfileManager.SensitiveResponse();
+        response.setSensitive(false);
+        Mockito.when(profIleManager.getSensitiveAccount(anyString())).thenReturn(response);
 
-        SensitiveResponse sensitiveResponse = new SensitiveResponse();
-        sensitiveResponse.setSensitive(false);
-        when(profileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
+        ProducerRecord<String, String> producerRecord = Mockito.mock(ProducerRecord.class);
+        Mockito.when(utils.returnHeaders(anyString())).thenReturn(new ArrayList<>());
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.complete(Mockito.mock(SendResult.class));
+        Mockito.when(kafkaTemplate.send(any())).thenReturn(future);
 
-        // Invoke the listener
-        listener.onMessage(message);
+        shaEventMessageListener.onMessage(message);
 
-        // Capture and verify the ProducerRecord sent to sendMessageAsync
-        ArgumentCaptor<ProducerRecord<String, String>> recordCaptor = ArgumentCaptor.forClass(ProducerRecord.class);
-        verify(utils).sendMessageAsync(recordCaptor.capture(), anyString(), eq(payload), eq(PRODUCER_TOPIC), eq(TYSConstants.SHA_VBSM_MSG.getValue()), eq('Y'), eq(TYSConstants.EC_KAFKA_ERROR.getValue()));
+        Mockito.verify(utils).sendMessageAsync(producerRecord, anyString(), anyString(), anyString(), anyString(), anyChar(), anyString());
+    }
 
-        ProducerRecord<String, String> capturedRecord = recordCaptor.getValue();
-        assertEquals(PRODUCER_TOPIC, capturedRecord.topic());
-        assertEquals(payload, capturedRecord.value());
+    @Test
+    void onMessage_SendMessageException() throws ExecutionException, InterruptedException {
+        Message<GenericRecord> message = Mockito.mock(Message.class);
+        Mockito.when(message.getData()).thenReturn("{\"ecpd_profile_id\": \"ecpdId\"}".getBytes());
+
+        SHAVbsmEvent event = new SHAVbsmEvent();
+        event.setEcpdId("ecpdId");
+        Mockito.when(utils.convert(anyString(), any())).thenReturn(event);
+
+        SensitiveProfileManager.SensitiveResponse response = new SensitiveProfileManager.SensitiveResponse();
+        response.setSensitive(false);
+        Mockito.when(profIleManager.getSensitiveAccount(anyString())).thenReturn(response);
+
+        ProducerRecord<String, String> producerRecord = Mockito.mock(ProducerRecord.class);
+        Mockito.when(utils.returnHeaders(anyString())).thenReturn(new ArrayList<>());
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.completeExceptionally(new RuntimeException());
+        Mockito.when(kafkaTemplate.send(any())).thenReturn(future);
+
+        shaEventMessageListener.onMessage(message);
+
+        Mockito.verify(failedMessageService).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar(), anyString(), anyString());
+    }
+
+    @Test
+    void onMessage_GenericException() {
+        Message<GenericRecord> message = Mockito.mock(Message.class);
+        Mockito.when(message.getData()).thenReturn("{\"ecpd_profile_id\": \"ecpdId\"}".getBytes());
+        Mockito.when(utils.convert(anyString(), any())).thenThrow(new RuntimeException());
+
+        shaEventMessageListener.onMessage(message);
+
+        Mockito.verify(failedMessageService).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar(), anyString(), anyString());
     }
 }
 ```
-
-### Key Fixes and Adjustments:
-
-1. **testOnMessageWithEmptyPayload**:
-   - Ensure `SystemException` is expected and correctly thrown when the payload is empty.
-
-2. **testOnMessageWithSensitiveAccountFalse** and **testOnMessageWithValidPayloadAndSend**:
-   - Used `ArgumentCaptor` to capture the actual `ProducerRecord` passed to `sendMessageAsync` to verify that it matches the expected values.
-   - Verified that the `ProducerRecord`'s topic and value are correct.
-
-These adjustments should help resolve the verification errors and ensure the tests are aligned with the expected behavior of the `SHAEventMessageListener` class.

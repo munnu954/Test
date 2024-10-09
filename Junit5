@@ -1,132 +1,115 @@
-To achieve 100% code coverage for the `onMessage(Message<GenericRecord> message)` method in the `SHAEventMessageListener` class, we need to cover all possible execution paths, including branches for conditionals and exception handling. Here's how you can write JUnit 5 test cases for this method:
+Here's an example of how you can write JUnit 5 test cases for the `SHAEventMessageListener` class:
 
-```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
-
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-
-import org.apache.pulsar.client.api.schema.GenericRecord;
-import org.junit.jupiter.api.BeforeEach;
+```
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.support.SendResult;
-import org.springframework.kafka.support.KafkaHeaders;
-import org.springframework.messaging.Message;
-import org.springframework.messaging.support.GenericMessage;
+import org.springframework.util.concurrent.SettableListenableFuture;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
 public class SHAEventMessageListenerTest {
 
-    @Mock
-    private SensitiveProfileManager profileManager;
-
-    @Mock
-    private BatchLoaderUtils utils;
-
     @InjectMocks
-    private SHAEventMessageListener listener;
+    private SHAEventMessageListener shaEventMessageListener;
 
-    @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.initMocks(this);
+    @Mock
+    private SensitiveProfileManager sensitiveProfileManager;
+
+    @Mock
+    private BatchLoaderUtils batchLoaderUtils;
+
+    @Mock
+    private Message<GenericRecord> message;
+
+    @Test
+    void testOnMessage_EmptyPayload() {
+        // Arrange
+        when(message.getData()).thenReturn(new byte[0]);
+
+        // Act and Assert
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+        verify(batchLoaderUtils, never()).convert(any(), any());
     }
 
     @Test
-    public void testOnMessageWithEmptyPayload() {
-        Message<GenericRecord> message = new GenericMessage<>(new byte[0]);
-        
-        assertThrows(SystemException.class, () -> {
-            listener.onMessage(message);
-        });
-    }
-
-    @Test
-    public void testOnMessageWithInvalidEcpdId() throws Exception {
-        String payload = "{\"ecpd_profile_id\": \"\"}";
-        Message<GenericRecord> message = new GenericMessage<>(payload.getBytes());
-        
-        when(utils.convert(any(String.class), eq(SHAVbsmEvent.class)))
-            .thenReturn(new SHAVbsmEvent());
-
-        listener.onMessage(message);
-
-        verifyNoInteractions(profileManager);
-    }
-
-    @Test
-    public void testOnMessageWithSensitiveAccount() throws Exception {
-        String payload = "{\"ecpd_profile_id\": \"sensitive\"}";
-        Message<GenericRecord> message = new GenericMessage<>(payload.getBytes());
-        
+    void testOnMessage_NullEcpdId() {
+        // Arrange
+        String payload = "{\"mdn\":\"1234567890\"}";
+        when(message.getData()).thenReturn(payload.getBytes());
         SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId("sensitive");
-        
-        when(utils.convert(any(String.class), eq(SHAVbsmEvent.class)))
-            .thenReturn(event);
-        
-        SensitiveResponse response = new SensitiveResponse();
-        response.setSensitive(true);
-        
-        when(profileManager.getSensitiveAccount("sensitive"))
-            .thenReturn(response);
+        event.setEcpdId(null);
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
 
-        listener.onMessage(message);
-
-        verify(profileManager).getSensitiveAccount("sensitive");
+        // Act and Assert
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+        verify(batchLoaderUtils, never()).sendMessageAsync(any());
     }
 
     @Test
-    public void testOnMessageWithNonSensitiveAccount() throws Exception {
-        String payload = "{\"ecpd_profile_id\": \"non-sensitive\"}";
-        Message<GenericRecord> message = new GenericMessage<>(payload.getBytes());
-        
+    void testOnMessage_SensitiveAccount() throws JsonProcessingException {
+        // Arrange
+        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
+        when(message.getData()).thenReturn(payload.getBytes());
         SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId("non-sensitive");
-        
-        when(utils.convert(any(String.class), eq(SHAVbsmEvent.class)))
-            .thenReturn(event);
-        
-        SensitiveResponse response = new SensitiveResponse();
-        response.setSensitive(false);
-        
-        when(profileManager.getSensitiveAccount("non-sensitive"))
-            .thenReturn(response);
-        
-        when(utils.returnHeaders(any(String.class)))
-            .thenReturn(List.of(new RecordHeader(KafkaHeaders.MESSAGE_KEY, "some-key".getBytes())));
+        event.setEcpdId("1234567890");
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
+        SensitiveResponse sensitiveResponse = new SensitiveResponse();
+        sensitiveResponse.setSensitive(true);
+        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
 
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.complete(null);
-        when(utils.sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any()))
-            .thenReturn(future);
-
-        listener.onMessage(message);
-
-        verify(utils).sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any());
+        // Act and Assert
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+        verify(batchLoaderUtils, never()).sendMessageAsync(any());
     }
 
     @Test
-    public void testOnMessageExceptionHandling() throws Exception {
-        String payload = "{\"ecpd_profile_id\": \"non-sensitive\"}";
-        Message<GenericRecord> message = new GenericMessage<>(payload.getBytes());
-        
-        when(utils.convert(any(String.class), eq(SHAVbsmEvent.class)))
-            .thenThrow(new JsonProcessingException("JSON error") {});
+    void testOnMessage_NonSensitiveAccount() throws JsonProcessingException {
+        // Arrange
+        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
+        when(message.getData()).thenReturn(payload.getBytes());
+        SHAVbsmEvent event = new SHAVbsmEvent();
+        event.setEcpdId("1234567890");
+        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
+        SensitiveResponse sensitiveResponse = new SensitiveResponse();
+        sensitiveResponse.setSensitive(false);
+        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
+        when(batchLoaderUtils.returnHeaders(any())).thenReturn(new ArrayList<>());
+        SettableListenableFuture<SendResult<String, String>> future = new SettableListenableFuture<>();
+        future.set(new SendResult<>("topic", 1, 1L));
+        when(batchLoaderUtils.sendMessageAsync(any())).thenReturn(future);
 
-        listener.onMessage(message);
+        // Act and Assert
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+        verify(batchLoaderUtils).sendMessageAsync(any());
+    }
 
-        // No further interactions should be made
+    @Test
+    void testOnMessage_Exception() {
+        // Arrange
+        when(message.getData()).thenReturn(null);
+
+        // Act and Assert
+        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+        verify(batchLoaderUtils, never()).convert(any(), any());
     }
 }
 ```
 
-### Key Points:
-- **Mockito** is used to mock dependencies like `SensitiveProfileManager` and `BatchLoaderUtils`.
-- **Assertions** are used to ensure that exceptions are thrown where expected.
-- **Verify** methods ensure that the correct methods are called on mocked objects.
-- **CompletableFuture** is used to mock async Kafka message sending behavior.
-- Each test case covers different branches of the method, ensuring all logic paths are tested.
+In the above test class, we have covered all the possible branches of the `onMessage` method.
+
+- `testOnMessage_EmptyPayload`: Tests the scenario where the payload is empty.
+- `testOnMessage_NullEcpdId`: Tests the scenario where the `ecpdId` is null.
+- `testOnMessage_SensitiveAccount`: Tests the scenario where the account is sensitive.
+- `testOnMessage_NonSensitiveAccount`: Tests the scenario where the account is not sensitive.
+- `testOnMessage_Exception`: Tests the scenario where an exception occurs.
+
+We have used Mockito to mock the dependencies and verify the interactions. The `assertDoesNotThrow` method is used to verify that no

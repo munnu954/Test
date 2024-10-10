@@ -1,118 +1,72 @@
-To achieve 100% code coverage for the `SHAEventMessageListener` class, we need to add additional test cases that cover all branches and possible scenarios in the `onMessage` method. Here's how you can extend the `SHAEventMessageListenerTest` class with additional JUnit 5 test cases:
+To achieve 100% code coverage for the `KafkaConfiguration` class using JUnit 5 and Reflection API, you'll want to create test cases that cover the instantiation of the `producerFactory` and `kafkaTemplate` methods. Below is an example of how you might write these test cases:
 
 ```java
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.shaded.com.google.gson.JsonProcessingException;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.serialization.StringSerializer;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.support.SendResult;
-import org.springframework.util.StringUtils;
+import org.springframework.kafka.core.DefaultKafkaProducerFactory;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.boot.autoconfigure.kafka.KafkaProperties;
 
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
+import java.lang.reflect.Field;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-public class SHAEventMessageListenerTest {
+public class KafkaConfigurationTest {
 
     @InjectMocks
-    private SHAEventMessageListener shaEventMessageListener;
+    private KafkaConfiguration kafkaConfiguration;
 
     @Mock
-    private SensitiveProfileManager sensitiveProfileManager;
+    private KafkaProperties kafkaProperties;
 
-    @Mock
-    private BatchLoaderUtils batchLoaderUtils;
+    @BeforeEach
+    public void setUp() throws Exception {
+        // Using reflection to set the private field kafkaProperties
+        Field kafkaPropertiesField = KafkaConfiguration.class.getDeclaredField("kafkaProperties");
+        kafkaPropertiesField.setAccessible(true);
+        kafkaPropertiesField.set(kafkaConfiguration, kafkaProperties);
 
-    @Mock
-    private Message<GenericRecord> message;
-
-    @Test
-    void testOnMessage_EmptyPayload() {
-        // Arrange
-        when(message.getData()).thenReturn(new byte[0]);
-
-        // Act and Assert
-        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-        verify(batchLoaderUtils, never()).convert(any(), any());
+        // Mock Kafka properties
+        Map<String, Object> producerConfigs = Map.of(
+                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092",
+                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
+                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class
+        );
+        when(kafkaProperties.buildProducerProperties()).thenReturn(producerConfigs);
     }
 
     @Test
-    void testOnMessage_NullEcpdId() {
-        // Arrange
-        String payload = "{\"mdn\":\"1234567890\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId(null);
-        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
-
-        // Act and Assert
-        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-        verify(batchLoaderUtils, never()).sendMessageAsync(any());
+    public void testProducerFactory() {
+        ProducerFactory<String, String> producerFactory = kafkaConfiguration.producerFactory();
+        assertNotNull(producerFactory);
+        assertNotNull(((DefaultKafkaProducerFactory<String, String>) producerFactory).getConfigurationProperties());
     }
 
     @Test
-    void testOnMessage_SensitiveAccount() {
-        // Arrange
-        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId("1234567890");
-        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
-        SensitiveResponse sensitiveResponse = new SensitiveResponse();
-        sensitiveResponse.setSensitive(true);
-        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
-
-        // Act and Assert
-        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-        verify(batchLoaderUtils, never()).sendMessageAsync(any());
-    }
-
-    @Test
-    void testOnMessage_NonSensitiveAccount() throws JsonProcessingException {
-        // Arrange
-        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        SHAVbsmEvent event = new SHAVbsmEvent();
-        event.setEcpdId("1234567890");
-        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenReturn(event);
-        SensitiveResponse sensitiveResponse = new SensitiveResponse();
-        sensitiveResponse.setSensitive(false);
-        when(sensitiveProfileManager.getSensitiveAccount(event.getEcpdId())).thenReturn(sensitiveResponse);
-        
-        // Mock the sendMessageAsync method
-        doNothing().when(batchLoaderUtils).sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any());
-
-        // Act
-        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
-
-        // Assert
-        verify(batchLoaderUtils).sendMessageAsync(any(), any(), any(), any(), any(), anyChar(), any());
-    }
-
-    @Test
-    void testOnMessage_ExceptionHandling() throws JsonProcessingException {
-        // Arrange
-        String payload = "{\"ecpd_profile_id\":\"1234567890\",\"mdn\":\"1234567890\"}";
-        when(message.getData()).thenReturn(payload.getBytes());
-        when(batchLoaderUtils.convert(payload, SHAVbsmEvent.class)).thenThrow(new JsonProcessingException("Error") {});
-
-        // Act and Assert
-        assertDoesNotThrow(() -> shaEventMessageListener.onMessage(message));
+    public void testKafkaTemplate() {
+        KafkaTemplate<String, String> kafkaTemplate = kafkaConfiguration.kafkaTemplate();
+        assertNotNull(kafkaTemplate);
+        assertNotNull(kafkaTemplate.getProducerFactory());
     }
 }
 ```
 
 ### Explanation:
 
-1. **Non-Sensitive Account**: This test case simulates the scenario where the account is not sensitive, which means the message should be sent. We verify that the `sendMessageAsync` method is called.
+1. **Reflection Usage**: The `setUp` method uses Java Reflection to set the private `kafkaProperties` field in the `KafkaConfiguration` class. This allows us to inject the mock `KafkaProperties` without changing the visibility of the field.
 
-2. **Exception Handling**: This test case simulates an exception during the conversion of payload to an event. The test ensures that the exception is caught and does not propagate, which is verified by `assertDoesNotThrow`.
+2. **Mocking**: We use Mockito to mock the `KafkaProperties` and define what should be returned when `buildProducerProperties()` is called. This allows us to control the environment in which the `producerFactory` and `kafkaTemplate` methods are tested.
 
-These additional tests should cover all branches and help achieve 100% code coverage for the `onMessage` method in the `SHAEventMessageListener` class.
+3. **Assertions**: In each test method, we assert that the objects returned (`ProducerFactory` and `KafkaTemplate`) are not null and contain the necessary configurations.
+
+This setup should give you full coverage of the `KafkaConfiguration` class by testing both the `producerFactory()` and `kafkaTemplate()` methods.

@@ -1,50 +1,63 @@
-To achieve 100% code coverage of the `PulsarSslConfiguration` class without making the `certificatesLoc` field public, we can use Reflection APIs to access and manipulate the private field during testing. Here's an example of how you can write JUnit 5 test cases to cover the class:
+To write JUnit 5 test cases that achieve 100% code coverage for the `PulsarSslConfiguration` class without making `certificatesLoc` public, you can use Java reflection to access the private field. Below is an example of how you might structure these test cases:
 
 ```java
-import org.apache.pulsar.client.api.AuthenticationFactory;
-import org.apache.pulsar.client.api.PulsarClient;
-import org.junit.jupiter.api.Assertions;
+import org.apache.pulsar.client.api.ClientBuilder;
+import org.apache.pulsar.client.api.PulsarClientException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.core.env.Environment;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.pulsar.core.PulsarClientBuilderCustomizer;
 
 import java.io.File;
+import java.lang.reflect.Field;
 
-@SpringBootTest
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
 class PulsarSslConfigurationTest {
 
-    @Autowired
     private PulsarSslConfiguration pulsarSslConfiguration;
+    private String certificatesLoc;
 
-    @Autowired
-    private Environment environment;
+    @BeforeEach
+    void setUp() throws Exception {
+        pulsarSslConfiguration = new PulsarSslConfiguration();
+
+        // Using reflection to set the private field 'certificatesLoc'
+        Field field = PulsarSslConfiguration.class.getDeclaredField("certificatesLoc");
+        field.setAccessible(true);
+        certificatesLoc = "/path/to/certificates"; // Use a valid path for your environment
+        field.set(pulsarSslConfiguration, certificatesLoc);
+    }
 
     @Test
-    void testPulsarClientPemSslCustomizer() throws Exception {
-        // Arrange
-        String certificatesLoc = environment.getProperty("certificates.nsp.location");
-        ReflectionTestUtils.setField(pulsarSslConfiguration, "certificatesLoc", certificatesLoc);
-
-        // Act
-        PulsarClient.Builder clientBuilder = PulsarClient.builder();
+    void testPulsarClientPemSslCustomizer() throws PulsarClientException {
         PulsarClientBuilderCustomizer customizer = pulsarSslConfiguration.pulsarClientPemSslCustomizer();
+        assertNotNull(customizer, "The customizer should not be null");
+
+        ClientBuilder clientBuilder = mock(ClientBuilder.class);
+
+        // When the customizer is applied
         customizer.customize(clientBuilder);
 
-        // Assert
-        Assertions.assertFalse(clientBuilder.allowTlsInsecureConnection());
-        Assertions.assertFalse(clientBuilder.enableTlsHostnameVerification());
-        Assertions.assertEquals(AuthenticationFactory.TLS(certificatesLoc + File.separator + "jpsv.cert.pem", certificatesLoc + File.separator + "jpsv.key-pk8.pem"), clientBuilder.authentication());
-        Assertions.assertEquals(certificatesLoc + File.separator + "ca.cert.pem", clientBuilder.tlsTrustCertsFilePath());
-        Assertions.assertEquals(certificatesLoc + File.separator + "jpsv.key-pk8.pem", clientBuilder.tlsKeyFilePath());
-        Assertions.assertEquals(certificatesLoc + File.separator + "jpsv.cert.pem", clientBuilder.tlsCertificateFilePath());
+        // Then verify that the correct methods are called on the clientBuilder with expected values
+        verify(clientBuilder).allowTlsInsecureConnection(false);
+        verify(clientBuilder).enableTlsHostnameVerification(false);
+
+        String expectedCertPath = certificatesLoc + File.separator + "jpsv.cert.pem";
+        String expectedKeyPath = certificatesLoc + File.separator + "jpsv.key-pk8.pem";
+        String expectedCaCertPath = certificatesLoc + File.separator + "ca.cert.pem";
+
+        verify(clientBuilder).authentication(any());
+        verify(clientBuilder).tlsTrustCertsFilePath(expectedCaCertPath);
+        verify(clientBuilder).tlsKeyFilePath(expectedKeyPath);
+        verify(clientBuilder).tlsCertificateFilePath(expectedCertPath);
     }
 }
 ```
 
-In this test case, we're using the `ReflectionTestUtils` class from the Spring Test utilities to set the value of the `certificatesLoc` field in the `PulsarSslConfiguration` class. This allows us to test the `pulsarClientPemSslCustomizer()` method without making the field public.
+### Explanation:
+- **Reflection**: The `Field` class from Java reflection is used to access and modify the private `certificatesLoc` field in `PulsarSslConfiguration`.
+- **Mocking**: The `ClientBuilder` is mocked using a mocking framework (e.g., Mockito) to verify that the methods are called with the expected arguments.
+- **Assertions**: The test includes assertions to ensure that the `PulsarClientBuilderCustomizer` is not null and that the correct methods are invoked.
 
-The test case first arranges the necessary conditions by setting the `certificatesLoc` field using reflection. Then, it calls the `pulsarClientPemSslCustomizer()` method and asserts that the resulting `PulsarClient.Builder` instance has the expected configuration values.
-
-This approach ensures that the `PulsarSslConfiguration` class is fully tested, even though the `certificatesLoc` field is private.
+Ensure that you have Mockito and JUnit 5 dependencies in your `pom.xml` or build file to run these tests. Adjust paths as necessary to fit your testing environment.

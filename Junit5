@@ -1,115 +1,113 @@
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+To achieve 100% code coverage for the `ArchivalFileMovement` class, including testing private methods using Java Reflection API, you can use the JUnit 5 framework. Below is an example of how you might write the test cases:
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-
+```java
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
-public class ErrorFileMovementTest {
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.nio.file.*;
+import java.util.stream.Stream;
 
-    private ErrorFileMovement errorFileMovement;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-    @TempDir
-    Path tempDir;
+class ArchivalFileMovementTest {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(ArchivalFileMovementTest.class);
+    private ArchivalFileMovement archivalFileMovement;
 
     @BeforeEach
-    public void setUp() {
-        errorFileMovement = new ErrorFileMovement();
+    void setUp() {
+        archivalFileMovement = new ArchivalFileMovement();
     }
 
     @Test
-    public void testWriteErrorRecordsToFile() throws IOException {
-        String errorDirectoryPath = tempDir.toString();
-        String fileName = "error.log";
-        String data = "Error data";
+    void testMoveFilesMatchingPattern(@TempDir Path tempDir) throws Exception {
+        Path sourceDir = Files.createDirectory(tempDir.resolve("source"));
+        Path destinationDir = Files.createDirectory(tempDir.resolve("destination"));
 
-        errorFileMovement.writeErrorRecordsToFile(errorDirectoryPath, fileName, data);
+        // Creating test files
+        Files.createFile(sourceDir.resolve("test1.txt"));
+        Files.createFile(sourceDir.resolve("test2.txt"));
 
-        File file = new File(errorDirectoryPath, fileName);
-        assertTrue(file.exists());
-        assertEquals(data, Files.readString(file.toPath()));
+        // Mocking the logger
+        Logger mockLogger = Mockito.mock(Logger.class);
+        setLoggerField(mockLogger);
+
+        archivalFileMovement.moveFilesMatchingPattern(sourceDir.toString() + "/*.txt", destinationDir.toString());
+
+        // Verify that both files are moved
+        assertTrue(Files.exists(destinationDir.resolve("test1.txt")));
+        assertTrue(Files.exists(destinationDir.resolve("test2.txt")));
+
+        // Verify logging
+        verify(mockLogger, atLeastOnce()).info(anyString(), anyLong());
+        verify(mockLogger, never()).error(anyString(), any(), any());
     }
 
     @Test
-    public void testWriteErrorRecordsToFileIOException() {
-        String errorDirectoryPath = tempDir.toString();
-        String fileName = "error.log";
-        String data = "Error data";
+    void testMoveFilesMatchingPatternWithException(@TempDir Path tempDir) throws Exception {
+        Path sourceDir = Files.createDirectory(tempDir.resolve("source"));
+        Path destinationDir = tempDir.resolve("destination"); // Destination does not exist
 
-        try (MockedStatic<FileWriter> mockedFileWriter = Mockito.mockStatic(FileWriter.class)) {
-            mockedFileWriter.when(() -> new FileWriter(any(File.class), eq(true))).thenThrow(new IOException("Mocked IO Exception"));
+        // Creating test files
+        Files.createFile(sourceDir.resolve("test1.txt"));
 
-            errorFileMovement.writeErrorRecordsToFile(errorDirectoryPath, fileName, data);
+        // Mocking the logger
+        Logger mockLogger = Mockito.mock(Logger.class);
+        setLoggerField(mockLogger);
 
-            // Verify that the logger error method was called
-            Logger logger = LoggerFactory.getLogger(ErrorFileMovement.class);
-            verify(logger).error(eq("Failed to write Data to error file: "), anyString());
-        }
+        archivalFileMovement.moveFilesMatchingPattern(sourceDir.toString() + "/*.txt", destinationDir.toString());
+
+        // Verify logging of error
+        verify(mockLogger, atLeastOnce()).error(anyString(), any(), any());
     }
 
     @Test
-    public void testMoveErrorFile() throws IOException {
-        Path sourceFile = Files.createFile(tempDir.resolve("source.log"));
-        String destinationDirectory = tempDir.resolve("dest").toString();
-        Files.createDirectories(Paths.get(destinationDirectory));
-
-        errorFileMovement.moveErrorFile(sourceFile.toString(), destinationDirectory);
-
-        Path destinationFile = Paths.get(destinationDirectory, sourceFile.getFileName().toString());
-        assertTrue(Files.exists(destinationFile));
-        assertFalse(Files.exists(sourceFile));
+    void testGetSourceDirectory() throws Exception {
+        String sourcePattern = "file:/tmp/source/*.txt";
+        Path expectedPath = Paths.get("/tmp/source");
+        Method method = ArchivalFileMovement.class.getDeclaredMethod("getSourceDirectory", String.class);
+        method.setAccessible(true);
+        Path actualPath = (Path) method.invoke(archivalFileMovement, sourcePattern);
+        assertEquals(expectedPath, actualPath);
     }
 
     @Test
-    public void testMoveErrorFileException() {
-        String sourceFilePath = tempDir.resolve("nonexistent.log").toString();
-        String destinationDirectory = tempDir.resolve("dest").toString();
-
-        errorFileMovement.moveErrorFile(sourceFilePath, destinationDirectory);
-
-        // Verify that the logger error method was called
-        Logger logger = LoggerFactory.getLogger(ErrorFileMovement.class);
-        verify(logger).error(eq("Failed to move the file to Error Dir"), anyString());
+    void testGetFilePattern() throws Exception {
+        String sourcePattern = "file:/tmp/source/*.txt";
+        String expectedPattern = ".*\\.txt";
+        Method method = ArchivalFileMovement.class.getDeclaredMethod("getFilePattern", String.class);
+        method.setAccessible(true);
+        String actualPattern = (String) method.invoke(archivalFileMovement, sourcePattern);
+        assertEquals(expectedPattern, actualPattern);
     }
 
-    @Test
-    public void testMoveErrorFiletoErrorDir() throws IOException {
-        String fileName = "error.log";
-        Path srcFile = Files.createFile(tempDir.resolve(fileName));
-        String srcPath = tempDir.toString();
-        String destPath = tempDir.resolve("dest").toString();
-        Files.createDirectories(Paths.get(destPath));
-
-        errorFileMovement.moveErrorFiletoErrorDir(fileName, srcPath, destPath);
-
-        Path destFile = Paths.get(destPath, fileName);
-        assertTrue(Files.exists(destFile));
-        assertFalse(Files.exists(srcFile));
-    }
-
-    @Test
-    public void testMoveErrorFiletoErrorDirException() {
-        String fileName = "nonexistent.log";
-        String srcPath = tempDir.toString();
-        String destPath = tempDir.resolve("dest").toString();
-
-        errorFileMovement.moveErrorFiletoErrorDir(fileName, srcPath, destPath);
-
-        // Verify that the logger error method was called
-        Logger logger = LoggerFactory.getLogger(ErrorFileMovement.class);
-        verify(logger).error(eq("Failed to move the file: to Error Directory"), anyString());
+    // Utility method to set the logger field using reflection
+    private void setLoggerField(Logger logger) throws NoSuchFieldException, IllegalAccessException {
+        java.lang.reflect.Field loggerField = ArchivalFileMovement.class.getDeclaredField("LOGGER");
+        loggerField.setAccessible(true);
+        loggerField.set(null, logger);
     }
 }
+```
+
+### Explanation:
+
+1. **Temporary Directories**: The `@TempDir` annotation is used to create temporary directories for testing file operations.
+
+2. **Logger Mocking**: The logger is mocked to verify logging behavior without polluting the actual logs during tests.
+
+3. **Private Method Testing**: Reflection is used to test private methods `getSourceDirectory` and `getFilePattern`.
+
+4. **Error Handling**: The case where an exception is thrown (such as when the destination directory does not exist) is tested to ensure that errors are logged correctly.
+
+5. **Assertions and Verifications**: Assertions ensure that the files are moved as expected and logging is verified using `verify` from Mockito.
+
+This setup covers all paths, including exceptions, for comprehensive testing of the `ArchivalFileMovement` class.

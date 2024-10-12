@@ -1,54 +1,115 @@
-import org.junit.jupiter.api.Test;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
 public class ErrorFileMovementTest {
 
-    @Test
-    void testWriteErrorRecordsToFile() {
-        // Given
-        ErrorFileMovement errorFileMovement = new ErrorFileMovement();
-        String errorDirectoryPath = "errorDir";
-        String fileName = "errorFile.txt";
-        String data = "Sample error data";
+    private ErrorFileMovement errorFileMovement;
 
-        // When
-        assertDoesNotThrow(() -> errorFileMovement.writeErrorRecordsToFile(errorDirectoryPath, fileName, data));
+    @TempDir
+    Path tempDir;
 
-        // Then
-        // Verify if the file is created with the correct data
-        // You may need to add more assertions based on your requirements
+    @BeforeEach
+    public void setUp() {
+        errorFileMovement = new ErrorFileMovement();
     }
 
     @Test
-    void testMoveErrorFile() {
-        // Given
-        ErrorFileMovement errorFileMovement = new ErrorFileMovement();
-        String sourceFilePath = "sourceFile.txt";
-        String destinationDirectory = "destinationDir";
+    public void testWriteErrorRecordsToFile() throws IOException {
+        String errorDirectoryPath = tempDir.toString();
+        String fileName = "error.log";
+        String data = "Error data";
 
-        // When
-        assertDoesNotThrow(() -> errorFileMovement.moveErrorFile(sourceFilePath, destinationDirectory));
+        errorFileMovement.writeErrorRecordsToFile(errorDirectoryPath, fileName, data);
 
-        // Then
-        // Verify if the file is moved to the destination directory
-        // You may need to add more assertions based on your requirements
+        File file = new File(errorDirectoryPath, fileName);
+        assertTrue(file.exists());
+        assertEquals(data, Files.readString(file.toPath()));
     }
 
     @Test
-    void testMoveErrorFiletoErrorDir() {
-        // Given
-        ErrorFileMovement errorFileMovement = new ErrorFileMovement();
-        String fileName = "errorFile.txt";
-        String srcPath = "srcDir";
-        String destPath = "destDir";
+    public void testWriteErrorRecordsToFileIOException() {
+        String errorDirectoryPath = tempDir.toString();
+        String fileName = "error.log";
+        String data = "Error data";
 
-        // When
-        assertDoesNotThrow(() -> errorFileMovement.moveErrorFiletoErrorDir(fileName, srcPath, destPath));
+        try (MockedStatic<FileWriter> mockedFileWriter = Mockito.mockStatic(FileWriter.class)) {
+            mockedFileWriter.when(() -> new FileWriter(any(File.class), eq(true))).thenThrow(new IOException("Mocked IO Exception"));
 
-        // Then
-        // Verify if the file is moved from source directory to destination directory
-        // You may need to add more assertions based on your requirements
+            errorFileMovement.writeErrorRecordsToFile(errorDirectoryPath, fileName, data);
+
+            // Verify that the logger error method was called
+            Logger logger = LoggerFactory.getLogger(ErrorFileMovement.class);
+            verify(logger).error(eq("Failed to write Data to error file: "), anyString());
+        }
+    }
+
+    @Test
+    public void testMoveErrorFile() throws IOException {
+        Path sourceFile = Files.createFile(tempDir.resolve("source.log"));
+        String destinationDirectory = tempDir.resolve("dest").toString();
+        Files.createDirectories(Paths.get(destinationDirectory));
+
+        errorFileMovement.moveErrorFile(sourceFile.toString(), destinationDirectory);
+
+        Path destinationFile = Paths.get(destinationDirectory, sourceFile.getFileName().toString());
+        assertTrue(Files.exists(destinationFile));
+        assertFalse(Files.exists(sourceFile));
+    }
+
+    @Test
+    public void testMoveErrorFileException() {
+        String sourceFilePath = tempDir.resolve("nonexistent.log").toString();
+        String destinationDirectory = tempDir.resolve("dest").toString();
+
+        errorFileMovement.moveErrorFile(sourceFilePath, destinationDirectory);
+
+        // Verify that the logger error method was called
+        Logger logger = LoggerFactory.getLogger(ErrorFileMovement.class);
+        verify(logger).error(eq("Failed to move the file to Error Dir"), anyString());
+    }
+
+    @Test
+    public void testMoveErrorFiletoErrorDir() throws IOException {
+        String fileName = "error.log";
+        Path srcFile = Files.createFile(tempDir.resolve(fileName));
+        String srcPath = tempDir.toString();
+        String destPath = tempDir.resolve("dest").toString();
+        Files.createDirectories(Paths.get(destPath));
+
+        errorFileMovement.moveErrorFiletoErrorDir(fileName, srcPath, destPath);
+
+        Path destFile = Paths.get(destPath, fileName);
+        assertTrue(Files.exists(destFile));
+        assertFalse(Files.exists(srcFile));
+    }
+
+    @Test
+    public void testMoveErrorFiletoErrorDirException() {
+        String fileName = "nonexistent.log";
+        String srcPath = tempDir.toString();
+        String destPath = tempDir.resolve("dest").toString();
+
+        errorFileMovement.moveErrorFiletoErrorDir(fileName, srcPath, destPath);
+
+        // Verify that the logger error method was called
+        Logger logger = LoggerFactory.getLogger(ErrorFileMovement.class);
+        verify(logger).error(eq("Failed to move the file: to Error Directory"), anyString());
     }
 }

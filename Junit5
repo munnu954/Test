@@ -1,109 +1,119 @@
-The error "java.lang.IllegalStateException: stream has already been operated upon or closed" occurs because the stream returned by `Files.list(sourceDir)` is being consumed twice—once for counting the files and once for iterating over them. To resolve this issue, you can modify the code to first collect the paths into a list, which can then be used multiple times.
-
-Here's the updated test case code to fix the issue:
-
-```java
-import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.nio.file.*;
-import java.util.List;
-import java.util.stream.Collectors;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 import org.slf4j.Logger;
 
-@ExtendWith(MockitoExtension.class)
+import com.verizon.vbg.ledger.service.ArchivalFileMovement;
+
 class ArchivalFileMovementTest {
 
-    @InjectMocks
-    private ArchivalFileMovement archivalFileMovement;
+  @InjectMocks
+  private ArchivalFileMovement archivalFileMovement;
 
-    @Mock
-    private Logger logger;
+  @Mock
+  private Logger LOGGER;
 
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-    }
+  @BeforeEach
+  void setUp() {
+    MockitoAnnotations.openMocks(this);
+  }
 
-    @Test
-    void testMoveFilesMatchingPattern_success() throws Exception {
-        String sourcePathPattern = "file:/source/*.txt";
-        String destinationPath = "/destination";
+  @Test
+  void testMoveFilesMatchingPattern_Success() throws Exception {
+    // Mock Files.list and moveFile methods
+    Path sourceDir = Paths.get("src/test/resources/test-data/source");
+    when(Files.list(sourceDir)).thenReturn(Stream.of(
+        Paths.get("src/test/resources/test-data/source/testFile1.txt"),
+        Paths.get("src/test/resources/test-data/source/testFile2.txt")
+    ));
 
-        Path sourceDir = Paths.get("/source");
-        Path file1 = sourceDir.resolve("file1.txt");
-        Path file2 = sourceDir.resolve("file2.txt");
+    // Mock the moveFile method
+    doNothing().when(archivalFileMovement).moveFile(any(Path.class), anyString());
 
-        try (MockedStatic<Files> mockedFiles = mockStatic(Files.class)) {
-            mockedFiles.when(() -> Files.list(sourceDir)).thenReturn(Stream.of(file1, file2));
-            mockedFiles.when(() -> Files.move(any(Path.class), any(Path.class), any(StandardCopyOption.class)))
-                       .thenAnswer(i -> i.getArgument(0));
+    // Invoke the method under test
+    archivalFileMovement.moveFilesMatchingPattern("src/test/resources/test-data/source/*.txt", "src/test/resources/test-data/destination");
 
-            archivalFileMovement.moveFilesMatchingPattern(sourcePathPattern, destinationPath);
+    // Verify the calls
+    verify(Files, times(2)).list(any(Path.class));
+    verify(archivalFileMovement, times(2)).moveFile(any(Path.class), anyString());
+    verify(LOGGER, times(1)).info(anyString(), any(Long.class));
+  }
 
-            mockedFiles.verify(() -> Files.move(file1, Paths.get(destinationPath).resolve(file1.getFileName()), StandardCopyOption.REPLACE_EXISTING));
-            mockedFiles.verify(() -> Files.move(file2, Paths.get(destinationPath).resolve(file2.getFileName()), StandardCopyOption.REPLACE_EXISTING));
-        }
-    }
+  @Test
+  void testMoveFilesMatchingPattern_ErrorMovingFile() throws Exception {
+    // Mock Files.list and moveFile methods
+    Path sourceDir = Paths.get("src/test/resources/test-data/source");
+    when(Files.list(sourceDir)).thenReturn(Stream.of(
+        Paths.get("src/test/resources/test-data/source/testFile1.txt"),
+        Paths.get("src/test/resources/test-data/source/testFile2.txt")
+    ));
 
-    @Test
-    void testMoveFilesMatchingPattern_withException() throws Exception {
-        String sourcePathPattern = "file:/source/*.txt";
-        String destinationPath = "/destination";
+    // Mock the moveFile method to throw an exception
+    doThrow(new IOException("Simulated move error")).when(archivalFileMovement).moveFile(any(Path.class), anyString());
 
-        Path sourceDir = Paths.get("/source");
-        Path file1 = sourceDir.resolve("file1.txt");
+    // Invoke the method under test
+    archivalFileMovement.moveFilesMatchingPattern("src/test/resources/test-data/source/*.txt", "src/test/resources/test-data/destination");
 
-        try (MockedStatic<Files> mockedFiles = mockStatic(Files.class)) {
-            mockedFiles.when(() -> Files.list(sourceDir)).thenReturn(Stream.of(file1));
-            mockedFiles.when(() -> Files.move(any(Path.class), any(Path.class), any(StandardCopyOption.class)))
-                       .thenThrow(new IOException("File move error"));
+    // Verify the calls
+    verify(Files, times(2)).list(any(Path.class));
+    verify(archivalFileMovement, times(2)).moveFile(any(Path.class), anyString());
+    verify(LOGGER, times(1)).info(anyString(), any(Long.class));
+    verify(LOGGER, times(2)).error(anyString(), any(Object.class), anyString());
+  }
 
-            archivalFileMovement.moveFilesMatchingPattern(sourcePathPattern, destinationPath);
+  @Test
+  void testGetSourceDirectory() throws Exception {
+    // Invoke the private method using reflection
+    String sourcePathPattern = "src/test/resources/test-data/source/*.txt";
+    Method getSourceDirectoryMethod = ArchivalFileMovement.class.getDeclaredMethod("getSourceDirectory", String.class);
+    getSourceDirectoryMethod.setAccessible(true);
+    Path result = (Path) getSourceDirectoryMethod.invoke(archivalFileMovement, sourcePathPattern);
 
-            verify(logger).error(anyString(), eq(file1.getFileName()), anyString());
-        }
-    }
+    // Verify the result
+    assertEquals(Paths.get("src/test/resources/test-data/source"), result);
+    verify(LOGGER, times(1)).info("get Source Dirtectory");
+  }
 
-    @Test
-    void testGetSourceDirectory() throws Exception {
-        String sourcePathPattern = "file:/source/*.txt";
-        Method method = ArchivalFileMovement.class.getDeclaredMethod("getSourceDirectory", String.class);
-        method.setAccessible(true);
+  @Test
+  void testGetFilePattern() throws Exception {
+    // Invoke the private method using reflection
+    String sourcePathPattern = "src/test/resources/test-data/source/*.txt";
+    Method getFilePatternMethod = ArchivalFileMovement.class.getDeclaredMethod("getFilePattern", String.class);
+    getFilePatternMethod.setAccessible(true);
+    String result = (String) getFilePatternMethod.invoke(archivalFileMovement, sourcePathPattern);
 
-        Path result = (Path) method.invoke(archivalFileMovement, sourcePathPattern);
+    // Verify the result
+    assertEquals("\\*.txt", result);
+    verify(LOGGER, times(1)).info("get File Pattern");
+  }
 
-        assertEquals(Paths.get("/source"), result);
-    }
+  @Test
+  void testMoveFile() throws Exception {
+    // Mock Files.move method
+    Path sourcePath = Paths.get("src/test/resources/test-data/source/testFile1.txt");
+    Path destinationPath = Paths.get("src/test/resources/test-data/destination");
+    doNothing().when(Files).move(any(Path.class), any(Path.class), any(StandardCopyOption.class));
 
-    @Test
-    void testGetFilePattern() throws Exception {
-        String sourcePathPattern = "file:/source/*.txt";
-        Method method = ArchivalFileMovement.class.getDeclaredMethod("getFilePattern", String.class);
-        method.setAccessible(true);
+    // Invoke the moveFile method
+    archivalFileMovement.moveFile(sourcePath, "src/test/resources/test-data/destination");
 
-        String result = (String) method.invoke(archivalFileMovement, sourcePathPattern);
-
-        assertEquals(".*\\.txt", result);
-    }
+    // Verify the calls
+    verify(Files, times(1)).move(any(Path.class), any(Path.class), any(StandardCopyOption.class));
+    verify(LOGGER, times(1)).info("sourcePath: {}", sourcePath);
+    verify(LOGGER, times(1)).info("destinationPath: {} ", destinationPath);
+    verify(LOGGER, times(1)).info("Successfully moved the Ecpd Sensitive Feed file: {}", sourcePath.getFileName());
+  }
 }
-```
-
-### Changes Made:
-
-1. **Stream Consumption**: The original issue was with consuming the `Stream` twice. In the production code, you'd need to modify it to collect the paths into a list before operating on them. However, since we're working with a mocked scenario, ensure that your mock correctly handles multiple interactions if needed.
-
-2. **Mocking Behavior**: The static methods are still mocked as before to simulate the filesystem operations.
-
-3. **Testing for Exception**: The exception test remains the same, as it simulates a failure when moving files.
-
-Ensure that your production code for `moveFilesMatchingPattern` handles the stream correctly by perhaps collecting the paths into a list before counting and processing them. If you need further assistance with modifying the production code, please let me know!

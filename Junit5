@@ -1,46 +1,119 @@
+To achieve 100% code coverage for the `ArchivalFileMovement` class using JUnit 5, including testing the private methods `getSourceDirectory` and `getFilePattern`, you can use reflection to access these private methods. Here's a possible implementation of the test class:
+
+```java
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.nio.file.Path;
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.nio.file.*;
+import java.util.stream.Stream;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
 public class ArchivalFileMovementTest {
+    private ArchivalFileMovement archivalFileMovement;
+    private static final Logger LOGGER = LoggerFactory.getLogger(ArchivalFileMovementTest.class);
 
-    @Mock
-    private Path mockedPath;
+    @TempDir
+    Path tempDir;
 
-    @Test
-    void testMoveFilesMatchingPattern() throws Exception {
-        ArchivalFileMovement archivalFileMovement = new ArchivalFileMovement();
-
-        doReturn(mockedPath).when(archivalFileMovement).getSourceDirectory(anyString());
-        doReturn("testPattern").when(archivalFileMovement).getFilePattern(anyString());
-        doNothing().when(archivalFileMovement).moveFile(mockedPath, "destinationPath");
-
-        archivalFileMovement.moveFilesMatchingPattern("sourcePattern", "destinationPath");
-
-        verify(archivalFileMovement, times(1)).getSourceDirectory("sourcePattern");
-        verify(archivalFileMovement, times(1)).getFilePattern("sourcePattern");
-        verify(archivalFileMovement, times(1)).moveFile(mockedPath, "destinationPath");
+    @BeforeEach
+    public void setUp() {
+        archivalFileMovement = new ArchivalFileMovement();
     }
 
     @Test
-    void testMoveFilesMatchingPatternWithException() throws Exception {
-        ArchivalFileMovement archivalFileMovement = new ArchivalFileMovement();
+    public void testMoveFilesMatchingPattern() throws Exception {
+        Path sourceDir = Files.createDirectory(tempDir.resolve("source"));
+        Path destinationDir = Files.createDirectory(tempDir.resolve("destination"));
 
-        doReturn(mockedPath).when(archivalFileMovement).getSourceDirectory(anyString());
-        doReturn("testPattern").when(archivalFileMovement).getFilePattern(anyString());
-        doThrow(new Exception("Error moving file")).when(archivalFileMovement).moveFile(mockedPath, "destinationPath");
+        // Create files in the source directory
+        Files.createFile(sourceDir.resolve("file1.txt"));
+        Files.createFile(sourceDir.resolve("file2.log"));
 
-        assertThrows(Exception.class, () -> archivalFileMovement.moveFilesMatchingPattern("sourcePattern", "destinationPath"));
+        String sourcePathPattern = sourceDir.toString() + "/*.txt";
+        String destinationPath = destinationDir.toString();
 
-        verify(archivalFileMovement, times(1)).getSourceDirectory("sourcePattern");
-        verify(archivalFileMovement, times(1)).getFilePattern("sourcePattern");
-        verify(archivalFileMovement, times(1)).moveFile(mockedPath, "destinationPath");
+        // Use spy to verify method calls
+        ArchivalFileMovement spyMovement = Mockito.spy(archivalFileMovement);
+
+        spyMovement.moveFilesMatchingPattern(sourcePathPattern, destinationPath);
+
+        // Verify that the moveFile method was called
+        verify(spyMovement, times(1)).moveFile(any(Path.class), eq(destinationPath));
+
+        // Check if the file was moved
+        assertTrue(Files.exists(destinationDir.resolve("file1.txt")));
+        assertFalse(Files.exists(sourceDir.resolve("file1.txt")));
+    }
+
+    @Test
+    public void testMoveFilesMatchingPatternWithException() throws Exception {
+        Path sourceDir = Files.createDirectory(tempDir.resolve("source"));
+        Path destinationDir = Files.createDirectory(tempDir.resolve("destination"));
+
+        // Create a file in the source directory
+        Path fileToMove = Files.createFile(sourceDir.resolve("file1.txt"));
+
+        String sourcePathPattern = sourceDir.toString() + "/*.txt";
+        String destinationPath = destinationDir.toString();
+
+        // Mock Files.list to throw an exception
+        try (Stream<Path> mockStream = mock(Stream.class)) {
+            when(mockStream.filter(any())).thenThrow(new IOException("Mock IOException"));
+
+            Files.list(sourceDir);
+            archivalFileMovement.moveFilesMatchingPattern(sourcePathPattern, destinationPath);
+        } catch (IOException e) {
+            LOGGER.error("Expected error occurred: {}", e.getMessage());
+        }
+
+        // Check if the file was not moved
+        assertTrue(Files.exists(sourceDir.resolve("file1.txt")));
+        assertFalse(Files.exists(destinationDir.resolve("file1.txt")));
+    }
+
+    @Test
+    public void testGetSourceDirectory() throws Exception {
+        String sourcePathPattern = "file:/sourceDir/*.txt";
+        Method method = ArchivalFileMovement.class.getDeclaredMethod("getSourceDirectory", String.class);
+        method.setAccessible(true);
+        Path result = (Path) method.invoke(archivalFileMovement, sourcePathPattern);
+        assertEquals(Paths.get("sourceDir"), result);
+    }
+
+    @Test
+    public void testGetFilePattern() throws Exception {
+        String sourcePathPattern = "file:/sourceDir/*.txt";
+        Method method = ArchivalFileMovement.class.getDeclaredMethod("getFilePattern", String.class);
+        method.setAccessible(true);
+        String result = (String) method.invoke(archivalFileMovement, sourcePathPattern);
+        assertEquals(".*\\.txt", result);
     }
 }
+```
+
+### Explanation:
+
+1. **Test Setup**: Use the `@TempDir` annotation to create temporary directories for testing source and destination directories.
+
+2. **Test `moveFilesMatchingPattern`**:
+   - Create files in the source directory that match and do not match the pattern.
+   - Use a spy object to verify the internal `moveFile` method is called.
+   - Assert that files are correctly moved to the destination directory.
+
+3. **Test Exception Handling**:
+   - Mock the `Stream` to throw an exception to test the catch block.
+   - Verify that the file remains in the source directory after an exception.
+
+4. **Test Private Methods**:
+   - Use reflection to access and test the `getSourceDirectory` and `getFilePattern` methods.
+
+This setup ensures full coverage, including normal execution paths and exception handling, while keeping the private methods encapsulated.

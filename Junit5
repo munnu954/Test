@@ -1,84 +1,107 @@
-import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-import org.mockito.Mockito;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.*;
 import java.util.stream.Stream;
 
-class ArchivalFileMovementTest {
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+public class ArchivalFileMovementTest {
+
+    @InjectMocks
+    private ArchivalFileMovement archivalFileMovement;
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ArchivalFileMovementTest.class);
 
-    @TempDir
-    Path tempDir;
+    @BeforeEach
+    public void setUp() {
+        archivalFileMovement = new ArchivalFileMovement();
+    }
 
     @Test
-    void testMoveFilesMatchingPattern_Success() throws Exception {
-        // Arrange
-        ArchivalFileMovement archivalFileMovement = new ArchivalFileMovement();
-        String sourcePathPattern = "src/test/resources/files/*.txt";
-        String destinationPath = tempDir.toString();
+    public void testMoveFilesMatchingPattern() throws Exception {
+        String sourcePathPattern = "file:/source/*.txt";
+        String destinationPath = "/destination";
 
-        // Act
+        Path sourceDir = Paths.get("/source");
+        String filePattern = ".*\\.txt";
+
+        // Mocking Files.list
+        Path mockPath = mock(Path.class);
+        when(mockPath.getFileName()).thenReturn(Paths.get("test.txt"));
+        when(Files.list(sourceDir)).thenReturn(Stream.of(mockPath));
+
+        // Testing moveFilesMatchingPattern
         archivalFileMovement.moveFilesMatchingPattern(sourcePathPattern, destinationPath);
 
-        // Assert
-        Assertions.assertEquals(2, Files.list(tempDir).count(), "Unexpected number of files in the destination directory");
+        // Verifying the moveFile method call
+        verify(mockPath, times(1)).getFileName();
     }
 
     @Test
-    void testMoveFilesMatchingPattern_Failure() throws Exception {
-        // Arrange
-        ArchivalFileMovement archivalFileMovement = Mockito.spy(ArchivalFileMovement.class);
-        String sourcePathPattern = "src/test/resources/files/*.txt";
-        String destinationPath = tempDir.toString();
-        Mockito.doThrow(new IOException("Test exception")).when(archivalFileMovement).moveFile(Mockito.any(Path.class), Mockito.anyString());
+    public void testMoveFilesMatchingPatternWithException() throws Exception {
+        String sourcePathPattern = "file:/source/*.txt";
+        String destinationPath = "/destination";
 
-        // Act
-        archivalFileMovement.moveFilesMatchingPattern(sourcePathPattern, destinationPath);
+        Path sourceDir = Paths.get("/source");
+        String filePattern = ".*\\.txt";
 
-        // Assert
-        Mockito.verify(archivalFileMovement, Mockito.times(2)).moveFile(Mockito.any(Path.class), Mockito.anyString());
+        // Mocking Files.list to throw an exception
+        when(Files.list(sourceDir)).thenThrow(new RuntimeException("Test Exception"));
+
+        Exception exception = assertThrows(RuntimeException.class, () -> {
+            archivalFileMovement.moveFilesMatchingPattern(sourcePathPattern, destinationPath);
+        });
+
+        assertEquals("Test Exception", exception.getMessage());
     }
 
     @Test
-    void testGetSourceDirectory() throws Exception {
-        // Arrange
-        ArchivalFileMovement archivalFileMovement = new ArchivalFileMovement();
-        String sourcePathPattern = "src/test/resources/files/*.txt";
+    public void testMoveFile() throws Exception {
+        Path sourcePath = Paths.get("/source/test.txt");
+        String destinationPath = "/destination";
 
-        // Act
-        Path sourceDir = getPrivateMethod(archivalFileMovement, "getSourceDirectory", String.class).invoke(archivalFileMovement, sourcePathPattern);
+        Path destinationDir = Paths.get(destinationPath);
+        Path destination = destinationDir.resolve(sourcePath.getFileName());
 
-        // Assert
-        Assertions.assertEquals(Paths.get("src/test/resources/files"), sourceDir, "Unexpected source directory");
+        // Mocking Files.move
+        doNothing().when(Files.class);
+        Files.move(sourcePath, destination, StandardCopyOption.REPLACE_EXISTING);
+
+        // Testing moveFile
+        archivalFileMovement.moveFile(sourcePath, destinationPath);
+
+        // Verifying the move method call
+        verify(Files.class, times(1)).move(sourcePath, destination, StandardCopyOption.REPLACE_EXISTING);
     }
 
     @Test
-    void testGetFilePattern() throws Exception {
-        // Arrange
-        ArchivalFileMovement archivalFileMovement = new ArchivalFileMovement();
-        String sourcePathPattern = "src/test/resources/files/*.txt";
+    public void testGetSourceDirectory() throws Exception {
+        String sourcePathPattern = "file:/source/*.txt";
 
-        // Act
-        String filePattern = getPrivateMethod(archivalFileMovement, "getFilePattern", String.class).invoke(archivalFileMovement, sourcePathPattern);
-
-        // Assert
-        Assertions.assertEquals(".*\\.txt", filePattern, "Unexpected file pattern");
-    }
-
-    private Method getPrivateMethod(Object obj, String methodName, Class<?>... parameterTypes) throws NoSuchMethodException {
-        Method method = obj.getClass().getDeclaredMethod(methodName, parameterTypes);
+        Method method = ArchivalFileMovement.class.getDeclaredMethod("getSourceDirectory", String.class);
         method.setAccessible(true);
-        return method;
+        Path result = (Path) method.invoke(archivalFileMovement, sourcePathPattern);
+
+        assertEquals(Paths.get("/source"), result);
+    }
+
+    @Test
+    public void testGetFilePattern() throws Exception {
+        String sourcePathPattern = "file:/source/*.txt";
+
+        Method method = ArchivalFileMovement.class.getDeclaredMethod("getFilePattern", String.class);
+        method.setAccessible(true);
+        String result = (String) method.invoke(archivalFileMovement, sourcePathPattern);
+
+        assertEquals(".*\\.txt", result);
     }
 }

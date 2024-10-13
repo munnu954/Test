@@ -1,4 +1,28 @@
-To achieve 100% code coverage for the `EcpdFeedJobExecutionListener` class using JUnit 5, we need to write test cases for both the `beforeJob` and `afterJob` methods, covering all possible execution paths. We'll use Mockito to mock dependencies and Java Reflection to access private fields. Below is the test code:
+To write JUnit 5 test cases for the `EcpdFeedBatchProcessor` class and achieve 100% code coverage, you'll need to consider both the branches of the process method. Let's break down the test cases step-by-step:
+
+### 1. Test Setup
+
+First, you need to create mock objects for the dependencies, such as `SensitivityTokenService`. You can use a mocking framework like Mockito for this purpose.
+
+### 2. Test Cases
+
+- **Test Case 1: Sensitivity Token Matches and Has Length**
+  - Mock `sensitivityTokenService.getSensitiveTokenList()` to return a list containing a token that matches `ecpdGSAMSensitiveProfile.getSensitivityToken()`.
+  - Ensure that the `ecpdGSAMSensitiveProfile` has a non-empty sensitivity token.
+  - Assert that the returned `GSAMSensitiveProfiles` object has the expected sensitivity token.
+
+- **Test Case 2: Sensitivity Token Matches but No Length**
+  - Mock `sensitivityTokenService.getSensitiveTokenList()` as above.
+  - Ensure that the `ecpdGSAMSensitiveProfile` has an empty sensitivity token.
+  - Assert that the returned object is `null`.
+
+- **Test Case 3: Sensitivity Token Does Not Match**
+  - Mock `sensitivityTokenService.getSensitiveTokenList()` to return a list that does not contain a matching token.
+  - Assert that the returned object is `null`.
+
+### Code Example
+
+Here's how the JUnit test class might look:
 
 ```java
 import org.junit.jupiter.api.BeforeEach;
@@ -6,109 +30,70 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.Arrays;
+import java.util.Collections;
 
-import static org.mockito.Mockito.*;
-
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobExecutionListener;
-import org.springframework.batch.core.BatchStatus;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-public class EcpdFeedJobExecutionListenerTest {
-
-    @InjectMocks
-    private EcpdFeedJobExecutionListener listener;
+public class EcpdFeedBatchProcessorTest {
 
     @Mock
-    private ArchivalFileMovement archivalFileMovement;
+    private SensitivityTokenService sensitivityTokenService;
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(EcpdFeedJobExecutionListener.class);
+    @InjectMocks
+    private EcpdFeedBatchProcessor ecpdFeedBatchProcessor;
+
+    private EcpdGSAMSensitiveProfile ecpdGSAMSensitiveProfile;
 
     @BeforeEach
     public void setUp() {
-        // Inject values into private fields using ReflectionTestUtils
-        ReflectionTestUtils.setField(listener, "sourcePathPattern", "glob:/source/*.txt");
-        ReflectionTestUtils.setField(listener, "archivalPath", "/archive");
-        ReflectionTestUtils.setField(listener, "errorPath", "/error");
+        ecpdGSAMSensitiveProfile = new EcpdGSAMSensitiveProfile();
     }
 
     @Test
-    public void testBeforeJob() {
-        JobExecution jobExecution = mock(JobExecution.class);
-        when(jobExecution.getStatus()).thenReturn(BatchStatus.STARTING);
+    public void testProcess_SensitivityTokenMatchesAndHasLength() {
+        ecpdGSAMSensitiveProfile.setSensitivityToken("token123");
 
-        listener.beforeJob(jobExecution);
+        when(sensitivityTokenService.getSensitiveTokenList()).thenReturn(Arrays.asList("token123", "token456"));
 
-        // Verify logging
-        verify(LOGGER, times(1)).info("Before Job {): [{}]", jobExecution.getStatus(), jobExecution);
+        GSAMSensitiveProfiles result = ecpdFeedBatchProcessor.process(ecpdGSAMSensitiveProfile);
+
+        assertNotNull(result);
+        assertEquals("token123", result.getSensitivityToken());
     }
 
     @Test
-    public void testAfterJobCompletedSuccessfully() throws Exception {
-        JobExecution jobExecution = mock(JobExecution.class);
-        when(jobExecution.getStatus()).thenReturn(BatchStatus.COMPLETED);
+    public void testProcess_SensitivityTokenMatchesButNoLength() {
+        ecpdGSAMSensitiveProfile.setSensitivityToken("");
 
-        listener.afterJob(jobExecution);
+        when(sensitivityTokenService.getSensitiveTokenList()).thenReturn(Arrays.asList("token123", "token456"));
 
-        // Verify logging and method calls
-        verify(LOGGER, times(1)).info("Afer Job {}: [{}]", jobExecution.getStatus(), jobExecution);
-        verify(LOGGER, times(1)).info("Job completed successfully. Moving the files to Archive Directory");
-        verify(archivalFileMovement, times(1)).moveFilesMatchingPattern("glob:/source/*.txt", "/archive");
+        GSAMSensitiveProfiles result = ecpdFeedBatchProcessor.process(ecpdGSAMSensitiveProfile);
+
+        assertNull(result);
     }
 
     @Test
-    public void testAfterJobCompletedWithException() throws Exception {
-        JobExecution jobExecution = mock(JobExecution.class);
-        when(jobExecution.getStatus()).thenReturn(BatchStatus.COMPLETED);
+    public void testProcess_SensitivityTokenDoesNotMatch() {
+        ecpdGSAMSensitiveProfile.setSensitivityToken("nonMatchingToken");
 
-        doThrow(new Exception("Test exception")).when(archivalFileMovement).moveFilesMatchingPattern(anyString(), anyString());
+        when(sensitivityTokenService.getSensitiveTokenList()).thenReturn(Arrays.asList("token123", "token456"));
 
-        listener.afterJob(jobExecution);
+        GSAMSensitiveProfiles result = ecpdFeedBatchProcessor.process(ecpdGSAMSensitiveProfile);
 
-        // Verify logging and method calls
-        verify(LOGGER, times(1)).info("Afer Job {}: [{}]", jobExecution.getStatus(), jobExecution);
-        verify(LOGGER, times(1)).info("Job completed successfully. Moving the files to Archive Directory");
-        verify(LOGGER, times(1)).error("Error moving files to Archive Directory: ", any(Exception.class));
-    }
-
-    @Test
-    public void testAfterJobWithErrors() throws Exception {
-        JobExecution jobExecution = mock(JobExecution.class);
-        when(jobExecution.getStatus()).thenReturn(BatchStatus.FAILED);
-
-        listener.afterJob(jobExecution);
-
-        // Verify logging and method calls
-        verify(LOGGER, times(1)).info("Afer Job {}: [{}]", jobExecution.getStatus(), jobExecution);
-        verify(LOGGER, times(1)).info("Job has errors. Moving the files to Error Directory");
-        verify(archivalFileMovement, times(1)).moveFilesMatchingPattern("glob:/source/*.txt", "/error");
-    }
-
-    @Test
-    public void testAfterJobWithErrorsAndException() throws Exception {
-        JobExecution jobExecution = mock(JobExecution.class);
-        when(jobExecution.getStatus()).thenReturn(BatchStatus.FAILED);
-
-        doThrow(new Exception("Test exception")).when(archivalFileMovement).moveFilesMatchingPattern(anyString(), anyString());
-
-        listener.afterJob(jobExecution);
-
-        // Verify logging and method calls
-        verify(LOGGER, times(1)).info("Afer Job {}: [{}]", jobExecution.getStatus(), jobExecution);
-        verify(LOGGER, times(1)).info("Job has errors. Moving the files to Error Directory");
-        verify(LOGGER, times(1)).error("Error moving files to Error Directory: ", any(Exception.class));
+        assertNull(result);
     }
 }
 ```
 
-### Explanation:
-1. **ReflectionTestUtils**: This utility is used to inject values into private fields of `EcpdFeedJobExecutionListener` without making them public.
-2. **Mockito**: Mocking is used for the `ArchivalFileMovement` class and `JobExecution` to simulate different job statuses and exceptions.
-3. **Verification**: We verify that the appropriate logging and calls to `ArchivalFileMovement` are made based on the job status (either completed or failed).
-4. **Exception Handling**: Tests cover scenarios where exceptions are thrown during file movement, ensuring that error logging is correctly executed.
+### Explanation
+
+- **Mocking**: We use Mockito to mock the `SensitivityTokenService` and control the behavior of `getSensitiveTokenList()`.
+- **Assertions**: We use assertions to verify the behavior of the `process` method under different conditions.
+- **Branch Coverage**: Each test case is designed to cover different branches of the code to ensure complete coverage.
+
+This setup should help you achieve full coverage of the `EcpdFeedBatchProcessor` class.

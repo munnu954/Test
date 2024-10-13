@@ -1,120 +1,114 @@
-To write JUnit 5 test cases for the `ArchivalFileMovement` class and achieve 100% code coverage, we need to:
-
-1. Test the `moveFilesMatchingPattern` method, including scenarios for both successful file moves and exceptions during file moves.
-2. Use reflection to access the private methods `getSourceDirectory` and `getFilePattern`.
-
-Below is an example of how you might achieve this:
+To achieve 100% code coverage for the `EcpdFeedJobExecutionListener` class using JUnit 5, we need to write test cases for both the `beforeJob` and `afterJob` methods, covering all possible execution paths. We'll use Mockito to mock dependencies and Java Reflection to access private fields. Below is the test code:
 
 ```java
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.lang.reflect.Method;
-import java.nio.file.*;
-import java.util.stream.Stream;
-
-import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-public class ArchivalFileMovementTest {
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.JobExecutionListener;
+import org.springframework.batch.core.BatchStatus;
 
+@ExtendWith(MockitoExtension.class)
+public class EcpdFeedJobExecutionListenerTest {
+
+    @InjectMocks
+    private EcpdFeedJobExecutionListener listener;
+
+    @Mock
     private ArchivalFileMovement archivalFileMovement;
-    private static final Logger LOGGER = LoggerFactory.getLogger(ArchivalFileMovement.class);
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(EcpdFeedJobExecutionListener.class);
 
     @BeforeEach
     public void setUp() {
-        archivalFileMovement = new ArchivalFileMovement();
+        // Inject values into private fields using ReflectionTestUtils
+        ReflectionTestUtils.setField(listener, "sourcePathPattern", "glob:/source/*.txt");
+        ReflectionTestUtils.setField(listener, "archivalPath", "/archive");
+        ReflectionTestUtils.setField(listener, "errorPath", "/error");
     }
 
     @Test
-    public void testMoveFilesMatchingPattern(@TempDir Path tempDir) throws Exception {
-        // Setup source and destination directories
-        Path sourceDir = tempDir.resolve("source");
-        Path destinationDir = tempDir.resolve("destination");
-        Files.createDirectory(sourceDir);
-        Files.createDirectory(destinationDir);
+    public void testBeforeJob() {
+        JobExecution jobExecution = mock(JobExecution.class);
+        when(jobExecution.getStatus()).thenReturn(BatchStatus.STARTING);
 
-        // Create test files
-        Files.createFile(sourceDir.resolve("test1.txt"));
-        Files.createFile(sourceDir.resolve("test2.txt"));
+        listener.beforeJob(jobExecution);
 
-        // Mock logging
-        Logger loggerMock = mock(Logger.class);
-        ArchivalFileMovement.LOGGER = loggerMock;
-
-        // Test file movement
-        String sourcePattern = "glob:" + sourceDir.toString() + "/*.txt";
-        archivalFileMovement.moveFilesMatchingPattern(sourcePattern, destinationDir.toString());
-
-        // Verify files moved
-        assertTrue(Files.exists(destinationDir.resolve("test1.txt")));
-        assertTrue(Files.exists(destinationDir.resolve("test2.txt")));
-        assertFalse(Files.exists(sourceDir.resolve("test1.txt")));
-        assertFalse(Files.exists(sourceDir.resolve("test2.txt")));
-
-        // Verify logger calls
-        verify(loggerMock, times(1)).info("Number of files found with Matching pattern: {}", 2L);
-        verify(loggerMock, times(2)).info("Successfully moved the Ecpd Sensitive Feed file: {}", any());
+        // Verify logging
+        verify(LOGGER, times(1)).info("Before Job {): [{}]", jobExecution.getStatus(), jobExecution);
     }
 
     @Test
-    public void testMoveFilesWithException(@TempDir Path tempDir) throws Exception {
-        // Setup source and destination directories
-        Path sourceDir = tempDir.resolve("source");
-        Path destinationDir = tempDir.resolve("destination");
-        Files.createDirectory(sourceDir);
-        Files.createDirectory(destinationDir);
+    public void testAfterJobCompletedSuccessfully() throws Exception {
+        JobExecution jobExecution = mock(JobExecution.class);
+        when(jobExecution.getStatus()).thenReturn(BatchStatus.COMPLETED);
 
-        // Create a test file
-        Path testFile = sourceDir.resolve("test1.txt");
-        Files.createFile(testFile);
+        listener.afterJob(jobExecution);
 
-        // Mock Files.move to throw an exception
-        ArchivalFileMovement archivalFileMovementSpy = spy(archivalFileMovement);
-        doThrow(IOException.class).when(archivalFileMovementSpy).moveFile(any(), anyString());
-
-        // Mock logging
-        Logger loggerMock = mock(Logger.class);
-        ArchivalFileMovement.LOGGER = loggerMock;
-
-        // Test file movement with exception
-        String sourcePattern = "glob:" + sourceDir.toString() + "/*.txt";
-        archivalFileMovementSpy.moveFilesMatchingPattern(sourcePattern, destinationDir.toString());
-
-        // Verify logger calls
-        verify(loggerMock, times(1)).error("Error moving file::", testFile.getFileName(), "null");
+        // Verify logging and method calls
+        verify(LOGGER, times(1)).info("Afer Job {}: [{}]", jobExecution.getStatus(), jobExecution);
+        verify(LOGGER, times(1)).info("Job completed successfully. Moving the files to Archive Directory");
+        verify(archivalFileMovement, times(1)).moveFilesMatchingPattern("glob:/source/*.txt", "/archive");
     }
 
     @Test
-    public void testGetSourceDirectory() throws Exception {
-        Method method = ArchivalFileMovement.class.getDeclaredMethod("getSourceDirectory", String.class);
-        method.setAccessible(true);
+    public void testAfterJobCompletedWithException() throws Exception {
+        JobExecution jobExecution = mock(JobExecution.class);
+        when(jobExecution.getStatus()).thenReturn(BatchStatus.COMPLETED);
 
-        // Test the private method with reflection
-        Path result = (Path) method.invoke(archivalFileMovement, "glob:/mydir/*.txt");
-        assertEquals(Paths.get("/mydir"), result);
+        doThrow(new Exception("Test exception")).when(archivalFileMovement).moveFilesMatchingPattern(anyString(), anyString());
+
+        listener.afterJob(jobExecution);
+
+        // Verify logging and method calls
+        verify(LOGGER, times(1)).info("Afer Job {}: [{}]", jobExecution.getStatus(), jobExecution);
+        verify(LOGGER, times(1)).info("Job completed successfully. Moving the files to Archive Directory");
+        verify(LOGGER, times(1)).error("Error moving files to Archive Directory: ", any(Exception.class));
     }
 
     @Test
-    public void testGetFilePattern() throws Exception {
-        Method method = ArchivalFileMovement.class.getDeclaredMethod("getFilePattern", String.class);
-        method.setAccessible(true);
+    public void testAfterJobWithErrors() throws Exception {
+        JobExecution jobExecution = mock(JobExecution.class);
+        when(jobExecution.getStatus()).thenReturn(BatchStatus.FAILED);
 
-        // Test the private method with reflection
-        String pattern = (String) method.invoke(archivalFileMovement, "glob:/mydir/*.txt");
-        assertEquals(".*\\.txt", pattern);
+        listener.afterJob(jobExecution);
+
+        // Verify logging and method calls
+        verify(LOGGER, times(1)).info("Afer Job {}: [{}]", jobExecution.getStatus(), jobExecution);
+        verify(LOGGER, times(1)).info("Job has errors. Moving the files to Error Directory");
+        verify(archivalFileMovement, times(1)).moveFilesMatchingPattern("glob:/source/*.txt", "/error");
+    }
+
+    @Test
+    public void testAfterJobWithErrorsAndException() throws Exception {
+        JobExecution jobExecution = mock(JobExecution.class);
+        when(jobExecution.getStatus()).thenReturn(BatchStatus.FAILED);
+
+        doThrow(new Exception("Test exception")).when(archivalFileMovement).moveFilesMatchingPattern(anyString(), anyString());
+
+        listener.afterJob(jobExecution);
+
+        // Verify logging and method calls
+        verify(LOGGER, times(1)).info("Afer Job {}: [{}]", jobExecution.getStatus(), jobExecution);
+        verify(LOGGER, times(1)).info("Job has errors. Moving the files to Error Directory");
+        verify(LOGGER, times(1)).error("Error moving files to Error Directory: ", any(Exception.class));
     }
 }
 ```
 
 ### Explanation:
-1. **Test Setup**: Use `@TempDir` to create temporary directories for testing file operations.
-2. **Reflection**: Use Java's reflection API to access the private methods `getSourceDirectory` and `getFilePattern`.
-3. **Mocking**: Mock the logger to verify logging calls.
-4. **Exception Handling**: Use Mockito to simulate exceptions when moving files.
-5. **Assertions**: Validate the results of file operations and ensure exceptions are logged properly.
+1. **ReflectionTestUtils**: This utility is used to inject values into private fields of `EcpdFeedJobExecutionListener` without making them public.
+2. **Mockito**: Mocking is used for the `ArchivalFileMovement` class and `JobExecution` to simulate different job statuses and exceptions.
+3. **Verification**: We verify that the appropriate logging and calls to `ArchivalFileMovement` are made based on the job status (either completed or failed).
+4. **Exception Handling**: Tests cover scenarios where exceptions are thrown during file movement, ensuring that error logging is correctly executed.

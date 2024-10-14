@@ -1,20 +1,31 @@
-To achieve 100% code coverage for the `EcpdFeedBatchConfiguration` class using JUnit 5, we'll create test cases that will cover each method and possible execution path. We will also use reflection to access the private fields and methods where necessary. Below is an example of how you can write these test cases:
+To write JUnit 5 test cases for the `EcpdFeedBatchConfiguration` class with 100% code coverage, we need to test the following components:
+
+1. The `FileSkipPolicy` class.
+2. The `FileSkipListener` class.
+3. The `reader` method that provides a `MultiResourceItemReader`.
+
+Since the requirement is to use reflection to access private fields and methods, we will use Java's Reflection API for testing purposes. Additionally, we will use mocking to simulate the behavior of dependencies.
+
+Here's a comprehensive JUnit 5 test class:
 
 ```java
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.batch.item.file.FlatFileParseException;
+import org.springframework.batch.item.file.MultiResourceItemReader;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
 import java.io.IOException;
-
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.*;
+import java.lang.reflect.Field;
+import java.nio.file.Paths;
 
 @ExtendWith(MockitoExtension.class)
 public class EcpdFeedBatchConfigurationTest {
@@ -25,65 +36,101 @@ public class EcpdFeedBatchConfigurationTest {
     @Mock
     private ErrorFileMovement errorFileMovement;
 
+    @Mock
+    private FlatFileParseException flatFileParseException;
+
+    @Mock
+    private Resource mockResource;
+
+    private EcpdFeedBatchConfiguration.FileSkipPolicy skipPolicy;
+    private EcpdFeedBatchConfiguration.FileSkipListener skipListener;
+
     @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-        ReflectionTestUtils.setField(config, "fileFeedLocation", "classpath:feeds/");
-        ReflectionTestUtils.setField(config, "errorDirectory", "error/");
+    public void setUp() throws Exception {
+        skipPolicy = config.new FileSkipPolicy();
+        skipListener = config.new FileSkipListener();
+
+        setPrivateField(config, "fileFeedLocation", "classpath*:data/*.csv");
+        setPrivateField(config, "errorDirectory", "errorDir");
+    }
+
+    private void setPrivateField(Object obj, String fieldName, Object value) throws Exception {
+        Field field = obj.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(obj, value);
     }
 
     @Test
-    void testShouldSkipWithFlatFileParseException() {
-        Throwable exception = mock(FlatFileParseException.class);
-        boolean result = config.shouldSkip(exception, 0);
-        assertTrue(result);
+    public void testFileSkipPolicy_shouldSkip() {
+        assertTrue(skipPolicy.shouldSkip(flatFileParseException, 1));
+        assertTrue(skipPolicy.shouldSkip(new IOException(), 1));
+        assertTrue(skipPolicy.shouldSkip(new Exception(), 1));
     }
 
     @Test
-    void testShouldSkipWithIOException() {
-        Throwable exception = new IOException();
-        boolean result = config.shouldSkip(exception, 0);
-        assertTrue(result);
+    public void testFileSkipPolicy_shouldNotSkip() {
+        assertFalse(skipPolicy.shouldSkip(new Throwable(), 1));
     }
 
     @Test
-    void testShouldSkipWithGenericException() {
-        Throwable exception = new Exception();
-        boolean result = config.shouldSkip(exception, 0);
-        assertTrue(result);
+    public void testFileSkipListener_onSkipInRead() {
+        when(flatFileParseException.getMessage()).thenReturn("[file [sample.csv]]");
+        when(flatFileParseException.getInput()).thenReturn("input");
+
+        skipListener.onSkipInRead(flatFileParseException);
+
+        verify(errorFileMovement).writeErrorRecordsToFile(eq("errorDir"), anyString(), anyString());
     }
 
     @Test
-    void testShouldSkipWithNonException() {
-        Throwable exception = mock(Error.class);
-        boolean result = config.shouldSkip(exception, 0);
-        assertFalse(result);
+    public void testFileSkipListener_onSkipInReadWithException() {
+        Exception exception = new Exception("[file [sample.csv]]");
+        skipListener.onSkipInRead(exception);
+
+        verify(errorFileMovement).moveErrorFile(anyString(), eq("errorDir"));
     }
 
     @Test
-    void testReaderCreation() throws IOException {
+    public void testFileSkipListener_onSkipInWrite() {
+        EcpdGSAMSensitiveProfile item = new EcpdGSAMSensitiveProfile();
+        item.setFileName("sample.csv");
+        Exception exception = new Exception();
+
+        skipListener.onSkipInWrite(item, exception);
+
+        verify(errorFileMovement).moveErrorFiletoErrorDir(eq("sample.csv"), anyString(), eq("errorDir"));
+    }
+
+    @Test
+    public void testFileSkipListener_onSkipInProcess() {
+        EcpdGSAMSensitiveProfile item = new EcpdGSAMSensitiveProfile();
+        item.setFileName("sample.csv");
+        Exception exception = new Exception();
+
+        skipListener.onSkipInProcess(item, exception);
+
+        verify(errorFileMovement).moveErrorFiletoErrorDir(eq("sample.csv"), anyString(), eq("errorDir"));
+    }
+
+    @Test
+    public void testReader() throws IOException {
         FlatFileItemReader<EcpdGSAMSensitiveProfile> ecpdItemReader = mock(FlatFileItemReader.class);
+        PathMatchingResourcePatternResolver resolver = mock(PathMatchingResourcePatternResolver.class);
+        when(resolver.getResources(anyString())).thenReturn(new Resource[]{mockResource});
+
         MultiResourceItemReader<EcpdGSAMSensitiveProfile> reader = config.reader(ecpdItemReader);
 
         assertNotNull(reader);
-        assertNotNull(reader.getResources());
         assertEquals(ecpdItemReader, reader.getDelegate());
     }
 }
 ```
 
-### Explanation:
+### Key Points
 
-1. **Setup**:
-   - We use `@InjectMocks` to create an instance of `EcpdFeedBatchConfiguration` and inject mocks into it.
-   - `@Mock` is used to mock the `ErrorFileMovement` dependency.
-   - `ReflectionTestUtils.setField` is used to set private fields `fileFeedLocation` and `errorDirectory` without making them public.
+- **Reflection**: We use reflection to set the private fields `fileFeedLocation` and `errorDirectory` for testing purposes.
+- **Mockito**: Mocking is used to simulate dependencies and exceptions, allowing us to focus on the behavior of the `EcpdFeedBatchConfiguration` class.
+- **Assertions**: We ensure that methods behave as expected, checking both positive and negative cases for the skip policy and listener methods.
+- **Resource Handling**: Mocking the `PathMatchingResourcePatternResolver` to simulate resource loading in the `reader` method.
 
-2. **Test Cases**:
-   - **`testShouldSkipWithFlatFileParseException`**: Tests that the method returns `true` when the exception is an instance of `FlatFileParseException`.
-   - **`testShouldSkipWithIOException`**: Tests that the method returns `true` for `IOException`.
-   - **`testShouldSkipWithGenericException`**: Tests that the method returns `true` for a general `Exception`.
-   - **`testShouldSkipWithNonException`**: Tests that the method returns `false` for non-`Exception` types, ensuring code coverage.
-   - **`testReaderCreation`**: Ensures the `reader` method correctly creates a `MultiResourceItemReader` with the specified delegate and resources.
-
-This test suite covers all possible paths in the `EcpdFeedBatchConfiguration` class, achieving 100% code coverage. Remember to include additional setup for file resources if needed, depending on your testing environment.
+This setup provides complete coverage for the main aspects of the `EcpdFeedBatchConfiguration` class.

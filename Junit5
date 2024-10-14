@@ -1,69 +1,128 @@
+The error you're encountering is due to an invalid path being used in the tests. The `fileFeedLocation` string has a wildcard character that is not valid for path operations such as `Paths.get()`. To fix this, we need to ensure that the string used in path operations is properly formatted and doesn't include illegal characters.
+
+Here's how you can update your test cases to handle this:
+
+```java
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.batch.item.file.FlatFileParseException;
 import org.springframework.batch.item.file.MultiResourceItemReader;
-import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
-import org.springframework.batch.item.file.transform.RangeArrayPropertyEditor;
-import org.springframework.batch.item.file.transform.FixedLengthTokenizer;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.ResourcePatternResolver;
 
-import java.util.Collections;
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.nio.file.Paths;
 
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-@SpringBootTest
+@ExtendWith(MockitoExtension.class)
 public class EcpdFeedBatchConfigurationTest {
 
-    @Autowired
-    private EcpdFeedBatchConfiguration ecpdFeedBatchConfiguration;
+    @InjectMocks
+    private EcpdFeedBatchConfiguration config;
 
-    @MockBean
+    @Mock
     private ErrorFileMovement errorFileMovement;
 
-    @Test
-    public void testReader() {
-        MultiResourceItemReader reader = ecpdFeedBatchConfiguration.reader(new FlatFileItemReaderBuilder().build());
-        // Add test cases for the reader method
+    @Mock
+    private ResourcePatternResolver resourcePatternResolver;
+
+    @BeforeEach
+    public void setUp() throws Exception {
+        // Use reflection to set private fields
+        setPrivateField("fileFeedLocation", "classpath:test-data");
+        setPrivateField("errorDirectory", "error-dir");
+    }
+
+    private void setPrivateField(String fieldName, Object value) throws Exception {
+        Field field = EcpdFeedBatchConfiguration.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(config, value);
     }
 
     @Test
-    public void testFileSkipPolicy() {
-        EcpdFeedBatchConfiguration.EcpdFeedBatchConfigurationAccessor accessor = new EcpdFeedBatchConfiguration.EcpdFeedBatchConfigurationAccessor(ecpdFeedBatchConfiguration);
-        EcpdFeedBatchConfiguration.FileSkipPolicy fileSkipPolicy = accessor.createFileSkipPolicy();
-        // Add test cases for the FileSkipPolicy class
+    public void testShouldSkip() {
+        EcpdFeedBatchConfiguration.FileSkipPolicy skipPolicy = config.new FileSkipPolicy();
+
+        assertTrue(skipPolicy.shouldSkip(new FlatFileParseException("test", null, 0), 1));
+        assertTrue(skipPolicy.shouldSkip(new IOException(), 1));
+        assertTrue(skipPolicy.shouldSkip(new Exception(), 1));
+        assertFalse(skipPolicy.shouldSkip(new RuntimeException(), 1));
     }
 
     @Test
-    public void testFileSkipListener() {
-        EcpdFeedBatchConfiguration.EcpdFeedBatchConfigurationAccessor accessor = new EcpdFeedBatchConfiguration.EcpdFeedBatchConfigurationAccessor(ecpdFeedBatchConfiguration);
-        EcpdFeedBatchConfiguration.FileSkipListener fileSkipListener = accessor.createFileSkipListener();
-        // Add test cases for the FileSkipListener class
+    public void testOnSkipInReadWithFlatFileParseException() {
+        EcpdFeedBatchConfiguration.FileSkipListener skipListener = config.new FileSkipListener();
+        FlatFileParseException exception = new FlatFileParseException("message", null, 0);
+
+        when(errorFileMovement.extractFileNamePath(exception.getMessage())).thenReturn("file-path");
+
+        skipListener.onSkipInRead(exception);
+
+        verify(errorFileMovement, times(1)).writeErrorRecordsToFile(eq("error-dir"), anyString(), anyString());
     }
 
     @Test
-    public void testErrorFileMovementMethods() {
-        String errorDirectoryPath = "errorDir";
-        String fileName = "test.txt";
-        String data = "sample data";
+    public void testOnSkipInReadWithException() {
+        EcpdFeedBatchConfiguration.FileSkipListener skipListener = config.new FileSkipListener();
+        Exception exception = new Exception("message");
 
-        ecpdFeedBatchConfiguration.errorFileMovement.writeErrorRecordsToFile(errorDirectoryPath, fileName, data);
-        verify(errorFileMovement, times(1)).writeErrorRecordsToFile(errorDirectoryPath, fileName, data);
+        when(errorFileMovement.extracFileNamePath(exception.getMessage())).thenReturn("file-path");
 
-        String sourceFilePath = "source/test.txt";
-        String destinationDirectory = "destination";
-        ecpdFeedBatchConfiguration.errorFileMovement.moveErrorFile(sourceFilePath, destinationDirectory);
-        verify(errorFileMovement, times(1)).moveErrorFile(sourceFilePath, destinationDirectory);
+        skipListener.onSkipInRead(exception);
 
-        String srcPath = "srcPath";
-        String destPath = "destPath";
-        ecpdFeedBatchConfiguration.errorFileMovement.moveErrorFiletoErrorDir(fileName, srcPath, destPath);
-        verify(errorFileMovement, times(1)).moveErrorFiletoErrorDir(fileName, srcPath, destPath);
+        verify(errorFileMovement, times(1)).moveErrorFile(anyString(), eq("error-dir"));
+    }
 
-        String message = "[file [test.txt]]";
-        ecpdFeedBatchConfiguration.errorFileMovement.extractFileNamePath(message);
-        verify(errorFileMovement, times(1)).extractFileNamePath(message);
+    @Test
+    public void testReader() throws IOException {
+        Resource[] resources = new Resource[0];
+        when(resourcePatternResolver.getResources(anyString())).thenReturn(resources);
+
+        MultiResourceItemReader<EcpdGSAMSensitiveProfile> reader = config.reader(null);
+
+        assertNotNull(reader);
+        assertEquals(resources, reader.getResources());
+    }
+
+    @Test
+    public void testOnSkipInWrite() {
+        EcpdFeedBatchConfiguration.FileSkipListener skipListener = config.new FileSkipListener();
+        EcpdGSAMSensitiveProfile profile = new EcpdGSAMSensitiveProfile();
+        profile.setFileName("testFile.csv");
+
+        String sourcePath = Paths.get("src", "test", "resources", "test-data").toString(); // Fixed source path
+
+        skipListener.onSkipInWrite(profile, new Exception());
+
+        verify(errorFileMovement, times(1)).moveErrorFiletoErrorDir(eq("testFile.csv"), eq(sourcePath), eq("error-dir"));
+    }
+
+    @Test
+    public void testOnSkipInProcess() {
+        EcpdFeedBatchConfiguration.FileSkipListener skipListener = config.new FileSkipListener();
+        EcpdGSAMSensitiveProfile profile = new EcpdGSAMSensitiveProfile();
+        profile.setFileName("testFile.csv");
+
+        String sourcePath = Paths.get("src", "test", "resources", "test-data").toString(); // Fixed source path
+
+        skipListener.onSkipInProcess(profile, new Exception());
+
+        verify(errorFileMovement, times(1)).moveErrorFiletoErrorDir(eq("testFile.csv"), eq(sourcePath), eq("error-dir"));
     }
 }
+```
+
+### Key Changes:
+
+1. **File Location Path**: Changed the `fileFeedLocation` in the setup method to a valid path without wildcards (`"classpath:test-data"`). You need to ensure that the path reflects your actual test resource directory.
+
+2. **Source Path Handling**: In the `testOnSkipInWrite()` and `testOnSkipInProcess()` methods, the source path is constructed using `Paths.get()`, providing a valid path structure. Adjust `"src", "test", "resources", "test-data"` to reflect your actual test environment.
+
+By making these changes, the tests should no longer encounter the `InvalidPathException` and should execute correctly. Adjust the paths as necessary based on your project's directory structure.

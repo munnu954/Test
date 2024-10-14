@@ -1,58 +1,79 @@
-To address the error regarding the qualified new of a static class, we should ensure that `FileSkipPolicy` is treated as a static inner class. Since `FileSkipPolicy` is supposed to remain static, there's no need to qualify its instantiation with an instance of the enclosing class. Here's how you can reframe the `testShouldSkip` test case:
+To write JUnit 5 test cases for the `onSkipInProcess` and `onSkipInWrite` methods of the `EcpdFeedBatchConfiguration` class, you need to mock dependencies and use reflection to access private methods or fields if necessary. Here's an example of how you can achieve this:
 
 ```java
+import static org.mockito.Mockito.*;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.batch.item.file.FlatFileParseException;
-
-import java.io.IOException;
-import java.lang.reflect.Field;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 public class EcpdFeedBatchConfigurationTest {
 
-    @InjectMocks
-    private EcpdFeedBatchConfiguration config;
-
     @Mock
     private ErrorFileMovement errorFileMovement;
 
-    @BeforeEach
-    public void setUp() throws Exception {
-        // Use reflection to set private fields
-        setPrivateField("fileFeedLocation", "classpath:test-data");
-        setPrivateField("errorDirectory", "error-dir");
-    }
+    @InjectMocks
+    private EcpdFeedBatchConfiguration ecpdFeedBatchConfiguration;
 
-    private void setPrivateField(String fieldName, Object value) throws Exception {
-        Field field = EcpdFeedBatchConfiguration.class.getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(config, value);
+    private EcpdFeedBatchConfiguration.FileSkipListener fileSkipListener;
+
+    @BeforeEach
+    public void setUp() {
+        fileSkipListener = ecpdFeedBatchConfiguration.new FileSkipListener();
+        ReflectionTestUtils.setField(ecpdFeedBatchConfiguration, "fileFeedLocation", "file:/data/input");
+        ReflectionTestUtils.setField(ecpdFeedBatchConfiguration, "errorDirectory", "/data/error");
     }
 
     @Test
-    public void testShouldSkip() {
-        EcpdFeedBatchConfiguration.FileSkipPolicy skipPolicy = new EcpdFeedBatchConfiguration.FileSkipPolicy(); // Direct instantiation for static class
+    public void testOnSkipInProcess() {
+        EcpdGSAMSensitiveProfile profile = new EcpdGSAMSensitiveProfile();
+        profile.setFileName("testFile.txt");
+        Exception exception = new Exception("Test exception");
 
-        assertTrue(skipPolicy.shouldSkip(new FlatFileParseException("test", null, 0), 1));
-        assertTrue(skipPolicy.shouldSkip(new IOException(), 1));
-        assertTrue(skipPolicy.shouldSkip(new Exception(), 1));
-        assertFalse(skipPolicy.shouldSkip(new RuntimeException(), 1));
+        fileSkipListener.onSkipInProcess(profile, exception);
+
+        String expectedSourcePath = Paths.get("/data/input").toString();
+        verify(errorFileMovement).moveErrorFiletoErrorDir("testFile.txt", expectedSourcePath, "/data/error");
     }
 
-    // Other test cases remain unchanged
+    @Test
+    public void testOnSkipInWrite() {
+        EcpdGSAMSensitiveProfile profile = new EcpdGSAMSensitiveProfile();
+        profile.setFileName("testFile.txt");
+        Exception exception = new Exception("Test exception");
+
+        fileSkipListener.onSkipInWrite(profile, exception);
+
+        String expectedSourcePath = Paths.get("/data/input").toString();
+        verify(errorFileMovement).moveErrorFiletoErrorDir("testFile.txt", expectedSourcePath, "/data/error");
+    }
 }
 ```
 
-### Key Changes:
+### Explanation:
 
-- **Static Inner Class Instantiation**: Since `FileSkipPolicy` is a static inner class, you can directly instantiate it without reference to an instance of `EcpdFeedBatchConfiguration`. This avoids the need for a qualified new instance and resolves the compilation error.
+1. **Annotations**:
+   - `@ExtendWith(MockitoExtension.class)`: This is used to enable Mockito annotations in JUnit 5.
+   - `@Mock`: Annotates the `ErrorFileMovement` class to create a mock instance.
+   - `@InjectMocks`: This annotation is used to inject the mock objects into our `EcpdFeedBatchConfiguration` object.
 
-This setup should fix the error and allow your test to run as expected.
+2. **ReflectionTestUtils**:
+   - This utility from Spring can be used to set private fields directly, allowing you to keep the fields private and still test them.
+
+3. **Test Methods**:
+   - Each test method sets up a new `EcpdGSAMSensitiveProfile` object and an exception.
+   - The `onSkipInProcess` and `onSkipInWrite` methods of the `FileSkipListener` inner class are called directly.
+   - The `verify` method is used to ensure that the `moveErrorFiletoErrorDir` method was called with the expected parameters.
+
+4. **Reflection**:
+   - Using `ReflectionTestUtils.setField`, you can set the value of private fields without changing their visibility.
+
+This test setup assumes that the `ErrorFileMovement` methods are correctly mocked and doesn't actually move any files. You can further customize these tests to fit your specific setup and requirements.

@@ -1,79 +1,87 @@
-To write JUnit 5 test cases for the `onSkipInProcess` and `onSkipInWrite` methods of the `EcpdFeedBatchConfiguration` class, you need to mock dependencies and use reflection to access private methods or fields if necessary. Here's an example of how you can achieve this:
-
-```java
-import static org.mockito.Mockito.*;
-
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.batch.core.step.skip.SkipLimitExceededException;
+import org.springframework.batch.item.file.FlatFileParseException;
+import org.springframework.batch.item.file.ResourceAware;
 import org.springframework.test.util.ReflectionTestUtils;
+
+import java.io.IOException;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 public class EcpdFeedBatchConfigurationTest {
 
+    @InjectMocks
+    private EcpdFeedBatchConfiguration.FileSkipListener fileSkipListener;
+
     @Mock
     private ErrorFileMovement errorFileMovement;
 
-    @InjectMocks
-    private EcpdFeedBatchConfiguration ecpdFeedBatchConfiguration;
-
-    private EcpdFeedBatchConfiguration.FileSkipListener fileSkipListener;
+    private EcpdGSAMSensitiveProfile ecpdGSAMSensitiveProfile;
 
     @BeforeEach
-    public void setUp() {
-        fileSkipListener = ecpdFeedBatchConfiguration.new FileSkipListener();
-        ReflectionTestUtils.setField(ecpdFeedBatchConfiguration, "fileFeedLocation", "file:/data/input");
-        ReflectionTestUtils.setField(ecpdFeedBatchConfiguration, "errorDirectory", "/data/error");
+    void setUp() {
+        ecpdGSAMSensitiveProfile = new EcpdGSAMSensitiveProfile();
+        ecpdGSAMSensitiveProfile.setFileName("test.csv");
+        ReflectionTestUtils.setField(fileSkipListener, "fileFeedLocation", "/path/to/file.csv");
     }
 
     @Test
-    public void testOnSkipInProcess() {
-        EcpdGSAMSensitiveProfile profile = new EcpdGSAMSensitiveProfile();
-        profile.setFileName("testFile.txt");
-        Exception exception = new Exception("Test exception");
+    void shouldMoveErrorFileToErrorDirectoryOnSkipInProcess() {
+        Exception exception = new Exception("Error occurred during processing");
+        doNothing().when(errorFileMovement).moveErrorFiletoErrorDir(anyString(), anyString(), anyString());
 
-        fileSkipListener.onSkipInProcess(profile, exception);
+        fileSkipListener.onSkipInProcess(ecpdGSAMSensitiveProfile, exception);
 
-        String expectedSourcePath = Paths.get("/data/input").toString();
-        verify(errorFileMovement).moveErrorFiletoErrorDir("testFile.txt", expectedSourcePath, "/data/error");
+        verify(errorFileMovement).moveErrorFiletoErrorDir(ecpdGSAMSensitiveProfile.getFileName(), "/path/to", "none");
     }
 
     @Test
-    public void testOnSkipInWrite() {
-        EcpdGSAMSensitiveProfile profile = new EcpdGSAMSensitiveProfile();
-        profile.setFileName("testFile.txt");
-        Exception exception = new Exception("Test exception");
+    void shouldMoveErrorFileToErrorDirectoryOnSkipInWrite() {
+        Exception exception = new Exception("Error occurred during write");
+        doNothing().when(errorFileMovement).moveErrorFiletoErrorDir(anyString(), anyString(), anyString());
 
-        fileSkipListener.onSkipInWrite(profile, exception);
+        fileSkipListener.onSkipInWrite(ecpdGSAMSensitiveProfile, exception);
 
-        String expectedSourcePath = Paths.get("/data/input").toString();
-        verify(errorFileMovement).moveErrorFiletoErrorDir("testFile.txt", expectedSourcePath, "/data/error");
+        verify(errorFileMovement).moveErrorFiletoErrorDir(ecpdGSAMSensitiveProfile.getFileName(), "/path/to", "none");
+    }
+
+    @Test
+    void shouldWriteErrorRecordsToFileOnSkipInReadForFlatFileParseException() {
+        FlatFileParseException ffpe = new FlatFileParseException("Error occurred during parsing", "test,data,row");
+        doNothing().when(errorFileMovement).writeErrorRecordsToFile(anyString(), anyString(), anyString());
+        doNothing().when(errorFileMovement).moveErrorFile(anyString(), anyString());
+
+        fileSkipListener.onSkipInRead(ffpe);
+
+        verify(errorFileMovement).writeErrorRecordsToFile("none", "test.csv_error", "PROFILE_ID|~COMPANY_NAME| ~PROFILE_TYPE|~SENSITIVITY_LEVEL|~SENSITIVITY_TOKEN|~ACTION\ntest,data,row\n");
+    }
+
+    @Test
+    void shouldMoveErrorFileToErrorDirectoryOnSkipInReadForIOException() {
+        IOException ioe = new IOException("Error occurred during file read");
+        doNothing().when(errorFileMovement).moveErrorFile(anyString(), anyString());
+
+        fileSkipListener.onSkipInRead(ioe);
+
+        verify(errorFileMovement).moveErrorFile("/path/to/test.csv", "none");
+    }
+
+    @Test
+    void shouldMoveErrorFileToErrorDirectoryOnSkipInReadForGenericException() {
+        Exception e = new Exception("Generic exception occurred");
+        doNothing().when(errorFileMovement).moveErrorFile(anyString(), anyString());
+
+        fileSkipListener.onSkipInRead(e);
+
+        verify(errorFileMovement).moveErrorFile("/path/to/test.csv", "none");
     }
 }
-```
-
-### Explanation:
-
-1. **Annotations**:
-   - `@ExtendWith(MockitoExtension.class)`: This is used to enable Mockito annotations in JUnit 5.
-   - `@Mock`: Annotates the `ErrorFileMovement` class to create a mock instance.
-   - `@InjectMocks`: This annotation is used to inject the mock objects into our `EcpdFeedBatchConfiguration` object.
-
-2. **ReflectionTestUtils**:
-   - This utility from Spring can be used to set private fields directly, allowing you to keep the fields private and still test them.
-
-3. **Test Methods**:
-   - Each test method sets up a new `EcpdGSAMSensitiveProfile` object and an exception.
-   - The `onSkipInProcess` and `onSkipInWrite` methods of the `FileSkipListener` inner class are called directly.
-   - The `verify` method is used to ensure that the `moveErrorFiletoErrorDir` method was called with the expected parameters.
-
-4. **Reflection**:
-   - Using `ReflectionTestUtils.setField`, you can set the value of private fields without changing their visibility.
-
-This test setup assumes that the `ErrorFileMovement` methods are correctly mocked and doesn't actually move any files. You can further customize these tests to fit your specific setup and requirements.

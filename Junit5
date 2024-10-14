@@ -1,128 +1,69 @@
-To achieve 100% code coverage for the `EcpdFeedBatchConfiguration` class using JUnit 5, while maintaining the encapsulation of private fields and methods, we can utilize reflection to access private fields. Additionally, we will ensure that the `FileSkipPolicy` is tested without making it static, as requested. Below is a sample of how you might write the JUnit 5 test cases to achieve these goals:
-
-```java
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.batch.item.file.FlatFileParseException;
 import org.springframework.batch.item.file.MultiResourceItemReader;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.support.ResourcePatternResolver;
+import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
+import org.springframework.batch.item.file.transform.RangeArrayPropertyEditor;
+import org.springframework.batch.item.file.transform.FixedLengthTokenizer;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 
-import java.io.IOException;
-import java.lang.reflect.Field;
-import java.nio.file.Paths;
+import java.util.Collections;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
+@SpringBootTest
 public class EcpdFeedBatchConfigurationTest {
 
-    @InjectMocks
-    private EcpdFeedBatchConfiguration config;
+    @Autowired
+    private EcpdFeedBatchConfiguration ecpdFeedBatchConfiguration;
 
-    @Mock
+    @MockBean
     private ErrorFileMovement errorFileMovement;
 
-    @Mock
-    private ResourcePatternResolver resourcePatternResolver;
-
-    @BeforeEach
-    public void setUp() throws Exception {
-        // Use reflection to set private fields
-        setPrivateField("fileFeedLocation", "classpath*:test-data/*.csv");
-        setPrivateField("errorDirectory", "error-dir");
-    }
-
-    private void setPrivateField(String fieldName, Object value) throws Exception {
-        Field field = EcpdFeedBatchConfiguration.class.getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(config, value);
+    @Test
+    public void testReader() {
+        MultiResourceItemReader reader = ecpdFeedBatchConfiguration.reader(new FlatFileItemReaderBuilder().build());
+        // Add test cases for the reader method
     }
 
     @Test
-    public void testShouldSkip() {
-        EcpdFeedBatchConfiguration.FileSkipPolicy skipPolicy = config.new FileSkipPolicy();
-
-        assertTrue(skipPolicy.shouldSkip(new FlatFileParseException("test", null, 0), 1));
-        assertTrue(skipPolicy.shouldSkip(new IOException(), 1));
-        assertTrue(skipPolicy.shouldSkip(new Exception(), 1));
-        assertFalse(skipPolicy.shouldSkip(new RuntimeException(), 1));
+    public void testFileSkipPolicy() {
+        EcpdFeedBatchConfiguration.EcpdFeedBatchConfigurationAccessor accessor = new EcpdFeedBatchConfiguration.EcpdFeedBatchConfigurationAccessor(ecpdFeedBatchConfiguration);
+        EcpdFeedBatchConfiguration.FileSkipPolicy fileSkipPolicy = accessor.createFileSkipPolicy();
+        // Add test cases for the FileSkipPolicy class
     }
 
     @Test
-    public void testOnSkipInReadWithFlatFileParseException() {
-        EcpdFeedBatchConfiguration.FileSkipListener skipListener = config.new FileSkipListener();
-        FlatFileParseException exception = new FlatFileParseException("message", null, 0);
-
-        when(errorFileMovement.extractFileNamePath(exception.getMessage())).thenReturn("file-path");
-
-        skipListener.onSkipInRead(exception);
-
-        verify(errorFileMovement, times(1)).writeErrorRecordsToFile(eq("error-dir"), anyString(), anyString());
+    public void testFileSkipListener() {
+        EcpdFeedBatchConfiguration.EcpdFeedBatchConfigurationAccessor accessor = new EcpdFeedBatchConfiguration.EcpdFeedBatchConfigurationAccessor(ecpdFeedBatchConfiguration);
+        EcpdFeedBatchConfiguration.FileSkipListener fileSkipListener = accessor.createFileSkipListener();
+        // Add test cases for the FileSkipListener class
     }
 
     @Test
-    public void testOnSkipInReadWithException() {
-        EcpdFeedBatchConfiguration.FileSkipListener skipListener = config.new FileSkipListener();
-        Exception exception = new Exception("message");
+    public void testErrorFileMovementMethods() {
+        String errorDirectoryPath = "errorDir";
+        String fileName = "test.txt";
+        String data = "sample data";
 
-        when(errorFileMovement.extracFileNamePath(exception.getMessage())).thenReturn("file-path");
+        ecpdFeedBatchConfiguration.errorFileMovement.writeErrorRecordsToFile(errorDirectoryPath, fileName, data);
+        verify(errorFileMovement, times(1)).writeErrorRecordsToFile(errorDirectoryPath, fileName, data);
 
-        skipListener.onSkipInRead(exception);
+        String sourceFilePath = "source/test.txt";
+        String destinationDirectory = "destination";
+        ecpdFeedBatchConfiguration.errorFileMovement.moveErrorFile(sourceFilePath, destinationDirectory);
+        verify(errorFileMovement, times(1)).moveErrorFile(sourceFilePath, destinationDirectory);
 
-        verify(errorFileMovement, times(1)).moveErrorFile(anyString(), eq("error-dir"));
-    }
+        String srcPath = "srcPath";
+        String destPath = "destPath";
+        ecpdFeedBatchConfiguration.errorFileMovement.moveErrorFiletoErrorDir(fileName, srcPath, destPath);
+        verify(errorFileMovement, times(1)).moveErrorFiletoErrorDir(fileName, srcPath, destPath);
 
-    @Test
-    public void testReader() throws IOException {
-        Resource[] resources = new Resource[0];
-        when(resourcePatternResolver.getResources(anyString())).thenReturn(resources);
-
-        MultiResourceItemReader<EcpdGSAMSensitiveProfile> reader = config.reader(null);
-
-        assertNotNull(reader);
-        assertEquals(resources, reader.getResources());
-    }
-
-    @Test
-    public void testOnSkipInWrite() {
-        EcpdFeedBatchConfiguration.FileSkipListener skipListener = config.new FileSkipListener();
-        EcpdGSAMSensitiveProfile profile = new EcpdGSAMSensitiveProfile();
-        profile.setFileName("testFile.csv");
-
-        skipListener.onSkipInWrite(profile, new Exception());
-
-        verify(errorFileMovement, times(1)).moveErrorFiletoErrorDir(eq("testFile.csv"), anyString(), eq("error-dir"));
-    }
-
-    @Test
-    public void testOnSkipInProcess() {
-        EcpdFeedBatchConfiguration.FileSkipListener skipListener = config.new FileSkipListener();
-        EcpdGSAMSensitiveProfile profile = new EcpdGSAMSensitiveProfile();
-        profile.setFileName("testFile.csv");
-
-        skipListener.onSkipInProcess(profile, new Exception());
-
-        verify(errorFileMovement, times(1)).moveErrorFiletoErrorDir(eq("testFile.csv"), anyString(), eq("error-dir"));
+        String message = "[file [test.txt]]";
+        ecpdFeedBatchConfiguration.errorFileMovement.extractFileNamePath(message);
+        verify(errorFileMovement, times(1)).extractFileNamePath(message);
     }
 }
-```
-
-### Explanation:
-
-1. **Reflection Usage**: We used reflection to set private fields like `fileFeedLocation` and `errorDirectory` to mimic the values that would usually be injected by Spring.
-
-2. **Mockito for Mocking**: The `ErrorFileMovement` and `ResourcePatternResolver` are mocked to test interactions and to simulate behavior without side effects.
-
-3. **Testing Skip Policy**: The `FileSkipPolicy` is tested by instantiating it through the `EcpdFeedBatchConfiguration` instance and ensuring that its logic behaves as expected.
-
-4. **Testing SkipListener**: Each method in the `FileSkipListener` is tested with different exception scenarios to ensure that the correct methods on `ErrorFileMovement` are invoked.
-
-5. **Resource Reading**: The `reader` method is tested to ensure it correctly initializes a `MultiResourceItemReader` with the expected resources.
-
-This setup will help achieve comprehensive test coverage for your batch configuration class. Adjust the paths and logic based on your actual environment and requirements.

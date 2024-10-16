@@ -1,102 +1,132 @@
-Certainly! To cover the `convertToObject` method with JUnit 5 test cases, we first need to ensure a few things:
+To create JUnit 5 test cases for the `CTIEcpdService` class, we will need to mock the `RedisTemplate` and test each method. The tests will cover the following scenarios:
 
-1. **Correct Implementation**: Ensure the method is implemented correctly, including proper error handling.
-2. **Test Class**: Create a test class that includes a valid XML string and a corresponding Java class to map to.
+1. **Saving CTIData**: Ensure that data is saved and the expiration time is set.
+2. **Finding CTIData by ID**: Validate that the correct data is returned.
+3. **Deleting CTIData by ID**: Check that the data is deleted correctly.
 
-### Updated `convertToObject` Method
-Here is the method again for reference, with a slight improvement to handle exceptions gracefully:
+We'll use Mockito to mock the dependencies and behaviors of the `RedisTemplate`. Here’s how you can set up the test class with comprehensive test cases:
 
-```java
-public <T> T convertToObject(String xml, Class<T> clazz) throws JsonProcessingException, JAXBException {
-    JAXBContext jaxbContext;
-    Unmarshaller jaxbUnmarshaller;
-
-    try {
-        jaxbContext = JAXBContext.newInstance(clazz);
-        jaxbUnmarshaller = jaxbContext.createUnmarshaller();
-    } catch (JAXBException e) {
-        LOGGER.error("Unable to convert - ", e);
-        throw e; // Rethrow the exception so that the caller can handle it
-    }
-
-    StringReader reader = new StringReader(xml);
-    return (T) jaxbUnmarshaller.unmarshal(reader);
-}
-```
-
-### JUnit 5 Test Case for `convertToObject`
-Here’s how to create a JUnit 5 test case for the `convertToObject` method. We will use a simple Java class that can be mapped from XML.
-
-#### Example Java Class
-Create a simple Java class named `TestClass` that represents the XML structure:
+### Test Class for CTIEcpdService
 
 ```java
-import javax.xml.bind.annotation.XmlElement;
-import javax.xml.bind.annotation.XmlRootElement;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
-@XmlRootElement(name = "testClass")
-public class TestClass {
-    private String name;
-
-    @XmlElement
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-}
-```
-
-#### Test Case
-Now, let’s write the JUnit 5 test case for the `convertToObject` method:
-
-```java
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.RedisTemplate;
 
-import javax.xml.bind.JAXBException;
+import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.*;
+@ExtendWith(MockitoExtension.class)
+class CTIEcpdServiceTest {
 
-class BatchLoaderUtilsTest {
+    @Mock
+    private RedisTemplate<String, CTIDataStore> redisTemplate;
 
-    private BatchLoaderUtils batchLoaderUtils;
+    @InjectMocks
+    private CTIEcpdService ctiEcpdService;
+
+    private CTIDataStore testData;
 
     @BeforeEach
     void setUp() {
-        batchLoaderUtils = new BatchLoaderUtils();
+        testData = new CTIDataStore();
+        testData.setCiscoCallId("12345");
+        ctiEcpdService.ttl = 60; // Set TTL for testing
     }
 
     @Test
-    void testConvertToObject_WithValidXml() throws JAXBException, JsonProcessingException {
-        String xml = "<testClass><name>testName</name></testClass>";
-        TestClass result = batchLoaderUtils.convertToObject(xml, TestClass.class);
+    void testSaveCTIData() {
+        // When saving CTIData, mock the behavior of redisTemplate
+        doNothing().when(redisTemplate.opsForValue()).set(any(String.class), any(CTIDataStore.class));
+        when(redisTemplate.expire(any(String.class), any(Long.class), any(TimeUnit.class))).thenReturn(true);
 
-        assertNotNull(result, "The result should not be null");
-        assertEquals("testName", result.getName(), "The name should match the expected value");
+        // Call the method under test
+        ctiEcpdService.saveCTIData(testData);
+
+        // Validate that the data is saved and expire is called
+        verify(redisTemplate.opsForValue()).set("CTIDataStore: 12345", testData);
+        verify(redisTemplate).expire("CTIDataStore: 12345", 60, TimeUnit.SECONDS);
     }
 
     @Test
-    void testConvertToObject_WithInvalidXml() {
-        String invalidXml = "<invalidClass><name>testName</name></invalidClass>";
+    void testFindById_WithExistingId() {
+        // Mock the redisTemplate to return a value when get is called
+        when(redisTemplate.opsForValue().get("CTIDataStore: 12345")).thenReturn(testData);
 
-        assertThrows(JAXBException.class, () -> {
-            batchLoaderUtils.convertToObject(invalidXml, TestClass.class);
-        }, "Expected JAXBException for invalid XML structure");
+        // Call the method under test
+        CTIDataStore result = ctiEcpdService.findById("12345");
+
+        // Validate the result
+        assertNotNull(result);
+        assertEquals("12345", result.getCiscoCallId());
+    }
+
+    @Test
+    void testFindById_WithNonExistingId() {
+        // Mock the redisTemplate to return null when get is called with a non-existing ID
+        when(redisTemplate.opsForValue().get("CTIDataStore: 67890")).thenReturn(null);
+
+        // Call the method under test
+        CTIDataStore result = ctiEcpdService.findById("67890");
+
+        // Validate the result
+        assertNull(result);
+    }
+
+    @Test
+    void testDeleteById_WithExistingId() {
+        // Mock the delete method to return true
+        when(redisTemplate.delete("CTIDataStore: 12345")).thenReturn(true);
+
+        // Call the method under test
+        Boolean result = ctiEcpdService.deleteById("12345");
+
+        // Validate the result
+        assertTrue(result);
+        verify(redisTemplate).delete("CTIDataStore: 12345");
+    }
+
+    @Test
+    void testDeleteById_WithNonExistingId() {
+        // Mock the delete method to return false
+        when(redisTemplate.delete("CTIDataStore: 67890")).thenReturn(false);
+
+        // Call the method under test
+        Boolean result = ctiEcpdService.deleteById("67890");
+
+        // Validate the result
+        assertFalse(result);
+        verify(redisTemplate).delete("CTIDataStore: 67890");
     }
 }
 ```
 
 ### Explanation of the Test Cases
-1. **`testConvertToObject_WithValidXml`**:
-   - Valid XML is provided that corresponds to the `TestClass`.
-   - The test asserts that the object is not null and that the `name` field matches the expected value.
 
-2. **`testConvertToObject_WithInvalidXml`**:
-   - An invalid XML structure is provided that does not match the expected format of `TestClass`.
-   - The test asserts that a `JAXBException` is thrown when trying to convert the invalid XML.
+1. **Setup**: Before each test, we instantiate a `CTIDataStore` object with a test Cisco call ID and set the TTL value for testing.
 
-### Summary
-This test class effectively covers the `convertToObject` method, including both valid and invalid scenarios. Make sure to run the tests, and they should pass if the method is implemented correctly and the XML is structured properly.
+2. **`testSaveCTIData`**: 
+   - This test verifies that the `saveCTIData` method correctly saves the `CTIDataStore` object and sets the expiration time.
+   - We use `doNothing()` on `set` and `when(...).thenReturn(true)` to simulate the expected behavior.
+
+3. **`testFindById_WithExistingId`**:
+   - This test checks whether the `findById` method correctly retrieves a `CTIDataStore` when it exists in Redis.
+
+4. **`testFindById_WithNonExistingId`**:
+   - This test checks that the `findById` method returns `null` when the ID does not exist in Redis.
+
+5. **`testDeleteById_WithExistingId`**:
+   - This test verifies that the `deleteById` method successfully deletes a `CTIDataStore` when it exists.
+
+6. **`testDeleteById_WithNonExistingId`**:
+   - This test checks that the `deleteById` method correctly returns `false` when attempting to delete a non-existing ID.
+
+### Conclusion
+
+With these test cases, all branches of the `CTIEcpdService` class methods are covered, ensuring that each method behaves as expected under different conditions. Make sure that your `CTIDataStore` class is properly defined, and adjust any package imports if necessary.

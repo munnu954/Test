@@ -1,145 +1,157 @@
-To achieve 100% code coverage for the `FalloutBatchConfiguration` class using JUnit 5, you'll need to create a test class that mocks the dependencies and tests each method. Below is an example test class for `FalloutBatchConfiguration`. This assumes you have the necessary testing libraries such as Mockito and Spring Test in your project.
+Here are some JUnit 5 test cases for the `BatchLoaderUtils` class you've provided. The test cases cover various methods and their expected outcomes, including edge cases.
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemReader;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.item.database.JdbcCursorItemReader;
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
-import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
-import org.springframework.batch.core.launch.support.RunIdIncrementer;
-import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.transaction.PlatformTransactionManager;
 
-import javax.sql.DataSource;
+import javax.xml.bind.JAXBException;
+import java.util.List;
 
-@ExtendWith(MockitoExtension.class)
-@EnableBatchProcessing
-public class FalloutBatchConfigurationTest {
+import static org.junit.jupiter.api.Assertions.*;
 
-    @InjectMocks
-    private FalloutBatchConfiguration configuration;
+class BatchLoaderUtilsTest {
 
-    @Mock
-    private DataSource dataSource;
-
-    @Mock
-    private KafkaFailedMessageService failedMessageService;
-
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Mock
-    private SensitiveProfileManager profileManager;
-
-    @Mock
-    private BatchLoaderUtils utils;
-
-    @Mock
-    private JobRepository jobRepository;
-
-    @Value("${kafka-fallout-batch.query-noofdays:2}")
-    private int noofDays;
-
-    @Value("${kafka-fallout-batch.max-rows:20000}")
-    private int maxRows;
+    private BatchLoaderUtils batchLoaderUtils;
 
     @BeforeEach
-    public void setUp() {
-        // Set the values for noofDays and maxRows if needed
+    void setUp() {
+        batchLoaderUtils = new BatchLoaderUtils();
     }
 
     @Test
-    public void testTransactionManager() {
-        PlatformTransactionManager transactionManager = configuration.transactionManager();
-        assertNotNull(transactionManager);
-        assertTrue(transactionManager instanceof DataSourceTransactionManager);
+    void testReturnHeaders_WithNullValue() {
+        List<Header> headers = batchLoaderUtils.returnHeaders(null);
+        assertTrue(headers.isEmpty());
     }
 
     @Test
-    public void testNspKafkaFalloutJob() {
-        Step step = mock(Step.class);
-        Job job = configuration.nspkafkaFalloutJob(jobRepository, step, new FalloutJobExecutionListener());
-        assertNotNull(job);
-        assertEquals("nspKafkaFalloutJob", job.getName());
+    void testReturnHeaders_WithEmptyString() {
+        List<Header> headers = batchLoaderUtils.returnHeaders("");
+        assertTrue(headers.isEmpty());
     }
 
     @Test
-    public void testNspKafkaFalloutStep() {
-        Step step = configuration.nspKafkaFalloutStep(jobRepository, configuration.transactionManager());
-        assertNotNull(step);
-        assertEquals("nspKafkaFalloutStep", step.getName());
+    void testReturnHeaders_WithValidValue() {
+        List<Header> headers = batchLoaderUtils.returnHeaders("testValue");
+        assertEquals(1, headers.size());
+        assertEquals("expectedHeaderName", headers.get(0).key());
+        assertArrayEquals("testValue".getBytes(), headers.get(0).value());
     }
 
     @Test
-    public void testKafkaFalloutReader() {
-        JdbcCursorItemReader<KafkaFailedMessagesEntity> reader = configuration.kafkaFalloutReader();
-        assertNotNull(reader);
-        assertEquals("KafkaFalloutReader", reader.getName());
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor() {
-        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = configuration.kafkaFalloutProcessor();
-        assertNotNull(processor);
-
-        // Define test input
-        KafkaFailedMessagesEntity testEntity = new KafkaFailedMessagesEntity();
-        testEntity.setPayload("{\"ECPD_ID\": \"testId\"}");
-        testEntity.setSensitivityChecked('N');
-
-        // Execute processor
-        KafkaFailedMessagesEntity result = processor.process(testEntity);
+    void testConvert_WithValidJson() throws JsonProcessingException {
+        String json = "{\"name\":\"test\"}";
+        TestClass result = batchLoaderUtils.convert(json, TestClass.class);
         assertNotNull(result);
-        assertEquals('Y', result.getSensitivityChecked());
+        assertEquals("test", result.getName());
     }
 
     @Test
-    public void testKafkaFalloutWriter() {
-        ItemWriter<KafkaFailedMessagesEntity> writer = configuration.kafkaFalloutWriter();
-        assertNotNull(writer);
+    void testConvertToJSON_WithValidObject() throws JsonProcessingException {
+        TestClass testObject = new TestClass("test");
+        String json = batchLoaderUtils.convertToJSON(testObject);
+        assertEquals("{\"name\":\"test\"}", json);
+    }
 
-        // Define test input
-        KafkaFailedMessagesEntity testEntity = new KafkaFailedMessagesEntity();
-        testEntity.setId(new KafkaFailedMessagesPK());
-        testEntity.setPayload("testPayload");
+    @Test
+    void testConvertToObject_WithValidXml() throws JsonProcessingException, JAXBException {
+        String xml = "<testClass><name>test</name></testClass>";
+        TestClass result = batchLoaderUtils.convertToObject(xml, TestClass.class);
+        assertNotNull(result);
+        assertEquals("test", result.getName());
+    }
 
-        // Execute writer
-        writer.write(List.of(testEntity));
+    @Test
+    void testConvertToXML_WithValidObject() throws JsonProcessingException {
+        TestClass testObject = new TestClass("test");
+        String xml = batchLoaderUtils.convertToXML(testObject);
+        assertTrue(xml.contains("<name>test</name>"));
+    }
 
-        // Add assertions or verifications as needed
-        verify(kafkaTemplate, times(1)).send(any(String.class), any(String.class));
+    @Test
+    void testConvertXMLtoObj_WithValidXml() throws JsonProcessingException {
+        String xml = "<testClass><name>test</name></testClass>";
+        TestClass result = batchLoaderUtils.convertXMLtoObj(xml, TestClass.class);
+        assertNotNull(result);
+        assertEquals("test", result.getName());
+    }
+
+    @Test
+    void testIsValidData_WithNullInput() {
+        assertFalse(batchLoaderUtils.isValidData(null));
+    }
+
+    @Test
+    void testIsValidData_WithEmptyInput() {
+        assertFalse(batchLoaderUtils.isValidData(""));
+    }
+
+    @Test
+    void testIsValidData_WithBlankInput() {
+        assertFalse(batchLoaderUtils.isValidData("  "));
+    }
+
+    @Test
+    void testIsValidData_WithZeroInput() {
+        assertFalse(batchLoaderUtils.isValidData("0"));
+    }
+
+    @Test
+    void testIsValidData_WithValidInput() {
+        assertTrue(batchLoaderUtils.isValidData("validInput"));
+    }
+
+    @Test
+    void testIvrExtraction_WithValidInput() {
+        String result = batchLoaderUtils.ivrExtraction("prefix*ivrCallId*suffix");
+        assertEquals("ivrCallId", result);
+    }
+
+    @Test
+    void testCallTypeExtraction_WithValidInput() {
+        String result = batchLoaderUtils.callTypeExtraction("callType1;callType2");
+        assertEquals("callType1", result);
+    }
+
+    // Dummy test class for JSON/XML conversion tests
+    static class TestClass {
+        private String name;
+
+        public TestClass() {
+        }
+
+        public TestClass(String name) {
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
     }
 }
 ```
 
 ### Explanation:
-1. **Mocks**: The necessary dependencies are mocked using Mockito.
-2. **InjectMocks**: The `FalloutBatchConfiguration` is instantiated with the mocked dependencies.
-3. **Tests**: Each method of the `FalloutBatchConfiguration` class is tested to ensure it behaves as expected. 
-   - The `transactionManager`, `nspkafkaFalloutJob`, and `nspKafkaFalloutStep` methods are tested to ensure they return the correct objects.
-   - The `kafkaFalloutReader` method is tested to check if it initializes correctly.
-   - The `kafkaFalloutProcessor` method is verified by simulating a processing scenario.
-   - The `kafkaFalloutWriter` method is tested by verifying that it attempts to send a message to Kafka.
+1. **Setup**: Each test begins with creating an instance of `BatchLoaderUtils`.
+2. **Test Methods**: Each method from the `BatchLoaderUtils` class is covered:
+   - `returnHeaders()`
+   - `convert()`
+   - `convertToJSON()`
+   - `convertToObject()`
+   - `convertToXML()`
+   - `convertXMLtoObj()`
+   - `isValidData()`
+   - `ivrExtraction()`
+   - `callTypeExtraction()`
+3. **Assertions**: Use assertions to verify expected outcomes.
 
 ### Note:
-- Adjustments may be needed based on your actual implementation details, especially for mocking behavior and verifying interactions.
-- Add additional assertions and verifications as necessary to ensure comprehensive coverage of edge cases and error conditions.
+- Replace `"expectedHeaderName"` in the first test for `returnHeaders` with the actual expected header name.
+- Ensure that `TestClass` accurately reflects the structure of the JSON/XML you are working with.
+- You may need to modify the imports and package declarations as per your project structure.

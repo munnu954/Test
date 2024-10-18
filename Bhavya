@@ -1,92 +1,109 @@
-To achieve 100% code coverage for the `DataSourceConfig` class using JUnit 5, you need to create test cases that verify each of the beans being initialized, as well as their configurations. Below is a suggested implementation for the JUnit 5 test class:
+To create JUnit 5 test cases for the `KafkaFalloutBatchConfig` class that achieve 100% code coverage, you need to mock dependencies and test various branches of the `kafkaFalloutProcessor` method. Below is a sample test class that covers different scenarios:
 
 ```java
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
-import javax.sql.DataSource;
-
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
-import org.springframework.boot.jdbc.DataSourceBuilder;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.orm.jpa.JpaTransactionManager;
-import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
-import org.springframework.transaction.PlatformTransactionManager;
+import reactor.core.publisher.Mono;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class DataSourceConfigTest {
-
-    @Mock
-    private DataSourceModal dataSourceModal;
+public class KafkaFalloutBatchConfigTest {
 
     @InjectMocks
-    private DataSourceConfig dataSourceConfig;
+    private KafkaFalloutBatchConfig kafkaFalloutBatchConfig;
+
+    @Mock
+    private KafkaFalloutService failedMessageService;
+
+    @Mock
+    private BatchLoaderUtils utils;
+
+    @Mock
+    private MtnEcpdService mtnEcpdService;
+
+    private KafkaFailedMessagesEntity item;
+    private CallInfoServiceEvent callInfoServiceEvent;
 
     @BeforeEach
-    void setUp() {
-        when(dataSourceModal.getUsername()).thenReturn("testUser");
-        when(dataSourceModal.getPassword()).thenReturn("testPass");
-        when(dataSourceModal.getUrl()).thenReturn("jdbc:mysql://localhost:3306/testdb");
-        when(dataSourceModal.getDriver()).thenReturn("com.mysql.cj.jdbc.Driver");
+    public void setUp() {
+        item = new KafkaFailedMessagesEntity();
+        item.setPayload("{\"ANI\":\"1234567890\"}");
+        item.setSensitivityChecked('N'); // Initial state
+        callInfoServiceEvent = new CallInfoServiceEvent();
+        when(utils.convert(any(String.class), eq(CallInfoServiceEvent.class))).thenReturn(callInfoServiceEvent);
     }
 
     @Test
-    void testFalloutDataSource() {
-        DataSource dataSource = dataSourceConfig.falloutDataSource();
+    public void testKafkaFalloutProcessor_SensitivityCheckedN_ValidMtn() throws JsonProcessingException {
+        callInfoServiceEvent.setMtn("1234567890");
+        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("ECPD123"));
+        when(utils.isValidData("1234567890")).thenReturn(true);
+        when(utils.convert("ECPD123", CustomerEcpdModel.class)).thenReturn(new CustomerEcpdModel("ECPD123", "n"));
 
-        assertNotNull(dataSource);
-        assertTrue(dataSource instanceof DriverManagerDataSource);
-        DriverManagerDataSource driverManagerDataSource = (DriverManagerDataSource) dataSource;
+        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
 
-        assertEquals("jdbc:mysql://localhost:3306/testdb", driverManagerDataSource.getUrl());
-        assertEquals("testUser", driverManagerDataSource.getUsername());
-        assertEquals("testPass", driverManagerDataSource.getPassword());
-        assertEquals("com.mysql.cj.jdbc.Driver", driverManagerDataSource.getDriverClassName());
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
     }
 
     @Test
-    void testEntityManagerFactoryBean() {
-        LocalContainerEntityManagerFactoryBean entityManagerFactoryBean = 
-            dataSourceConfig.entityManagerFactoryBean(null, dataSourceConfig.falloutDataSource());
+    public void testKafkaFalloutProcessor_SensitivityCheckedN_InvalidMtn() throws JsonProcessingException {
+        callInfoServiceEvent.setMtn("1234567890");
+        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.empty());
+        when(utils.isValidData("1234567890")).thenReturn(true);
 
-        assertNotNull(entityManagerFactoryBean);
-        assertEquals("fallout-db", entityManagerFactoryBean.getPersistenceUnit());
-        assertEquals("com.verizon.vbg.ledger.entity", entityManagerFactoryBean.getPackagesToScan()[0]);
+        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
+
+        assertNull(result);
+        verify(failedMessageService).purgeRepublishedRecord(any());
     }
 
     @Test
-    void testFalloutTransactionManager() {
-        PlatformTransactionManager transactionManager = dataSourceConfig.falloutTransactionManager(
-            dataSourceConfig.entityManagerFactoryBean(null, dataSourceConfig.falloutDataSource()).getObject());
+    public void testKafkaFalloutProcessor_SensitivityCheckedY() throws JsonProcessingException {
+        callInfoServiceEvent.setMtn("1234567890");
+        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("ECPD123"));
+        when(utils.isValidData("1234567890")).thenReturn(true);
+        when(utils.convert("ECPD123", CustomerEcpdModel.class)).thenReturn(new CustomerEcpdModel("ECPD123", "y"));
 
-        assertNotNull(transactionManager);
-        assertTrue(transactionManager instanceof JpaTransactionManager);
+        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
+
+        assertNull(result);
+        verify(failedMessageService).purgeRepublishedRecord(any());
+    }
+
+    @Test
+    public void testKafkaFalloutProcessor_SensitivityCheckedAlready() throws JsonProcessingException {
+        item.setSensitivityChecked('Y'); // Already checked
+        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+    }
+
+    @Test
+    public void testKafkaFalloutProcessor_InvalidInput() throws JsonProcessingException {
+        item.setPayload(null); // Invalid payload
+        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
+        assertNull(result);
     }
 }
 ```
 
-### Explanation of the Test Cases:
+### Explanation:
+1. **Mocks**: The dependencies (`KafkaFalloutService`, `BatchLoaderUtils`, and `MtnEcpdService`) are mocked to avoid any actual database calls and to control the behavior of these dependencies.
+2. **Test Cases**:
+   - **testKafkaFalloutProcessor_SensitivityCheckedN_ValidMtn**: Tests a scenario where the sensitivity is not checked, and the MTN is valid.
+   - **testKafkaFalloutProcessor_SensitivityCheckedN_InvalidMtn**: Tests the case where the MTN is invalid and should be purged.
+   - **testKafkaFalloutProcessor_SensitivityCheckedY**: Tests the case where the sensitivity is checked and found to be sensitive, hence purging.
+   - **testKafkaFalloutProcessor_SensitivityCheckedAlready**: Ensures that if sensitivity is already checked, it simply returns the item.
+   - **testKafkaFalloutProcessor_InvalidInput**: Tests handling of invalid input (e.g., null payload).
 
-1. **Setup Mock Data**: 
-   - The `setUp` method uses Mockito to define the behavior of the `DataSourceModal` mock object.
-
-2. **Test `falloutDataSource`**:
-   - This test verifies that the `falloutDataSource` bean is created and checks its properties against the expected values.
-
-3. **Test `entityManagerFactoryBean`**:
-   - This test ensures that the `entityManagerFactoryBean` is created properly with the appropriate configuration.
-
-4. **Test `falloutTransactionManager`**:
-   - This test checks that the transaction manager is correctly instantiated and is an instance of `JpaTransactionManager`.
-
-### Additional Notes:
-- Ensure you have the necessary dependencies for JUnit 5 and Mockito in your build configuration (like Maven or Gradle).
-- Depending on your actual setup, you might need to adjust the imports or the package structure.
-- These tests assume that the `DataSourceConfig` class does not have any complex dependencies that require additional mocking. If there are, consider mocking those as well.
+This structure should provide 100% coverage for the `kafkaFalloutProcessor` method and test all branches effectively. Adjust the assertions and mock behaviors as necessary based on your actual implementation details.

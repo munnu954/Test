@@ -1,19 +1,18 @@
-To create JUnit 5 test cases for the `KafkaFalloutBatchConfig` class that achieve 100% code coverage, you need to mock dependencies and test various branches of the `kafkaFalloutProcessor` method. Below is a sample test class that covers different scenarios:
+Sure! To write a JUnit 5 test case for the missed condition in the `kafkaFalloutProcessor` method of the `KafkaFalloutBatchConfig` class, we need to simulate the situation where the `CustomerEcpdModel` sensitivity is "Y". This would lead to the event being dropped and the `purgeRepublishedRecord` method being called.
+
+Below is an example of how you can create such a test case using JUnit 5 with Mockito for mocking dependencies:
 
 ```java
-import com.fasterxml.jackson.core.JsonProcessingException;
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class KafkaFalloutBatchConfigTest {
@@ -30,80 +29,45 @@ public class KafkaFalloutBatchConfigTest {
     @Mock
     private MtnEcpdService mtnEcpdService;
 
-    private KafkaFailedMessagesEntity item;
-    private CallInfoServiceEvent callInfoServiceEvent;
-
     @BeforeEach
-    public void setUp() {
-        item = new KafkaFailedMessagesEntity();
+    void setUp() {
+        // Any setup needed before each test can be done here
+    }
+
+    @Test
+    void testKafkaFalloutProcessorSensitivityCheck() throws Exception {
+        // Arrange
+        KafkaFailedMessagesEntity item = new KafkaFailedMessagesEntity();
         item.setPayload("{\"ANI\":\"1234567890\"}");
-        item.setSensitivityChecked('N'); // Initial state
-        callInfoServiceEvent = new CallInfoServiceEvent();
-        when(utils.convert(any(String.class), eq(CallInfoServiceEvent.class))).thenReturn(callInfoServiceEvent);
-    }
+        item.setSensitivityChecked('N');
+        
+        CustomerEcpdModel customerEcpdModel = new CustomerEcpdModel();
+        customerEcpdModel.setSensitivity("Y");
+        customerEcpdModel.setEcpd("ECPD123");
 
-    @Test
-    public void testKafkaFalloutProcessor_SensitivityCheckedN_ValidMtn() throws JsonProcessingException {
-        callInfoServiceEvent.setMtn("1234567890");
-        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("ECPD123"));
-        when(utils.isValidData("1234567890")).thenReturn(true);
-        when(utils.convert("ECPD123", CustomerEcpdModel.class)).thenReturn(new CustomerEcpdModel("ECPD123", "n"));
+        // Mock the utility method to return the customer Ecpd model
+        when(utils.convert(anyString(), eq(CustomerEcpdModel.class))).thenReturn(customerEcpdModel);
 
-        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
+        // Act
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
+        KafkaFailedMessagesEntity result = processor.process(item);
 
-        assertNotNull(result);
-        assertEquals('Y', result.getSensitivityChecked());
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_SensitivityCheckedN_InvalidMtn() throws JsonProcessingException {
-        callInfoServiceEvent.setMtn("1234567890");
-        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.empty());
-        when(utils.isValidData("1234567890")).thenReturn(true);
-
-        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
-
-        assertNull(result);
-        verify(failedMessageService).purgeRepublishedRecord(any());
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_SensitivityCheckedY() throws JsonProcessingException {
-        callInfoServiceEvent.setMtn("1234567890");
-        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("ECPD123"));
-        when(utils.isValidData("1234567890")).thenReturn(true);
-        when(utils.convert("ECPD123", CustomerEcpdModel.class)).thenReturn(new CustomerEcpdModel("ECPD123", "y"));
-
-        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
-
-        assertNull(result);
-        verify(failedMessageService).purgeRepublishedRecord(any());
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_SensitivityCheckedAlready() throws JsonProcessingException {
-        item.setSensitivityChecked('Y'); // Already checked
-        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
-        assertNotNull(result);
-        assertEquals('Y', result.getSensitivityChecked());
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_InvalidInput() throws JsonProcessingException {
-        item.setPayload(null); // Invalid payload
-        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
-        assertNull(result);
+        // Assert
+        assertNull(result); // The result should be null since the event is dropped
+        verify(failedMessageService).purgeRepublishedRecord(item.getId()); // Ensure purgeRepublishedRecord is called
     }
 }
 ```
 
 ### Explanation:
-1. **Mocks**: The dependencies (`KafkaFalloutService`, `BatchLoaderUtils`, and `MtnEcpdService`) are mocked to avoid any actual database calls and to control the behavior of these dependencies.
-2. **Test Cases**:
-   - **testKafkaFalloutProcessor_SensitivityCheckedN_ValidMtn**: Tests a scenario where the sensitivity is not checked, and the MTN is valid.
-   - **testKafkaFalloutProcessor_SensitivityCheckedN_InvalidMtn**: Tests the case where the MTN is invalid and should be purged.
-   - **testKafkaFalloutProcessor_SensitivityCheckedY**: Tests the case where the sensitivity is checked and found to be sensitive, hence purging.
-   - **testKafkaFalloutProcessor_SensitivityCheckedAlready**: Ensures that if sensitivity is already checked, it simply returns the item.
-   - **testKafkaFalloutProcessor_InvalidInput**: Tests handling of invalid input (e.g., null payload).
+1. **Annotations**:
+   - `@ExtendWith(MockitoExtension.class)`: Enables Mockito in the test class.
+   - `@InjectMocks`: Creates an instance of `KafkaFalloutBatchConfig` and injects the mocked dependencies.
+   - `@Mock`: Creates mock instances of the dependencies.
 
-This structure should provide 100% coverage for the `kafkaFalloutProcessor` method and test all branches effectively. Adjust the assertions and mock behaviors as necessary based on your actual implementation details.
+2. **Test Method**: 
+   - **testKafkaFalloutProcessorSensitivityCheck**: This test simulates the scenario where the sensitivity check fails (i.e., sensitivity is "Y"). 
+   - It uses Mockito to mock the behavior of the `utils.convert` method to return a `CustomerEcpdModel` with sensitivity "Y".
+   - The processor is executed, and assertions are made to ensure that the output is `null` and that the `purgeRepublishedRecord` method is called on the `failedMessageService`.
+
+This test case effectively covers the missed condition you pointed out. You can run this test in a JUnit 5 compatible testing environment.

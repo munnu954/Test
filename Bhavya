@@ -1,107 +1,92 @@
-The error you're encountering indicates that the Spring context is unable to find a bean of type `AccountEcpdService` to inject into the `AccountEcpdStoreController`. To resolve this issue, we need to ensure that the test class is correctly configured to use the Spring context, particularly for mocking the service.
-
-We'll use the `@SpringBootTest` annotation along with `@MockBean` to mock the `AccountEcpdService` within the Spring context during the tests. Here's the revised version of the test class:
+To achieve 100% code coverage for the `DataSourceConfig` class using JUnit 5, you need to create test cases that verify each of the beans being initialized, as well as their configurations. Below is a suggested implementation for the JUnit 5 test class:
 
 ```java
 import static org.mockito.Mockito.*;
-import static org.springframework.test.web.reactive.server.WebTestClient.bindToController;
-import static org.springframework.http.MediaType.APPLICATION_JSON;
+import static org.junit.jupiter.api.Assertions.*;
+
+import javax.sql.DataSource;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.http.HttpStatus;
-import org.springframework.test.web.reactive.function.WebTestClient;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
+import org.springframework.boot.jdbc.DataSourceBuilder;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.orm.jpa.JpaTransactionManager;
+import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
+import org.springframework.transaction.PlatformTransactionManager;
 
-@WebFluxTest(AccountEcpdStoreController.class) // Specifies that we are testing the controller
-public class AccountEcpdStoreControllerTest {
+@ExtendWith(MockitoExtension.class)
+public class DataSourceConfigTest {
 
-    @Autowired
-    private WebTestClient webTestClient; // Allows us to make requests to our controller
+    @Mock
+    private DataSourceModal dataSourceModal;
 
-    @MockBean
-    private AccountEcpdService accountService; // Mock the service bean
+    @InjectMocks
+    private DataSourceConfig dataSourceConfig;
 
-    @Test
-    public void testGetAllAccountEcpdStore() {
-        when(accountService.getAllAccountEcpds()).thenReturn(Flux.just("account1", "account2"));
-
-        webTestClient.get()
-            .uri("/account-ecpd-store/all")
-            .accept(APPLICATION_JSON)
-            .exchange()
-            .expectStatus().isOk()
-            .expectBodyList(String.class)
-            .hasSize(2)
-            .contains("account1", "account2");
+    @BeforeEach
+    void setUp() {
+        when(dataSourceModal.getUsername()).thenReturn("testUser");
+        when(dataSourceModal.getPassword()).thenReturn("testPass");
+        when(dataSourceModal.getUrl()).thenReturn("jdbc:mysql://localhost:3306/testdb");
+        when(dataSourceModal.getDriver()).thenReturn("com.mysql.cj.jdbc.Driver");
     }
 
     @Test
-    public void testGetEcpdByAcctId() {
-        String accountId = "123";
-        when(accountService.getEcpdByAcctId(accountId)).thenReturn(Mono.just("accountDetails"));
+    void testFalloutDataSource() {
+        DataSource dataSource = dataSourceConfig.falloutDataSource();
 
-        webTestClient.get()
-            .uri("/account-ecpd-store/account/{accountid}", accountId)
-            .accept(APPLICATION_JSON)
-            .exchange()
-            .expectStatus().isOk()
-            .expectBody(String.class)
-            .isEqualTo("accountDetails");
+        assertNotNull(dataSource);
+        assertTrue(dataSource instanceof DriverManagerDataSource);
+        DriverManagerDataSource driverManagerDataSource = (DriverManagerDataSource) dataSource;
+
+        assertEquals("jdbc:mysql://localhost:3306/testdb", driverManagerDataSource.getUrl());
+        assertEquals("testUser", driverManagerDataSource.getUsername());
+        assertEquals("testPass", driverManagerDataSource.getPassword());
+        assertEquals("com.mysql.cj.jdbc.Driver", driverManagerDataSource.getDriverClassName());
     }
 
     @Test
-    public void testGetCount() {
-        when(accountService.accountEcpdStoreCount()).thenReturn(Mono.just(5L));
+    void testEntityManagerFactoryBean() {
+        LocalContainerEntityManagerFactoryBean entityManagerFactoryBean = 
+            dataSourceConfig.entityManagerFactoryBean(null, dataSourceConfig.falloutDataSource());
 
-        webTestClient.get()
-            .uri("/account-ecpd-store/count")
-            .accept(APPLICATION_JSON)
-            .exchange()
-            .expectStatus().isOk()
-            .expectBody(Long.class)
-            .isEqualTo(5L);
+        assertNotNull(entityManagerFactoryBean);
+        assertEquals("fallout-db", entityManagerFactoryBean.getPersistenceUnit());
+        assertEquals("com.verizon.vbg.ledger.entity", entityManagerFactoryBean.getPackagesToScan()[0]);
     }
 
     @Test
-    public void testGetEcpdByAcctId_NotFound() {
-        String accountId = "999";
-        when(accountService.getEcpdByAcctId(accountId)).thenReturn(Mono.empty());
+    void testFalloutTransactionManager() {
+        PlatformTransactionManager transactionManager = dataSourceConfig.falloutTransactionManager(
+            dataSourceConfig.entityManagerFactoryBean(null, dataSourceConfig.falloutDataSource()).getObject());
 
-        webTestClient.get()
-            .uri("/account-ecpd-store/account/{accountid}", accountId)
-            .accept(APPLICATION_JSON)
-            .exchange()
-            .expectStatus().isNotFound();
-    }
-
-    @Test
-    public void testGetAllAccountEcpdStore_Empty() {
-        when(accountService.getAllAccountEcpds()).thenReturn(Flux.empty());
-
-        webTestClient.get()
-            .uri("/account-ecpd-store/all")
-            .accept(APPLICATION_JSON)
-            .exchange()
-            .expectStatus().isOk()
-            .expectBodyList(String.class)
-            .hasSize(0);
+        assertNotNull(transactionManager);
+        assertTrue(transactionManager instanceof JpaTransactionManager);
     }
 }
 ```
 
-### Key Changes:
-1. **Annotations**:
-   - `@WebFluxTest(AccountEcpdStoreController.class)`: This annotation is used to create a Spring context that only includes the specified controller and its dependencies, allowing for focused tests.
-   - `@MockBean`: This annotation is used to declare a mock for `AccountEcpdService` within the Spring context.
+### Explanation of the Test Cases:
 
-2. **WebTestClient**: Instead of creating a `WebTestClient` manually, we now inject it using `@Autowired`, which allows us to perform requests against the controller.
+1. **Setup Mock Data**: 
+   - The `setUp` method uses Mockito to define the behavior of the `DataSourceModal` mock object.
 
-With these changes, you should be able to run your tests without encountering the `NoSuchBeanDefinitionException`. Each test will create a Spring context that includes the controller and the mocked service, allowing for effective testing of your controller's endpoints.
+2. **Test `falloutDataSource`**:
+   - This test verifies that the `falloutDataSource` bean is created and checks its properties against the expected values.
+
+3. **Test `entityManagerFactoryBean`**:
+   - This test ensures that the `entityManagerFactoryBean` is created properly with the appropriate configuration.
+
+4. **Test `falloutTransactionManager`**:
+   - This test checks that the transaction manager is correctly instantiated and is an instance of `JpaTransactionManager`.
+
+### Additional Notes:
+- Ensure you have the necessary dependencies for JUnit 5 and Mockito in your build configuration (like Maven or Gradle).
+- Depending on your actual setup, you might need to adjust the imports or the package structure.
+- These tests assume that the `DataSourceConfig` class does not have any complex dependencies that require additional mocking. If there are, consider mocking those as well.

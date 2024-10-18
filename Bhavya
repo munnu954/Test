@@ -1,109 +1,49 @@
-To create JUnit 5 test cases for the `KafkaFalloutBatchConfig` class that achieve 100% code coverage, you need to mock dependencies and test various branches of the `kafkaFalloutProcessor` method. Below is a sample test class that covers different scenarios:
+The error you are encountering suggests that the `convert` method in your `BatchLoaderUtils` class cannot accept the argument types you are providing in the `when` statement. This issue arises due to the generic nature of the `convert` method. Since it is defined as `<T> T convert(String json, Class<T> clazz)`, the `any(String.class)` matcher cannot be used directly.
+
+To resolve this issue, you need to avoid using `any()` for the first argument and instead use `eq()` with the exact string value that will be passed to the `convert` method for the `CallInfoServiceEvent` conversion.
+
+Here’s the corrected version of your test method:
+
+### Corrected Test Method
 
 ```java
-import com.fasterxml.jackson.core.JsonProcessingException;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.junit.jupiter.MockitoExtension;
-import reactor.core.publisher.Mono;
+@Test
+public void testKafkaFalloutProcessor_SensitivityCheckedN_ValidMtn() throws Exception {
+    // Create and set up CallInfoServiceEvent
+    CallInfoServiceEvent callInfoServiceEvent = new CallInfoServiceEvent();
+    callInfoServiceEvent.setMtn("1234567890");
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+    // Mock the behavior of the dependencies
+    when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("ECPD123"));
+    when(utils.isValidData("1234567890")).thenReturn(true);
+    
+    // Mocking the conversion of ECPD
+    CustomerEcpdModel customerEcpdModel = new CustomerEcpdModel();
+    customerEcpdModel.setEcpd("ECPD123");
+    customerEcpdModel.setSensitivity("n"); // Setting sensitivity to non-sensitive
+    when(utils.convert("ECPD123", CustomerEcpdModel.class)).thenReturn(customerEcpdModel);
 
-@ExtendWith(MockitoExtension.class)
-public class KafkaFalloutBatchConfigTest {
+    // Mock the conversion of the item payload to CallInfoServiceEvent
+    when(utils.convert(eq("{\"ANI\":\"1234567890\"}"), eq(CallInfoServiceEvent.class))).thenReturn(callInfoServiceEvent);
 
-    @InjectMocks
-    private KafkaFalloutBatchConfig kafkaFalloutBatchConfig;
+    // Create a new KafkaFailedMessagesEntity item
+    KafkaFailedMessagesEntity item = new KafkaFailedMessagesEntity();
+    item.setPayload("{\"ANI\":\"1234567890\"}");
+    item.setSensitivityChecked('N'); // Initial state for sensitivity
 
-    @Mock
-    private KafkaFalloutService failedMessageService;
+    // Process the item through the kafkaFalloutProcessor
+    KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
 
-    @Mock
-    private BatchLoaderUtils utils;
-
-    @Mock
-    private MtnEcpdService mtnEcpdService;
-
-    private KafkaFailedMessagesEntity item;
-    private CallInfoServiceEvent callInfoServiceEvent;
-
-    @BeforeEach
-    public void setUp() {
-        item = new KafkaFailedMessagesEntity();
-        item.setPayload("{\"ANI\":\"1234567890\"}");
-        item.setSensitivityChecked('N'); // Initial state
-        callInfoServiceEvent = new CallInfoServiceEvent();
-        when(utils.convert(any(String.class), eq(CallInfoServiceEvent.class))).thenReturn(callInfoServiceEvent);
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_SensitivityCheckedN_ValidMtn() throws JsonProcessingException {
-        callInfoServiceEvent.setMtn("1234567890");
-        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("ECPD123"));
-        when(utils.isValidData("1234567890")).thenReturn(true);
-        when(utils.convert("ECPD123", CustomerEcpdModel.class)).thenReturn(new CustomerEcpdModel("ECPD123", "n"));
-
-        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
-
-        assertNotNull(result);
-        assertEquals('Y', result.getSensitivityChecked());
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_SensitivityCheckedN_InvalidMtn() throws JsonProcessingException {
-        callInfoServiceEvent.setMtn("1234567890");
-        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.empty());
-        when(utils.isValidData("1234567890")).thenReturn(true);
-
-        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
-
-        assertNull(result);
-        verify(failedMessageService).purgeRepublishedRecord(any());
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_SensitivityCheckedY() throws JsonProcessingException {
-        callInfoServiceEvent.setMtn("1234567890");
-        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("ECPD123"));
-        when(utils.isValidData("1234567890")).thenReturn(true);
-        when(utils.convert("ECPD123", CustomerEcpdModel.class)).thenReturn(new CustomerEcpdModel("ECPD123", "y"));
-
-        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
-
-        assertNull(result);
-        verify(failedMessageService).purgeRepublishedRecord(any());
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_SensitivityCheckedAlready() throws JsonProcessingException {
-        item.setSensitivityChecked('Y'); // Already checked
-        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
-        assertNotNull(result);
-        assertEquals('Y', result.getSensitivityChecked());
-    }
-
-    @Test
-    public void testKafkaFalloutProcessor_InvalidInput() throws JsonProcessingException {
-        item.setPayload(null); // Invalid payload
-        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfig.kafkaFalloutProcessor().process(item);
-        assertNull(result);
-    }
+    // Assertions to verify the outcome
+    assertNotNull(result);
+    assertEquals('Y', result.getSensitivityChecked());
 }
 ```
 
-### Explanation:
-1. **Mocks**: The dependencies (`KafkaFalloutService`, `BatchLoaderUtils`, and `MtnEcpdService`) are mocked to avoid any actual database calls and to control the behavior of these dependencies.
-2. **Test Cases**:
-   - **testKafkaFalloutProcessor_SensitivityCheckedN_ValidMtn**: Tests a scenario where the sensitivity is not checked, and the MTN is valid.
-   - **testKafkaFalloutProcessor_SensitivityCheckedN_InvalidMtn**: Tests the case where the MTN is invalid and should be purged.
-   - **testKafkaFalloutProcessor_SensitivityCheckedY**: Tests the case where the sensitivity is checked and found to be sensitive, hence purging.
-   - **testKafkaFalloutProcessor_SensitivityCheckedAlready**: Ensures that if sensitivity is already checked, it simply returns the item.
-   - **testKafkaFalloutProcessor_InvalidInput**: Tests handling of invalid input (e.g., null payload).
+### Key Adjustments:
+1. **Use `eq()` for String Matching**: The line that mocks the conversion of the item payload to `CallInfoServiceEvent` now uses `eq("{\"ANI\":\"1234567890\"}")` instead of `any(String.class)`. This ensures that the exact string is matched, which is necessary due to the way generics are defined in the `convert` method.
 
-This structure should provide 100% coverage for the `kafkaFalloutProcessor` method and test all branches effectively. Adjust the assertions and mock behaviors as necessary based on your actual implementation details.
+2. **Clear Setup for Mocks**: Ensure all mocks are correctly set up before they are called within the processing logic.
+
+### Summary:
+This approach provides clarity on what string is being passed, which resolves the type mismatch issue. With these changes, your test should compile and run successfully without throwing an error regarding method applicability. If you still encounter issues, please provide the updated error message or stack trace for further assistance.

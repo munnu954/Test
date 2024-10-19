@@ -1,84 +1,62 @@
-To achieve 100% code coverage for the `saveFailedRecords` method of the `KafkaFalloutService` class, you need to write JUnit 5 test cases that cover each branch of the if-statement. The tests should mock the repository to simulate database interactions without actually performing any database operations.
-
-Here's how you can write the test cases using JUnit 5 and Mockito:
-
-```java
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import static org.mockito.Mockito.*;
-
-import java.util.Calendar;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+import java.util.concurrent.TimeUnit;
 
 @ExtendWith(MockitoExtension.class)
-public class KafkaFalloutServiceTest {
+public class CTIEcpdServiceTest {
 
     @Mock
-    private KafkaFalloutRepository repository;
+    private RedisTemplate<String, CTIDataStore> redisTemplate;
+
+    @Mock
+    private ValueOperations<String, CTIDataStore> valueOperations;
 
     @InjectMocks
-    private KafkaFalloutService service;
+    private CTIEcpdService ctiEcpdService;
 
-    private static final String TOPIC_NAME = "TestTopic";
-    private static final String KEY = "TestKey";
-    private static final String PAYLOAD = "{\"key\":\"value\"}";
-    private static final char SENSITIVITY_CHECKED = 'Y';
+    private CTIDataStore dataStore;
 
     @BeforeEach
-    void setUp() {
-        // Any setup needed before each test
+    public void setUp() {
+        dataStore = new CTIDataStore();
+        dataStore.setCiscoCallId(12345L);
+        dataStore.setEcpd("ecpd");
+        dataStore.setMtn("mtn");
+        dataStore.setSensitivity("sensitivity");
+        dataStore.setIvrCallId("ivrCallId");
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     }
 
     @Test
-    void testSaveFailedRecordsWithCtiAuditEvent() {
-        // Given
-        String insightName = "CtiAuditEvent";
-
-        // When
-        service.saveFailedRecords(TOPIC_NAME, KEY, PAYLOAD, insightName, SENSITIVITY_CHECKED);
-
-        // Then
-        verify(repository).save(argThat(entity -> 
-            entity.getId().getTransactionId().equals(KEY) &&
-            entity.getId().getTopicName().equals(TOPIC_NAME) &&
-            entity.getPayload().equals(PAYLOAD) &&
-            entity.getInsightName().equals(insightName) &&
-            entity.getSystemName().equals(TYSConstants.SYSTEM_NAME.getValue()) &&
-            entity.getStatus() == TYSConstants.FAILED.getValue().charAt(0) &&
-            entity.getCreatedBy().equals(TYSConstants.SYSTEM.getValue()) &&
-            entity.getSensitivityChecked() == SENSITIVITY_CHECKED
-        ));
+    public void testSaveCTIData() {
+        String key = "CTIDataStore: " + dataStore.getCiscoCallId();
+        ctiEcpdService.saveCTIData(dataStore);
+        verify(valueOperations).set(key, dataStore);
+        verify(redisTemplate).expire(key, 3600L, TimeUnit.SECONDS); // Assuming ttl is 3600 seconds
     }
 
     @Test
-    void testSaveFailedRecordsWithNonCtiAuditEvent() {
-        // Given
-        String insightName = "SomeOtherEvent";
+    public void testFindById() {
+        String key = "CTIDataStore: " + dataStore.getCiscoCallId();
+        when(valueOperations.get(key)).thenReturn(dataStore);
+        CTIDataStore result = ctiEcpdService.findById(String.valueOf(dataStore.getCiscoCallId()));
+        assertEquals(dataStore, result);
+    }
 
-        // When
-        service.saveFailedRecords(TOPIC_NAME, KEY, PAYLOAD, insightName, SENSITIVITY_CHECKED);
-
-        // Then
-        verify(repository).save(argThat(entity -> 
-            entity.getId().getTransactionId().equals(KEY) &&
-            entity.getId().getTopicName().equals(TOPIC_NAME) &&
-            entity.getPayload().equals(PAYLOAD) &&
-            entity.getInsightName().equals(insightName) &&
-            entity.getSystemName().equals(TYSConstants.SYSTEM_NAME.getValue()) &&
-            entity.getStatus() == TYSConstants.FAILED.getValue().charAt(0) &&
-            entity.getCreatedBy().equals(TYSConstants.SYSTEM.getValue()) &&
-            entity.getSensitivityChecked() == SENSITIVITY_CHECKED
-        ));
+    @Test
+    public void testDeleteById() {
+        String key = "CTIDataStore: " + dataStore.getCiscoCallId();
+        when(redisTemplate.delete(key)).thenReturn(true);
+        Boolean result = ctiEcpdService.deleteById(String.valueOf(dataStore.getCiscoCallId()));
+        assertTrue(result);
     }
 }
-```
-
-### Explanation:
-- **Mockito** is used to mock the `KafkaFalloutRepository` so that actual database operations aren't performed.
-- **`@InjectMocks`** is used to create an instance of `KafkaFalloutService` and inject the mocked repository.
-- **`@Mock`** is used to create a mock of the `KafkaFalloutRepository`.
-- **`argThat`** is used to check that the entity saved has the expected values.
-- Two test cases are created: one for when `insightName` is `"CtiAuditEvent"` and another for any other value, ensuring both branches of the if-statement are tested.

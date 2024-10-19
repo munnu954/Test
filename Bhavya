@@ -1,16 +1,10 @@
-The error message indicates that the `purgeRepublishedRecord` method is still not being invoked properly, although the expected argument is correct. This suggests that the code path that leads to the invocation of `purgeRepublishedRecord` might not be triggered in the test, or the sensitivity check logic is not working as intended.
+To achieve 100% code coverage for the `KafkaFalloutBatchConfigCTI` class using JUnit 5, we'll need to create test cases that simulate various scenarios, including different actions and conditions. We'll also mock the dependencies to isolate the tests from the actual implementations of those services.
 
-Let’s ensure the following:
-1. The `kafkaFalloutProcessor` method properly leads to the call of `purgeRepublishedRecord` when the sensitivity is "Y".
-2. Verify that the `purgeRepublishedRecord` method is called with the correct `KafkaFailedMessagesPK`.
-
-To help debug the issue, I’ll provide a refined test case below, along with a way to check the flow of execution:
-
-### Revised Test Case
+Here's how you can structure your test class:
 
 ```java
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,17 +12,22 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
 
+import java.util.Calendar;
 import java.util.Date;
 
 @ExtendWith(MockitoExtension.class)
-public class KafkaFalloutBatchConfigTest {
+public class KafkaFalloutBatchConfigCTITest {
 
     @InjectMocks
-    private KafkaFalloutBatchConfig kafkaFalloutBatchConfig;
+    private KafkaFalloutBatchConfigCTI kafkaFalloutBatchConfigCTI;
 
     @Mock
     private KafkaFalloutService failedMessageService;
+    
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
 
     @Mock
     private BatchLoaderUtils utils;
@@ -36,56 +35,125 @@ public class KafkaFalloutBatchConfigTest {
     @Mock
     private MtnEcpdService mtnEcpdService;
 
+    @Mock
+    private CTIEcpdService ctiEcpdService;
+
+    private KafkaFailedMessagesEntity testItem;
+    private JSONObject jsonObject;
+
     @BeforeEach
     void setUp() {
-        // Any setup needed before each test can be done here
+        // Initialize testItem and jsonObject
+        testItem = new KafkaFailedMessagesEntity();
+        jsonObject = new JSONObject();
+        // Mock the default values for the test
+        testItem.setPayload("{\"CV2\":\"1234567890\", \"CV5\":\"validCV5\", \"CALLCONTROLID\":1, \"AGENTID\":\"agentId\", \"ACTION\":\"CALLESTABLISHED\", \"OLDCALLID\":2, \"CALLESTABLISHEDID\":3, \"CALLTYPES\":\"1\", \"CALLID1\":1, \"CALLID2\":2}");
+        testItem.setSensitivityChecked('N');
+
+        // Mock the utils behavior
+        when(utils.isValidData(any())).thenReturn(true);
+        when(utils.ivrExtraction(any())).thenReturn("ivrCallId");
+        when(utils.callTypeExtraction(any())).thenReturn("1");
     }
 
     @Test
-    void testKafkaFalloutProcessorSensitivityCheck() throws Exception {
-        // Arrange
-        KafkaFailedMessagesEntity item = new KafkaFailedMessagesEntity();
-        KafkaFailedMessagesPK id = new KafkaFailedMessagesPK();
-        id.setTransactionId("transaction123"); // Set a valid transaction ID
-        id.setTopicName("topicName");
-        id.setCreatedDate(new Date()); // Set the created date to current time
+    void testKafkaFalloutProcessorCTI_actionCallEstablished_notSensitive() {
+        // Mock the EcpdService response
+        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("someEcpdId"));
 
-        item.setId(id);
-        item.setPayload("{\"ANI\":\"1234567890\"}"); // Sample JSON payload
-        item.setSensitivityChecked('N'); // Initially not checked
+        // Execute the processor
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
 
-        CustomerEcpdModel customerEcpdModel = new CustomerEcpdModel();
-        customerEcpdModel.setSensitivity("Y"); // Set sensitivity to Y
-        customerEcpdModel.setEcpd("ECPD123");
+        // Verify interactions and assertions
+        verify(ctiEcpdService).saveCTIData(any());
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+    }
 
-        // Mock the utility method to simulate a valid conversion
-        when(utils.convert(anyString(), eq(CustomerEcpdModel.class))).thenReturn(customerEcpdModel);
-        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ECPD123")); // Mock the service call
+    @Test
+    void testKafkaFalloutProcessorCTI_actionCallEstablished_sensitive() {
+        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("someEcpdId"));
+        when(utils.convert(any(), eq(CustomerEcpdModel.class))).thenReturn(new CustomerEcpdModel("sensitiveEcpd", "Y"));
 
-        // Act
-        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
-        KafkaFailedMessagesEntity result = processor.process(item);
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
 
-        // Assert
-        assertNull(result); // The result should be null since the event is dropped
-        verify(failedMessageService, times(1)).purgeRepublishedRecord(id); // Ensure purgeRepublishedRecord is called with the correct ID
+        // Verify that the sensitive record was purged
+        verify(failedMessageService).purgeRepublishedRecord(eq(testItem.getId()));
+        assertNull(result);
+    }
+
+    @Test
+    void testKafkaFalloutProcessorCTI_actionRTPStarted() {
+        testItem.setPayload("{\"CALLCONTROLID\":1, \"ACTION\":\"RTPSTARTED\"}");
+        when(ctiEcpdService.findById("1")).thenReturn(new CTIDataStore("ecpd", "mtn", "N", 1, "ivrId"));
+
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
+
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+    }
+
+    @Test
+    void testKafkaFalloutProcessorCTI_actionHold() {
+        testItem.setPayload("{\"CALLCONTROLID\":1, \"ACTION\":\"HOLD\"}");
+        when(ctiEcpdService.findById("1")).thenReturn(new CTIDataStore("ecpd", "mtn", "N", 1, "ivrId"));
+
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
+
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+    }
+
+    @Test
+    void testKafkaFalloutProcessorCTI_actionRelease() {
+        testItem.setPayload("{\"CALLCONTROLID\":1, \"ACTION\":\"RELEASE\"}");
+        when(ctiEcpdService.findById("1")).thenReturn(new CTIDataStore("ecpd", "mtn", "N", 1, "ivrId"));
+
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
+
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+    }
+
+    @Test
+    void testFalloutExpiryCheckAndDelete_messageExpired() {
+        // Set up a test case for an expired message
+        Date currentDate = new Date();
+        testItem.getId().setCreatedDate(new Date(currentDate.getTime() - 1000 * 60 * 60 * 2)); // 2 hours ago
+        kafkaFalloutBatchConfigCTI.falloutExpiryCheckAndDelete(testItem, currentDate, "callId");
+
+        verify(failedMessageService).purgeRepublishedRecord(testItem);
+    }
+
+    @Test
+    void testFalloutExpiryCheckAndDelete_messageNotExpired() {
+        // Set up a test case for a non-expired message
+        Date currentDate = new Date();
+        testItem.getId().setCreatedDate(new Date(currentDate.getTime() - 1000 * 60 * 30)); // 30 minutes ago
+        kafkaFalloutBatchConfigCTI.falloutExpiryCheckAndDelete(testItem, currentDate, "callId");
+
+        verify(failedMessageService, never()).purgeRepublishedRecord(testItem);
     }
 }
 ```
 
-### Key Points to Ensure:
+### Explanation of the Tests
 
-1. **Mocking the Service Call**: 
-   - Ensure that the `mtnEcpdService.getEcpdByAcctId` method is mocked to return a valid response when called. This simulates the behavior of retrieving the ECPD ID based on the MTN.
+1. **Setup**: The `setUp` method initializes the test item and mocks the necessary services. The payloads are set to simulate different scenarios.
 
-2. **Sensitivity Check Logic**: 
-   - Confirm that the `kafkaFalloutProcessor` method correctly handles the logic flow to check the sensitivity. If the `CustomerEcpdModel` has sensitivity "Y", the method should call `purgeRepublishedRecord`.
+2. **Test Cases**:
+   - Each test case corresponds to different actions and conditions (like `CALLESTABLISHED`, `RTPSTARTED`, `RELEASE`, etc.).
+   - The tests check if the correct methods are invoked and if the expected results are returned.
+   - Special attention is given to handling sensitive data and verifying that purging actions are performed correctly.
 
-3. **Using `verify`**:
-   - The `verify` method checks that `purgeRepublishedRecord` was called exactly once with the correct ID. 
+3. **Expiry Check**: The last two tests ensure that the expiration logic behaves as expected, verifying that expired messages are purged, while non-expired messages are not.
 
-### Debugging Steps:
-- If you continue to face issues, consider adding logging statements in the actual `kafkaFalloutProcessor` method to trace execution and confirm that the sensitivity check is being performed as expected.
-- You may also want to debug the test to see if the logic paths are correctly being followed within the `kafkaFalloutProcessor`.
-
-By implementing these adjustments, you should be able to resolve the issue concerning the invocation of `purgeRepublishedRecord`.
+### Note
+- Adjust the test setup according to your actual implementations and model definitions.
+- Ensure that all dependencies and classes used in the tests are properly imported and configured in your project.
+- You may need to modify the payload strings in the tests to match your actual payload structure.

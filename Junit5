@@ -1,151 +1,84 @@
-Creating comprehensive JUnit 5 test cases for the `TrailProcessor` class requires a thorough understanding of the class's logic and flow. The goal is to cover all branches and ensure that each possible path through the `process` method is tested. Below is a sample of how you might structure these tests, including mocking dependencies and asserting expected outcomes.
+To achieve 100% code coverage for the `saveFailedRecords` method of the `KafkaFalloutService` class, you need to write JUnit 5 test cases that cover each branch of the if-statement. The tests should mock the repository to simulate database interactions without actually performing any database operations.
+
+Here's how you can write the test cases using JUnit 5 and Mockito:
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
+import static org.mockito.Mockito.*;
 
-import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Calendar;
 
-public class TrailProcessorTest {
+@ExtendWith(MockitoExtension.class)
+public class KafkaFalloutServiceTest {
 
     @Mock
-    private CircuitDetailsProvider cktDetProvider;
+    private KafkaFalloutRepository repository;
 
     @InjectMocks
-    private TrailProcessor trailProcessor;
+    private KafkaFalloutService service;
+
+    private static final String TOPIC_NAME = "TestTopic";
+    private static final String KEY = "TestKey";
+    private static final String PAYLOAD = "{\"key\":\"value\"}";
+    private static final char SENSITIVITY_CHECKED = 'Y';
 
     @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
+    void setUp() {
+        // Any setup needed before each test
     }
 
     @Test
-    public void testProcessWithNullClrComponent() {
-        List<Node> nodes = new ArrayList<>();
-        List<Link> links = new ArrayList<>();
-        List<ClrComponent> clrComponentList = new ArrayList<>();
-        Map<String, List<Node>> clliNodeMap = new HashMap<>();
-        AtomicInteger ukCount = new AtomicInteger(0);
-        String sourceSys = "sourceSys";
+    void testSaveFailedRecordsWithCtiAuditEvent() {
+        // Given
+        String insightName = "CtiAuditEvent";
 
-        trailProcessor.process(nodes, links, null, clrComponentList, clliNodeMap, 0, ukCount, sourceSys);
-        
-        // Verify that links are not modified
-        assertTrue(links.isEmpty());
+        // When
+        service.saveFailedRecords(TOPIC_NAME, KEY, PAYLOAD, insightName, SENSITIVITY_CHECKED);
+
+        // Then
+        verify(repository).save(argThat(entity -> 
+            entity.getId().getTransactionId().equals(KEY) &&
+            entity.getId().getTopicName().equals(TOPIC_NAME) &&
+            entity.getPayload().equals(PAYLOAD) &&
+            entity.getInsightName().equals(insightName) &&
+            entity.getSystemName().equals(TYSConstants.SYSTEM_NAME.getValue()) &&
+            entity.getStatus() == TYSConstants.FAILED.getValue().charAt(0) &&
+            entity.getCreatedBy().equals(TYSConstants.SYSTEM.getValue()) &&
+            entity.getSensitivityChecked() == SENSITIVITY_CHECKED
+        ));
     }
 
     @Test
-    public void testProcessWithEmptyCircuitInfo() {
-        // Setup a clrComponent with an empty circuitComp
-        ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType(CommonWrapperConstants.TRAIL);
-        clrComponent.setCircuitComp(Collections.singletonList(new CircuitComp()));
+    void testSaveFailedRecordsWithNonCtiAuditEvent() {
+        // Given
+        String insightName = "SomeOtherEvent";
 
-        List<Node> nodes = new ArrayList<>();
-        List<Link> links = new ArrayList<>();
-        List<ClrComponent> clrComponentList = Collections.singletonList(clrComponent);
-        Map<String, List<Node>> clliNodeMap = new HashMap<>();
-        AtomicInteger ukCount = new AtomicInteger(0);
-        String sourceSys = "sourceSys";
+        // When
+        service.saveFailedRecords(TOPIC_NAME, KEY, PAYLOAD, insightName, SENSITIVITY_CHECKED);
 
-        trailProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, sourceSys);
-        
-        // Assertions depending on expected behavior
-        assertTrue(links.isEmpty());
+        // Then
+        verify(repository).save(argThat(entity -> 
+            entity.getId().getTransactionId().equals(KEY) &&
+            entity.getId().getTopicName().equals(TOPIC_NAME) &&
+            entity.getPayload().equals(PAYLOAD) &&
+            entity.getInsightName().equals(insightName) &&
+            entity.getSystemName().equals(TYSConstants.SYSTEM_NAME.getValue()) &&
+            entity.getStatus() == TYSConstants.FAILED.getValue().charAt(0) &&
+            entity.getCreatedBy().equals(TYSConstants.SYSTEM.getValue()) &&
+            entity.getSensitivityChecked() == SENSITIVITY_CHECKED
+        ));
     }
-
-    @Test
-    public void testProcessWithCircuitInfoMatchingPrev() {
-        // Create a clrComponent with a CircuitInfo that matches a previous component
-        CircuitInfo circuitInfo = new CircuitInfo();
-        circuitInfo.setCircuitName("Circuit1");
-        
-        ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType(CommonWrapperConstants.TRAIL);
-        clrComponent.setCircuitComp(Collections.singletonList(new CircuitComp(circuitInfo)));
-
-        ClrComponent prevClrComponent = new ClrComponent();
-        prevClrComponent.setType(CommonWrapperConstants.CIRCUIT);
-        prevClrComponent.setCircuitComp(Collections.singletonList(new CircuitComp(new CircuitInfo("Circuit1"))));
-
-        List<Node> nodes = new ArrayList<>();
-        List<Link> links = new ArrayList<>();
-        List<ClrComponent> clrComponentList = Arrays.asList(prevClrComponent, clrComponent);
-        Map<String, List<Node>> clliNodeMap = new HashMap<>();
-        AtomicInteger ukCount = new AtomicInteger(0);
-        String sourceSys = "sourceSys";
-
-        trailProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, sourceSys);
-
-        // Assert that no link was added since the circuit names match
-        assertTrue(links.isEmpty());
-    }
-
-    @Test
-    public void testProcessWithValidCircuitDetails() {
-        // Mocking the response from CircuitDetailsProvider
-        CircuitDetailResponse response = new CircuitDetailResponse();
-        response.setCircuitData(new CircuitData());
-
-        when(cktDetProvider.getCircuitDetails(anyString())).thenReturn(response);
-
-        // Setup a valid clrComponent
-        CircuitInfo circuitInfo = new CircuitInfo();
-        circuitInfo.setCircuitName("Circuit2");
-        ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType(CommonWrapperConstants.TRAIL);
-        clrComponent.setCircuitComp(Collections.singletonList(new CircuitComp(circuitInfo)));
-
-        List<Node> nodes = new ArrayList<>();
-        List<Link> links = new ArrayList<>();
-        List<ClrComponent> clrComponentList = Collections.singletonList(clrComponent);
-        Map<String, List<Node>> clliNodeMap = new HashMap<>();
-        AtomicInteger ukCount = new AtomicInteger(0);
-        String sourceSys = "sourceSys";
-
-        trailProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, sourceSys);
-
-        // Assert that links were added or modified as expected
-        assertFalse(links.isEmpty());
-    }
-
-    @Test
-    public void testProcessWithCablePairGroup() {
-        // Create a clrComponent of type CABLE_PAIR_GROUP
-        ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType(CommonWrapperConstants.CABLE_PAIR_GROUP);
-        // Add necessary properties to clrComponent
-
-        List<Node> nodes = new ArrayList<>();
-        List<Link> links = new ArrayList<>();
-        List<ClrComponent> clrComponentList = Collections.singletonList(clrComponent);
-        Map<String, List<Node>> clliNodeMap = new HashMap<>();
-        AtomicInteger ukCount = new AtomicInteger(0);
-        String sourceSys = "sourceSys";
-
-        trailProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, sourceSys);
-
-        // Assert the expected outcomes
-        assertFalse(links.isEmpty());
-    }
-
-    // Add more tests to cover all branches and edge cases...
-
 }
 ```
 
-### Important Notes:
-1. **Mocking Dependencies**: The `CircuitDetailsProvider` is mocked to control its behavior during tests. This is crucial to isolate the `TrailProcessor` logic.
-2. **Assertions**: Assertions are made to verify that the method's outcome is as expected. For example, checking whether links are added or modified based on the logic in `process`.
-3. **Test Coverage**: The tests should cover all branches of the `process` method, including cases with valid and invalid inputs, handling of various types of `ClrComponent`, and interactions with the `CircuitDetailsProvider`.
-4. **Additional Tests**: More tests should be added to cover edge cases, such as empty lists, null values, and specific combinations of `ClrComponent` types to ensure full coverage.
-5. **Naming Conventions**: Test methods should describe the behavior being tested for clarity and maintainability.
-
-By following these guidelines and expanding upon the provided tests, you can achieve 100% coverage for the `TrailProcessor` class.
+### Explanation:
+- **Mockito** is used to mock the `KafkaFalloutRepository` so that actual database operations aren't performed.
+- **`@InjectMocks`** is used to create an instance of `KafkaFalloutService` and inject the mocked repository.
+- **`@Mock`** is used to create a mock of the `KafkaFalloutRepository`.
+- **`argThat`** is used to check that the entity saved has the expected values.
+- Two test cases are created: one for when `insightName` is `"CtiAuditEvent"` and another for any other value, ensuring both branches of the if-statement are tested.

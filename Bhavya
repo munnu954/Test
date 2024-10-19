@@ -1,6 +1,12 @@
-The error message indicates that the `purgeRepublishedRecord` method is not being called as expected. Specifically, it shows that the `KafkaFailedMessagesPK` object passed to the method has `null` values for its fields. This suggests that the `item` in your test may not be constructed properly, especially the ID part.
+The error message indicates that the `purgeRepublishedRecord` method is still not being invoked properly, although the expected argument is correct. This suggests that the code path that leads to the invocation of `purgeRepublishedRecord` might not be triggered in the test, or the sensitivity check logic is not working as intended.
 
-To fix this, ensure that you're setting a valid `KafkaFailedMessagesPK` object with appropriate values before calling the processor. Here’s the revised test code:
+Let’s ensure the following:
+1. The `kafkaFalloutProcessor` method properly leads to the call of `purgeRepublishedRecord` when the sensitivity is "Y".
+2. Verify that the `purgeRepublishedRecord` method is called with the correct `KafkaFailedMessagesPK`.
+
+To help debug the issue, I’ll provide a refined test case below, along with a way to check the flow of execution:
+
+### Revised Test Case
 
 ```java
 import static org.mockito.Mockito.*;
@@ -12,6 +18,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.Date;
 
 @ExtendWith(MockitoExtension.class)
 public class KafkaFalloutBatchConfigTest {
@@ -43,15 +51,16 @@ public class KafkaFalloutBatchConfigTest {
         id.setCreatedDate(new Date()); // Set the created date to current time
 
         item.setId(id);
-        item.setPayload("{\"ANI\":\"1234567890\"}");
-        item.setSensitivityChecked('N');
+        item.setPayload("{\"ANI\":\"1234567890\"}"); // Sample JSON payload
+        item.setSensitivityChecked('N'); // Initially not checked
 
         CustomerEcpdModel customerEcpdModel = new CustomerEcpdModel();
-        customerEcpdModel.setSensitivity("Y");
+        customerEcpdModel.setSensitivity("Y"); // Set sensitivity to Y
         customerEcpdModel.setEcpd("ECPD123");
 
         // Mock the utility method to simulate a valid conversion
         when(utils.convert(anyString(), eq(CustomerEcpdModel.class))).thenReturn(customerEcpdModel);
+        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ECPD123")); // Mock the service call
 
         // Act
         ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfig.kafkaFalloutProcessor();
@@ -59,20 +68,24 @@ public class KafkaFalloutBatchConfigTest {
 
         // Assert
         assertNull(result); // The result should be null since the event is dropped
-        verify(failedMessageService).purgeRepublishedRecord(id); // Ensure purgeRepublishedRecord is called with the correct ID
+        verify(failedMessageService, times(1)).purgeRepublishedRecord(id); // Ensure purgeRepublishedRecord is called with the correct ID
     }
 }
 ```
 
-### Key Changes:
-1. **Setting the `KafkaFailedMessagesPK` Values**: 
-   - Ensure that you correctly set the fields of the `KafkaFailedMessagesPK` object (transaction ID, topic name, and created date) before calling the processor. This will ensure that the argument passed to `purgeRepublishedRecord` is not `null`.
+### Key Points to Ensure:
 
-2. **Verifying with the Correct ID**: 
-   - In the verification step, ensure that you verify against the `id` object you created, which now has valid values.
+1. **Mocking the Service Call**: 
+   - Ensure that the `mtnEcpdService.getEcpdByAcctId` method is mocked to return a valid response when called. This simulates the behavior of retrieving the ECPD ID based on the MTN.
 
-### Additional Considerations:
-- Make sure that the `KafkaFailedMessagesEntity` class has the correct getter methods for accessing the ID and other fields.
-- If the issue persists, ensure that the implementation of the `kafkaFalloutProcessor` method is correct and the logic flows as expected.
+2. **Sensitivity Check Logic**: 
+   - Confirm that the `kafkaFalloutProcessor` method correctly handles the logic flow to check the sensitivity. If the `CustomerEcpdModel` has sensitivity "Y", the method should call `purgeRepublishedRecord`.
 
-This should resolve the issue of the method not being invoked due to `null` values.
+3. **Using `verify`**:
+   - The `verify` method checks that `purgeRepublishedRecord` was called exactly once with the correct ID. 
+
+### Debugging Steps:
+- If you continue to face issues, consider adding logging statements in the actual `kafkaFalloutProcessor` method to trace execution and confirm that the sensitivity check is being performed as expected.
+- You may also want to debug the test to see if the logic paths are correctly being followed within the `kafkaFalloutProcessor`.
+
+By implementing these adjustments, you should be able to resolve the issue concerning the invocation of `purgeRepublishedRecord`.

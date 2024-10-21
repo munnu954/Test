@@ -1,6 +1,9 @@
-To achieve 100% code coverage for the `EventsMessageListener` class using JUnit 5, we'll need to write test cases that cover all branches and logic paths within the class. We will also use the Reflection API to access private methods and fields, as well as mock the dependencies using a mocking framework like Mockito.
+To achieve 100% code coverage for the specified branches in the `onMessage` method, we need to write additional test cases that cover the opposite conditions of the branches. Specifically, we need to test:
 
-Here's an example of how you might structure your tests:
+1. When `customerEcpdModel.getSensitivity()` does not equal "y".
+2. When `utils.isValidData(callInfoServiceEvent.getMtn())` returns false.
+
+Here's how you can add these test cases:
 
 ```java
 import static org.mockito.ArgumentMatchers.any;
@@ -9,9 +12,11 @@ import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Method;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.support.SendResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,23 +55,39 @@ public class EventsMessageListenerTest {
     }
 
     @Test
-    void testOnMessage_withEmptyPayload() {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        eventsMessageListener.onMessage(record, "");
-
-        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-    }
-
-    @Test
-    void testOnMessage_withValidPayload() throws Exception {
+    void testOnMessage_withSensitivityNotY() throws Exception {
         // Arrange
         String payload = "{\"mtn\":\"testMtn\"}";
         CallInfoServiceEvent callInfoServiceEvent = new CallInfoServiceEvent();
         callInfoServiceEvent.setMtn("testMtn");
+
         when(utils.convert(anyString(), eq(CallInfoServiceEvent.class))).thenReturn(callInfoServiceEvent);
         when(utils.isValidData(anyString())).thenReturn(true);
         when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-        when(utils.convertToJSON(any())).thenReturn("{\"ecpdId\":\"ecpdId\"}");
+
+        CustomerEcpdModel customerEcpdModel = new CustomerEcpdModel();
+        customerEcpdModel.setSensitivity("n");
+        when(utils.convert(anyString(), eq(CustomerEcpdModel.class))).thenReturn(customerEcpdModel);
+
+        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
+        when(record.topic()).thenReturn("testTopic");
+
+        // Act
+        eventsMessageListener.onMessage(record, payload);
+
+        // Assert
+        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
+
+    @Test
+    void testOnMessage_withInvalidMtnData() throws Exception {
+        // Arrange
+        String payload = "{\"mtn\":\"invalidMtn\"}";
+        CallInfoServiceEvent callInfoServiceEvent = new CallInfoServiceEvent();
+        callInfoServiceEvent.setMtn("invalidMtn");
+
+        when(utils.convert(anyString(), eq(CallInfoServiceEvent.class))).thenReturn(callInfoServiceEvent);
+        when(utils.isValidData(anyString())).thenReturn(false);
 
         ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
         when(record.topic()).thenReturn("testTopic");
@@ -97,20 +118,12 @@ public class EventsMessageListenerTest {
 }
 ```
 
-### Explanation:
+### Explanation of Additional Test Cases:
 
-1. **Setup with Reflection:**
-   - We use `ReflectionTestUtils` to set private fields `producerTopic` and `ctiProducerTopic`.
+1. **`testOnMessage_withSensitivityNotY`:**
+   - This test case checks the scenario where `customerEcpdModel.getSensitivity()` is not "y". It ensures that the message processing continues and no failed records are saved.
 
-2. **Mocking:**
-   - We mock the dependencies such as `MtnEcpdService`, `KafkaTemplate`, `KafkaFalloutService`, `BatchLoaderUtils`, and `CTIEcpdService`.
+2. **`testOnMessage_withInvalidMtnData`:**
+   - This test case tests the path where `utils.isValidData(callInfoServiceEvent.getMtn())` returns false, simulating invalid MTN data. It ensures that the processing stops early and no messages are sent or failed records saved.
 
-3. **Test Cases:**
-   - **Empty Payload Test:** Checks behavior when an empty payload is provided.
-   - **Valid Payload Test:** Simulates a valid payload and checks normal message processing.
-   - **Reflection for Private Method:** Uses reflection to test `sendMessageAsync` by making it accessible.
-
-4. **Assertions and Verifications:**
-   - We verify that certain methods are called or not called using Mockito `verify`.
-
-This setup should provide comprehensive test coverage for the `EventsMessageListener` class. Adjust the mocks and assertions according to your specific implementation details and business logic.
+These tests, combined with the previous ones, should cover all branches of the conditional statements in the `onMessage` method, achieving 100% code coverage for those parts.

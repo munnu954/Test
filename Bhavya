@@ -1,52 +1,159 @@
-To ensure that the test method specifically covers the `RTPSTARTED` action and includes the necessary checks and logic paths relevant to that action, let's focus on verifying how the processor handles this specific case. 
+To achieve 100% code coverage for the `KafkaFalloutBatchConfigCTI` class using JUnit 5, we'll need to create test cases that simulate various scenarios, including different actions and conditions. We'll also mock the dependencies to isolate the tests from the actual implementations of those services.
 
-We'll make sure that the payload includes everything that the processor expects, and we'll simulate the outcomes correctly based on the logic within the `kafkaFalloutProcessorCTI` method for the `RTPSTARTED` action.
-
-Here’s a revised version of the test method that focuses on the `RTPSTARTED` action:
+Here's how you can structure your test class:
 
 ```java
-@Test
-void testKafkaFalloutProcessorCTI_actionRTPStarted() throws Exception {
-    // Create test item
-    KafkaFailedMessagesEntity testItem = new KafkaFailedMessagesEntity();
-    testItem.setSensitivityChecked('N');
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
-    // Set up the payload with all the required fields
-    testItem.setPayload("{\"CV2\":\"1234567890\", \"CV5\":\"validCV5\", \"CALLCONTROLID\":1, \"AGENTID\":\"agentId\", \"ACTION\":\"RTPSTARTED\", \"OLDCALLID\":2, \"CALLESTABLISHEDID\":3, \"CALLTYPES\":\"1\", \"CALLID1\":1, \"CALLID2\":2}");
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
 
-    // Mock utility methods
-    when(utils.isValidData(any())).thenReturn(true);
-    when(utils.ivrExtraction(any())).thenReturn("ivrCallId");
-    when(utils.callTypeExtraction(any())).thenReturn("1");
+import java.util.Calendar;
+import java.util.Date;
 
-    // Mock the response from the CTI Ecpd Service
-    CTIDataStore mockDataStore = new CTIDataStore("ecpd", "mtn", "N", 1, "ivrId");
-    when(ctiEcpdService.findById("1")).thenReturn(mockDataStore);
+@ExtendWith(MockitoExtension.class)
+public class KafkaFalloutBatchConfigCTITest {
 
-    // Execute the processor
-    ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
-    KafkaFailedMessagesEntity result = processor.process(testItem);
+    @InjectMocks
+    private KafkaFalloutBatchConfigCTI kafkaFalloutBatchConfigCTI;
 
-    // Verify the results
-    assertNotNull(result);
-    assertEquals('Y', result.getSensitivityChecked());
+    @Mock
+    private KafkaFalloutService failedMessageService;
+    
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
 
-    // Verify that the expected methods were called
-    verify(ctiEcpdService).findById("1");
-    verify(ctiEcpdService, times(1)).findById("1");
+    @Mock
+    private BatchLoaderUtils utils;
+
+    @Mock
+    private MtnEcpdService mtnEcpdService;
+
+    @Mock
+    private CTIEcpdService ctiEcpdService;
+
+    private KafkaFailedMessagesEntity testItem;
+    private JSONObject jsonObject;
+
+    @BeforeEach
+    void setUp() {
+        // Initialize testItem and jsonObject
+        testItem = new KafkaFailedMessagesEntity();
+        jsonObject = new JSONObject();
+        // Mock the default values for the test
+        testItem.setPayload("{\"CV2\":\"1234567890\", \"CV5\":\"validCV5\", \"CALLCONTROLID\":1, \"AGENTID\":\"agentId\", \"ACTION\":\"CALLESTABLISHED\", \"OLDCALLID\":2, \"CALLESTABLISHEDID\":3, \"CALLTYPES\":\"1\", \"CALLID1\":1, \"CALLID2\":2}");
+        testItem.setSensitivityChecked('N');
+
+        // Mock the utils behavior
+        when(utils.isValidData(any())).thenReturn(true);
+        when(utils.ivrExtraction(any())).thenReturn("ivrCallId");
+        when(utils.callTypeExtraction(any())).thenReturn("1");
+    }
+
+    @Test
+    void testKafkaFalloutProcessorCTI_actionCallEstablished_notSensitive() {
+        // Mock the EcpdService response
+        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("someEcpdId"));
+
+        // Execute the processor
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
+
+        // Verify interactions and assertions
+        verify(ctiEcpdService).saveCTIData(any());
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+    }
+
+    @Test
+    void testKafkaFalloutProcessorCTI_actionCallEstablished_sensitive() {
+        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("someEcpdId"));
+        when(utils.convert(any(), eq(CustomerEcpdModel.class))).thenReturn(new CustomerEcpdModel("sensitiveEcpd", "Y"));
+
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
+
+        // Verify that the sensitive record was purged
+        verify(failedMessageService).purgeRepublishedRecord(eq(testItem.getId()));
+        assertNull(result);
+    }
+
+    @Test
+    void testKafkaFalloutProcessorCTI_actionRTPStarted() {
+        testItem.setPayload("{\"CALLCONTROLID\":1, \"ACTION\":\"RTPSTARTED\"}");
+        when(ctiEcpdService.findById("1")).thenReturn(new CTIDataStore("ecpd", "mtn", "N", 1, "ivrId"));
+
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
+
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+    }
+
+    @Test
+    void testKafkaFalloutProcessorCTI_actionHold() {
+        testItem.setPayload("{\"CALLCONTROLID\":1, \"ACTION\":\"HOLD\"}");
+        when(ctiEcpdService.findById("1")).thenReturn(new CTIDataStore("ecpd", "mtn", "N", 1, "ivrId"));
+
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
+
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+    }
+
+    @Test
+    void testKafkaFalloutProcessorCTI_actionRelease() {
+        testItem.setPayload("{\"CALLCONTROLID\":1, \"ACTION\":\"RELEASE\"}");
+        when(ctiEcpdService.findById("1")).thenReturn(new CTIDataStore("ecpd", "mtn", "N", 1, "ivrId"));
+
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
+
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+    }
+
+    @Test
+    void testFalloutExpiryCheckAndDelete_messageExpired() {
+        // Set up a test case for an expired message
+        Date currentDate = new Date();
+        testItem.getId().setCreatedDate(new Date(currentDate.getTime() - 1000 * 60 * 60 * 2)); // 2 hours ago
+        kafkaFalloutBatchConfigCTI.falloutExpiryCheckAndDelete(testItem, currentDate, "callId");
+
+        verify(failedMessageService).purgeRepublishedRecord(testItem);
+    }
+
+    @Test
+    void testFalloutExpiryCheckAndDelete_messageNotExpired() {
+        // Set up a test case for a non-expired message
+        Date currentDate = new Date();
+        testItem.getId().setCreatedDate(new Date(currentDate.getTime() - 1000 * 60 * 30)); // 30 minutes ago
+        kafkaFalloutBatchConfigCTI.falloutExpiryCheckAndDelete(testItem, currentDate, "callId");
+
+        verify(failedMessageService, never()).purgeRepublishedRecord(testItem);
+    }
 }
 ```
 
-### Key Changes Made:
-1. **Complete Payload**: 
-   - The payload string now includes all necessary fields, including `CV2`, `CV5`, `CALLCONTROLID`, and `ACTION`, which is set to `RTPSTARTED`.
+### Explanation of the Tests
 
-2. **Mocking `findById`**: 
-   - The test sets up the expected return for `ctiEcpdService.findById("1")` to ensure that it returns a valid `CTIDataStore` object.
+1. **Setup**: The `setUp` method initializes the test item and mocks the necessary services. The payloads are set to simulate different scenarios.
 
-3. **Assertions and Verifications**: 
-   - The test now checks that the result is not null and that the sensitivity checked is set correctly. It also verifies that the `findById` method is called with the expected parameters, ensuring that the processor logic is executed properly.
+2. **Test Cases**:
+   - Each test case corresponds to different actions and conditions (like `CALLESTABLISHED`, `RTPSTARTED`, `RELEASE`, etc.).
+   - The tests check if the correct methods are invoked and if the expected results are returned.
+   - Special attention is given to handling sensitive data and verifying that purging actions are performed correctly.
 
-### Additional Considerations:
-- Ensure your actual business logic for `RTPSTARTED` is reflected in the test. If there are any specific sensitivities or actions that need to occur based on the returned `CTIDataStore`, you might need to adjust your mocks and assertions accordingly.
-- If the processor logic includes additional branches or conditions based on the data retrieved, consider adding more assertions to validate those scenarios.
+3. **Expiry Check**: The last two tests ensure that the expiration logic behaves as expected, verifying that expired messages are purged, while non-expired messages are not.
+
+### Note
+- Adjust the test setup according to your actual implementations and model definitions.
+- Ensure that all dependencies and classes used in the tests are properly imported and configured in your project.
+- You may need to modify the payload strings in the tests to match your actual payload structure.

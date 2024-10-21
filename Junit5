@@ -1,21 +1,116 @@
-import org.junit.jupiter.api.Test;
-import static org.junit.jupiter.api.Assertions.*;
+To achieve 100% code coverage for the `EventsMessageListener` class using JUnit 5, we'll need to write test cases that cover all branches and logic paths within the class. We will also use the Reflection API to access private methods and fields, as well as mock the dependencies using a mocking framework like Mockito.
 
-class BatchLoaderUtilsTest {
+Here's an example of how you might structure your tests:
+
+```java
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
+
+import java.lang.reflect.Method;
+import java.util.UUID;
+
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.test.util.ReflectionTestUtils;
+import reactor.core.publisher.Mono;
+
+@ExtendWith(MockitoExtension.class)
+public class EventsMessageListenerTest {
+
+    @Mock
+    private MtnEcpdService mtnEcpdService;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Mock
+    private KafkaFalloutService failedMessageService;
+
+    @Mock
+    private BatchLoaderUtils utils;
+
+    @Mock
+    private CTIEcpdService ctiEcpdService;
+
+    @InjectMocks
+    private EventsMessageListener eventsMessageListener;
+
+    @BeforeEach
+    void setUp() {
+        ReflectionTestUtils.setField(eventsMessageListener, "producerTopic", "testProducerTopic");
+        ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "testCtiProducerTopic");
+    }
 
     @Test
-    void testIsValidData() {
-        BatchLoaderUtils batchLoaderUtils = new BatchLoaderUtils();
+    void testOnMessage_withEmptyPayload() {
+        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
+        eventsMessageListener.onMessage(record, "");
 
-        // Existing test cases
-        assertFalse(batchLoaderUtils.isValidData(null));
-        assertFalse(batchLoaderUtils.isValidData(""));
-        assertFalse(batchLoaderUtils.isValidData(" "));
-        assertFalse(batchLoaderUtils.isValidData("0"));
-        assertTrue(batchLoaderUtils.isValidData("valid"));
-        assertFalse(batchLoaderUtils.isValidData(" ")); 
+        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
 
-        // New test case to cover the missing branch
-        assertFalse(batchLoaderUtils.isValidData("   \t   ")); // String with whitespace but not empty
+    @Test
+    void testOnMessage_withValidPayload() throws Exception {
+        // Arrange
+        String payload = "{\"mtn\":\"testMtn\"}";
+        CallInfoServiceEvent callInfoServiceEvent = new CallInfoServiceEvent();
+        callInfoServiceEvent.setMtn("testMtn");
+        when(utils.convert(anyString(), eq(CallInfoServiceEvent.class))).thenReturn(callInfoServiceEvent);
+        when(utils.isValidData(anyString())).thenReturn(true);
+        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
+        when(utils.convertToJSON(any())).thenReturn("{\"ecpdId\":\"ecpdId\"}");
+
+        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
+        when(record.topic()).thenReturn("testTopic");
+
+        // Act
+        eventsMessageListener.onMessage(record, payload);
+
+        // Assert
+        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
+
+    @Test
+    void testSendMessageAsync_withReflection() throws Exception {
+        // Arrange
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("testTopic", "key", "value");
+        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(mock(SendResult.class));
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        // Act
+        Method sendMessageAsyncMethod = EventsMessageListener.class.getDeclaredMethod(
+                "sendMessageAsync", ProducerRecord.class, String.class, String.class, String.class, String.class, char.class);
+        sendMessageAsyncMethod.setAccessible(true);
+        sendMessageAsyncMethod.invoke(eventsMessageListener, producerRecord, UUID.randomUUID().toString(), "payload", "testTopic", "insightName", 'N');
+
+        // Assert
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
     }
 }
+```
+
+### Explanation:
+
+1. **Setup with Reflection:**
+   - We use `ReflectionTestUtils` to set private fields `producerTopic` and `ctiProducerTopic`.
+
+2. **Mocking:**
+   - We mock the dependencies such as `MtnEcpdService`, `KafkaTemplate`, `KafkaFalloutService`, `BatchLoaderUtils`, and `CTIEcpdService`.
+
+3. **Test Cases:**
+   - **Empty Payload Test:** Checks behavior when an empty payload is provided.
+   - **Valid Payload Test:** Simulates a valid payload and checks normal message processing.
+   - **Reflection for Private Method:** Uses reflection to test `sendMessageAsync` by making it accessible.
+
+4. **Assertions and Verifications:**
+   - We verify that certain methods are called or not called using Mockito `verify`.
+
+This setup should provide comprehensive test coverage for the `EventsMessageListener` class. Adjust the mocks and assertions according to your specific implementation details and business logic.

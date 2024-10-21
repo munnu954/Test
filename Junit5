@@ -1,10 +1,12 @@
-To achieve 100% code coverage for the `EventsMessageListener` class, including both branches of the `if` conditional statements, you'll need to write additional test cases. Here's how you can cover those branches:
+To achieve 100% code coverage for the `sendMessageAsync` method, especially focusing on the `else` conditional statements, you need to test both branches of the `else` block: one where `producerTopic` equals `ctiProducerTopic` and another where it doesn't.
+
+Here's how you can write additional JUnit 5 test cases to cover these branches:
 
 ```java
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.clients.producer.SendResult;
+import org.json.JSONObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,11 +14,9 @@ import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
-import reactor.core.publisher.Mono;
 
 import java.util.concurrent.CompletableFuture;
 
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -26,97 +26,25 @@ public class EventsMessageListenerTest {
     private EventsMessageListener eventsMessageListener;
 
     @Mock
-    private MtnEcpdService mtnEcpdService;
-
-    @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
 
     @Mock
     private KafkaFalloutService failedMessageService;
 
-    @Mock
-    private BatchLoaderUtils utils;
+    @Value("${topics.outbound.cti-event:none}")
+    private String ctiProducerTopic = "cti-topic";
 
-    @Mock
-    private CTIEcpdService ctiEcpdService;
-
-    private ConsumerRecord<String, String> consumerRecord;
+    @Value("${topics.outbound.callinfo-event:none}")
+    private String producerTopic = "callinfo-topic";
 
     @BeforeEach
     public void setup() {
-        consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", "payload");
+        MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    public void testOnMessage_withValidSensitivity() throws Exception {
-        String payload = "{\"mtn\":\"12345\"}";
-        CallInfoServiceEvent event = new CallInfoServiceEvent();
-        event.setMtn("12345");
-        when(utils.convert(anyString(), eq(CallInfoServiceEvent.class))).thenReturn(event);
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-
-        CustomerEcpdModel customerEcpdModel = new CustomerEcpdModel();
-        customerEcpdModel.setSensitivity("y");
-        when(utils.convert(anyString(), eq(CustomerEcpdModel.class))).thenReturn(customerEcpdModel);
-
-        eventsMessageListener.onMessage(consumerRecord, payload);
-
-        verify(kafkaTemplate, never()).send(any(ProducerRecord.class));
-    }
-
-    @Test
-    public void testOnMessage_withInvalidSensitivity() throws Exception {
-        String payload = "{\"mtn\":\"12345\"}";
-        CallInfoServiceEvent event = new CallInfoServiceEvent();
-        event.setMtn("12345");
-        when(utils.convert(anyString(), eq(CallInfoServiceEvent.class))).thenReturn(event);
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
-
-        CustomerEcpdModel customerEcpdModel = new CustomerEcpdModel();
-        customerEcpdModel.setSensitivity("n");
-        when(utils.convert(anyString(), eq(CustomerEcpdModel.class))).thenReturn(customerEcpdModel);
-
-        eventsMessageListener.onMessage(consumerRecord, payload);
-
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
-    }
-
-    @Test
-    public void testOnMessage_withInvalidMtn() throws Exception {
-        String payload = "{\"mtn\":\"\"}";
-        CallInfoServiceEvent event = new CallInfoServiceEvent();
-        event.setMtn("");
-        when(utils.convert(anyString(), eq(CallInfoServiceEvent.class))).thenReturn(event);
-        when(utils.isValidData(anyString())).thenReturn(false);
-
-        eventsMessageListener.onMessage(consumerRecord, payload);
-
-        verify(failedMessageService, times(1))
-            .saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-    }
-
-    @Test
-    public void testSendMessageAsync_withException() throws Exception {
-        // Set up reflection to access the private method
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
-
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.completeExceptionally(new RuntimeException("Error sending message"));
-
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        // Using reflection to access private method
-        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, "transactionId", "payload", "producerTopic", "insightName", 'Y');
-
-        verify(failedMessageService, times(1))
-            .saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-    }
-
-    @Test
-    public void testSendMessageAsync_successfulSend() throws Exception {
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
+    public void testSendMessageAsync_whenProducerTopicEqualsCtiProducerTopic() throws Exception {
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>(ctiProducerTopic, "key", "{\"ACTION\":\"someAction\",\"CALLCONTROLID\":123,\"CALLESTABLISHEDID\":456}");
         CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
         RecordMetadata recordMetadata = new RecordMetadata(null, 0, 0, 0, 0L, 0, 0);
         SendResult<String, String> sendResult = new SendResult<>(producerRecord, recordMetadata);
@@ -125,17 +53,37 @@ public class EventsMessageListenerTest {
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
         // Using reflection to access private method
-        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, "transactionId", "payload", "producerTopic", "insightName", 'Y');
+        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, "transactionId", producerRecord.value(), ctiProducerTopic, "insightName", 'Y');
 
-        verify(failedMessageService, times(0))
-            .saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+        // Verify that the log statement is executed
+        // Note: In actual testing, you may use a logging framework to verify log output
+        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
+
+    @Test
+    public void testSendMessageAsync_whenProducerTopicNotEqualsCtiProducerTopic() throws Exception {
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>(producerTopic, "key", "value");
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        RecordMetadata recordMetadata = new RecordMetadata(null, 0, 0, 0, 0L, 0, 0);
+        SendResult<String, String> sendResult = new SendResult<>(producerRecord, recordMetadata);
+        future.complete(sendResult);
+
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        // Using reflection to access private method
+        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, "transactionId", producerRecord.value(), producerTopic, "insightName", 'Y');
+
+        // Verify that the log statement is executed
+        // Note: In actual testing, you may use a logging framework to verify log output
+        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
     }
 }
 ```
 
-### Key Additions:
-- **testOnMessage_withValidSensitivity**: Tests the branch where the sensitivity check returns `"y"` and ensures that no message is sent to Kafka.
-- **testOnMessage_withInvalidSensitivity**: Tests the branch where sensitivity is not `"y"`, and verifies that the message is sent to Kafka.
-- **testOnMessage_withInvalidMtn**: Covers the branch where the MTN is invalid by mocking `utils.isValidData` to return `false`.
+### Explanation:
 
-These additional test cases ensure that both branches of the `if` statements in the `onMessage` method are covered, thereby achieving 100% code coverage.
+1. **testSendMessageAsync_whenProducerTopicEqualsCtiProducerTopic**: This test case covers the branch where `producerTopic` equals `ctiProducerTopic`. It simulates sending a message with a payload that includes JSON data and verifies that the log statement is executed without any failed message saving.
+
+2. **testSendMessageAsync_whenProducerTopicNotEqualsCtiProducerTopic**: This test case covers the branch where `producerTopic` does not equal `ctiProducerTopic`. It verifies that the log statement is executed for this condition without saving any failed messages.
+
+In these tests, we're primarily focusing on ensuring the log statements are reached and that no exceptions or failed message saves occur, which would indicate successful execution of the logic. For actual logging verification, you might consider using a logging framework that supports test assertions on log outputs.

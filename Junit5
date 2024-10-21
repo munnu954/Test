@@ -1,34 +1,40 @@
-To achieve 100% code coverage for the specified branches in the `onMessage` method, we need to write additional test cases that cover the opposite conditions of the branches. Specifically, we need to test:
-
-1. When `customerEcpdModel.getSensitivity()` does not equal "y".
-2. When `utils.isValidData(callInfoServiceEvent.getMtn())` returns false.
-
-Here's how you can add these test cases:
+To achieve 100% code coverage for the `EventsMessageListener` class, including testing private methods using reflection and proper mocking, you'll need to create a comprehensive test suite using JUnit 5 and Mockito. Below is an example of how you can write the JUnit 5 test cases for this class:
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
-
-import java.lang.reflect.Method;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-
+import com.verizon.vbg.ledger.listener.EventsMessageListener;
+import com.verizon.vbg.ledger.service.MtnEcpdService;
+import com.verizon.vbg.ledger.service.KafkaFalloutService;
+import com.verizon.vbg.ledger.utils.BatchLoaderUtils;
+import com.verizon.vbg.ledger.service.CTIEcpdService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.support.SendResult;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.clients.producer.KafkaTemplate;
+import org.apache.kafka.clients.producer.SendResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
+import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.test.util.ReflectionTestUtils;
 import reactor.core.publisher.Mono;
 
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
 @ExtendWith(MockitoExtension.class)
 public class EventsMessageListenerTest {
+
+    @InjectMocks
+    private EventsMessageListener eventsMessageListener;
 
     @Mock
     private MtnEcpdService mtnEcpdService;
@@ -45,85 +51,98 @@ public class EventsMessageListenerTest {
     @Mock
     private CTIEcpdService ctiEcpdService;
 
-    @InjectMocks
-    private EventsMessageListener eventsMessageListener;
+    @Value("${topics.outbound.cti-event:none}")
+    private String ctiProducerTopic;
+
+    @Value("${topics.outbound.callinfo-event:none}")
+    private String producerTopic;
+
+    private ConsumerRecord<String, String> consumerRecord;
 
     @BeforeEach
-    void setUp() {
-        ReflectionTestUtils.setField(eventsMessageListener, "producerTopic", "testProducerTopic");
-        ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "testCtiProducerTopic");
+    public void setup() {
+        consumerRecord = new ConsumerRecord<>("topic", 0, 0L, "key", "payload");
     }
 
     @Test
-    void testOnMessage_withSensitivityNotY() throws Exception {
-        // Arrange
-        String payload = "{\"mtn\":\"testMtn\"}";
-        CallInfoServiceEvent callInfoServiceEvent = new CallInfoServiceEvent();
-        callInfoServiceEvent.setMtn("testMtn");
-
-        when(utils.convert(anyString(), eq(CallInfoServiceEvent.class))).thenReturn(callInfoServiceEvent);
+    public void testOnMessage_withValidPayload() throws Exception {
+        String payload = "{\"mtn\":\"12345\"}";
+        CallInfoServiceEvent event = new CallInfoServiceEvent();
+        event.setMtn("12345");
+        when(utils.convert(anyString(), eq(CallInfoServiceEvent.class))).thenReturn(event);
         when(utils.isValidData(anyString())).thenReturn(true);
         when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdId"));
+        when(utils.convert(anyString(), eq(CustomerEcpdModel.class)))
+            .thenReturn(new CustomerEcpdModel());
 
-        CustomerEcpdModel customerEcpdModel = new CustomerEcpdModel();
-        customerEcpdModel.setSensitivity("n");
-        when(utils.convert(anyString(), eq(CustomerEcpdModel.class))).thenReturn(customerEcpdModel);
+        eventsMessageListener.onMessage(consumerRecord, payload);
 
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        when(record.topic()).thenReturn("testTopic");
-
-        // Act
-        eventsMessageListener.onMessage(record, payload);
-
-        // Assert
-        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
     }
 
     @Test
-    void testOnMessage_withInvalidMtnData() throws Exception {
-        // Arrange
-        String payload = "{\"mtn\":\"invalidMtn\"}";
-        CallInfoServiceEvent callInfoServiceEvent = new CallInfoServiceEvent();
-        callInfoServiceEvent.setMtn("invalidMtn");
+    public void testOnMessage_withEmptyPayload() {
+        String payload = "";
 
-        when(utils.convert(anyString(), eq(CallInfoServiceEvent.class))).thenReturn(callInfoServiceEvent);
-        when(utils.isValidData(anyString())).thenReturn(false);
+        eventsMessageListener.onMessage(consumerRecord, payload);
 
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        when(record.topic()).thenReturn("testTopic");
-
-        // Act
-        eventsMessageListener.onMessage(record, payload);
-
-        // Assert
-        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+        verify(failedMessageService, times(1))
+            .saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
     }
 
     @Test
-    void testSendMessageAsync_withReflection() throws Exception {
-        // Arrange
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("testTopic", "key", "value");
-        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(mock(SendResult.class));
+    public void testOnMessage_withInvalidMtn() throws Exception {
+        String payload = "{\"mtn\":\"\"}";
+        CallInfoServiceEvent event = new CallInfoServiceEvent();
+        event.setMtn("");
+        when(utils.convert(anyString(), eq(CallInfoServiceEvent.class))).thenReturn(event);
+
+        eventsMessageListener.onMessage(consumerRecord, payload);
+
+        verify(failedMessageService, times(1))
+            .saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
+
+    @Test
+    public void testSendMessageAsync_withException() throws Exception {
+        // Set up reflection to access the private method
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
+
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.completeExceptionally(new RuntimeException("Error sending message"));
+
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
-        // Act
-        Method sendMessageAsyncMethod = EventsMessageListener.class.getDeclaredMethod(
-                "sendMessageAsync", ProducerRecord.class, String.class, String.class, String.class, String.class, char.class);
-        sendMessageAsyncMethod.setAccessible(true);
-        sendMessageAsyncMethod.invoke(eventsMessageListener, producerRecord, UUID.randomUUID().toString(), "payload", "testTopic", "insightName", 'N');
+        // Using reflection to access private method
+        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, UUID.randomUUID().toString(), "payload", producerTopic, "insightName", 'Y');
 
-        // Assert
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+        verify(failedMessageService, times(1))
+            .saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
+
+    @Test
+    public void testSendMessageAsync_successfulSend() throws Exception {
+        ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        RecordMetadata recordMetadata = new RecordMetadata(null, 0, 0, 0, 0L, 0, 0);
+        SendResult<String, String> sendResult = new SendResult<>(producerRecord, recordMetadata);
+        future.complete(sendResult);
+
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        // Using reflection to access private method
+        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, UUID.randomUUID().toString(), "payload", producerTopic, "insightName", 'Y');
+
+        verify(failedMessageService, times(0))
+            .saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
     }
 }
 ```
 
-### Explanation of Additional Test Cases:
+### Key Points:
+- **ReflectionTestUtils**: Used to invoke the private `sendMessageAsync` method without changing its access level.
+- **Mockito**: Used for mocking dependencies like `KafkaTemplate`, `MtnEcpdService`, etc.
+- **JUnit 5**: Framework used for writing the test cases.
+- **CompletableFuture**: Used to simulate async behavior of Kafka message sending.
 
-1. **`testOnMessage_withSensitivityNotY`:**
-   - This test case checks the scenario where `customerEcpdModel.getSensitivity()` is not "y". It ensures that the message processing continues and no failed records are saved.
-
-2. **`testOnMessage_withInvalidMtnData`:**
-   - This test case tests the path where `utils.isValidData(callInfoServiceEvent.getMtn())` returns false, simulating invalid MTN data. It ensures that the processing stops early and no messages are sent or failed records saved.
-
-These tests, combined with the previous ones, should cover all branches of the conditional statements in the `onMessage` method, achieving 100% code coverage for those parts.
+These test cases cover various scenarios, including valid and invalid payloads, exceptions during message sending, and successful message sending. This should help achieve full code coverage for the `EventsMessageListener` class.

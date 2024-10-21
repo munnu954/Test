@@ -1,42 +1,25 @@
-To ensure full coverage of the `else` conditional statement in the `sendMessageAsync` method, you need to verify the logging behavior for both branches of the `else` block. This involves checking what happens when `producerTopic` equals `ctiProducerTopic` and when it does not.
-
-To test logging, especially if you want to verify that specific log messages are being output, you can use a library like `slf4j-test` or `SystemOutRule` from `System Rules`. Here, I'll demonstrate using `SystemOutRule` to capture and assert the expected log outputs:
-
-First, add the `System Rules` dependency to your `pom.xml` if it's a Maven project:
-
-```xml
-<dependency>
-    <groupId>com.github.stefanbirkner</groupId>
-    <artifactId>system-rules</artifactId>
-    <version>1.19.0</version>
-    <scope>test</scope>
-</dependency>
-```
-
-Now, here's how you can write the tests to cover both branches of the `else` condition:
+To achieve 100% code coverage for the `ctionMessage` method in the `EventsMessageListener` class, we need to write JUnit 5 test cases that cover all possible execution paths, including handling different actions and exceptions. We'll use Mockito for mocking dependencies and ReflectionTestUtils for accessing private methods and fields. Here's how you can write these test cases:
 
 ```java
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+import com.verizon.vbg.ledger.listener.EventsMessageListener;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
-import org.apache.kafka.clients.producer.SendResult;
-import org.junit.Rule;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.LoggerFactory;
-import org.slf4j.Logger;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.json.JSONObject;
-import org.junit.contrib.java.lang.system.SystemOutRule;
+import reactor.core.publisher.Mono;
 
 import java.util.concurrent.CompletableFuture;
-
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class EventsMessageListenerTest {
@@ -45,72 +28,74 @@ public class EventsMessageListenerTest {
     private EventsMessageListener eventsMessageListener;
 
     @Mock
+    private MtnEcpdService mtnEcpdService;
+
+    @Mock
     private KafkaTemplate<String, String> kafkaTemplate;
 
     @Mock
     private KafkaFalloutService failedMessageService;
 
-    @Value("${topics.outbound.cti-event:none}")
-    private String ctiProducerTopic = "cti-topic";
+    @Mock
+    private BatchLoaderUtils utils;
 
-    @Value("${topics.outbound.callinfo-event:none}")
-    private String producerTopic = "callinfo-topic";
+    @Mock
+    private CTIEcpdService ctiEcpdService;
 
-    @Rule
-    public final SystemOutRule systemOutRule = new SystemOutRule().enableLog();
+    private String producerTopic = "testProducerTopic";
+    private String ctiProducerTopic = "testCtiProducerTopic";
 
     @BeforeEach
-    public void setup() {
-        MockitoAnnotations.openMocks(this);
+    public void setUp() {
+        ReflectionTestUtils.setField(eventsMessageListener, "producerTopic", producerTopic);
+        ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", ctiProducerTopic);
     }
 
     @Test
-    public void testSendMessageAsync_whenProducerTopicEqualsCtiProducerTopic() throws Exception {
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>(ctiProducerTopic, "key", "{\"ACTION\":\"someAction\",\"CALLCONTROLID\":123,\"CALLESTABLISHEDID\":456}");
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        RecordMetadata recordMetadata = new RecordMetadata(null, 0, 0, 0, 0L, 0, 0);
-        SendResult<String, String> sendResult = new SendResult<>(producerRecord, recordMetadata);
-        future.complete(sendResult);
+    public void testCtionMessage_withEmptyPayload() {
+        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
+        String payload = "";
 
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+        eventsMessageListener.ctionMessage(record, payload);
 
-        // Using reflection to access private method
-        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, "transactionId", producerRecord.value(), ctiProducerTopic, "insightName", 'Y');
-
-        String logOutput = systemOutRule.getLog();
-        assertTrue(logOutput.contains("Message sent successfully to the kafka topic"));
-        assertTrue(logOutput.contains("Partitionis"));
-        assertTrue(logOutput.contains("action"));
-        assertTrue(logOutput.contains("callControlId"));
-        assertTrue(logOutput.contains("callEstablishedId"));
+        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), anyChar());
     }
 
     @Test
-    public void testSendMessageAsync_whenProducerTopicNotEqualsCtiProducerTopic() throws Exception {
-        ProducerRecord<String, String> producerRecord = new ProducerRecord<>(producerTopic, "key", "value");
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        RecordMetadata recordMetadata = new RecordMetadata(null, 0, 0, 0, 0L, 0, 0);
-        SendResult<String, String> sendResult = new SendResult<>(producerRecord, recordMetadata);
-        future.complete(sendResult);
+    public void testCtionMessage_withValidCallEstablishedAction() throws Exception {
+        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"*1234*\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\",\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\",\"CALLID1\":4,\"CALLID2\":5}";
 
+        when(utils.isValidData(anyString())).thenReturn(true);
+        when(utils.ivrExtraction(anyString())).thenReturn("1234");
+        when(utils.callTypeExtraction(anyString())).thenReturn("1");
+        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpd123"));
+        when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
+
+        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
+        future.complete(mock(SendResult.class));
         when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
-        // Using reflection to access private method
-        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, "transactionId", producerRecord.value(), producerTopic, "insightName", 'Y');
+        eventsMessageListener.ctionMessage(record, payload);
 
-        String logOutput = systemOutRule.getLog();
-        assertTrue(logOutput.contains("Message sent successfully to the kafka topic"));
-        assertTrue(logOutput.contains("Partition is"));
+        verify(mtnEcpdService).getEcpdByAcctId(anyString());
+        verify(ctiEcpdService).saveCTIData(any(CTIDataStore.class));
+    }
+
+    // Additional test cases for other actions and paths need to be written similarly
+
+    @Test
+    public void testCtionMessage_withInvalidAction() {
+        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
+        String payload = "{\"ACTION\":\"INVALID_ACTION\"}";
+
+        eventsMessageListener.ctionMessage(record, payload);
+
+        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), anyChar());
+    }
+
+    // Helper method to invoke private methods using reflection
+    private void invokePrivateSendMessageAsync(ProducerRecord<String, String> producerRecord, String transactionId, String payload, String producerTopic, String insightName, char sensitivityCheckDone) throws Exception {
+        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone);
     }
 }
-```
-
-### Explanation:
-
-- **SystemOutRule**: This rule captures the system output, allowing you to verify that specific log messages are printed.
-  
-- **testSendMessageAsync_whenProducerTopicEqualsCtiProducerTopic**: This test verifies that when the `producerTopic` equals `ctiProducerTopic`, the expected JSON-related log statements are triggered.
-
-- **testSendMessageAsync_whenProducerTopicNotEqualsCtiProducerTopic**: This test verifies that when the `producerTopic` does not equal `ctiProducerTopic`, the simpler log statement is triggered.
-
-With these tests, you should have full coverage of the `else` conditional logic in the `sendMessageAsync` method.

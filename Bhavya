@@ -1,26 +1,24 @@
-If you cannot modify the `RedisConfigProperties` class to add getter methods, you can still work with the existing fields by using Mockito's capability to directly access public fields. However, you need to ensure that you're accessing the fields correctly in the test setup.
+To write JUnit 5 test cases for the `RedisConfigCTI` class, specifically focusing on the `redisTemplate()` method, you can use Mockito to mock the necessary dependencies and verify the behavior of the method. The test will focus on ensuring the `RedisTemplate` is created correctly and that its properties are set as expected.
 
-Here’s how you can handle the mocking without modifying the `RedisConfigProperties` class:
+Given the `CTIDataStore` class, which is a simple data class with various properties, we can proceed with the following test implementation:
 
-### Using PowerMockito
+### JUnit 5 Test for `RedisConfigCTI`
 
-You can use PowerMockito, which provides extended capabilities for mocking, including the ability to mock final classes and static methods, but since you just want to access public fields, we’ll simply use standard Mockito.
-
-### Adjusted Test Class
-
-Here’s how your test class can look without requiring changes to the `RedisConfigProperties`:
+Here’s how you can create a test class for `RedisConfigCTI`:
 
 ```java
-import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-import java.util.Arrays;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 @ExtendWith(MockitoExtension.class)
 class RedisConfigCTITest {
@@ -29,75 +27,57 @@ class RedisConfigCTITest {
     private RedisConfigCTI redisConfigCTI;
 
     @Mock
-    private RedisConfigProperties cacheProps;
+    private RedisConnectionFactory redisConnectionFactory; // Assuming this is part of your configuration
 
     @BeforeEach
     void setUp() {
-        // Directly mocking public fields of the RedisConfigProperties
-        cacheProps.commandTimeout = 60000L;
-        cacheProps.shutdownTimeout = 10000L;
-        cacheProps.standalone = true; // Set default for standalone tests
-        cacheProps.standaloneHost = "localhost";
-        cacheProps.standalonePort = 6379;
-        cacheProps.ioThreads = 2;
-        cacheProps.compThreads = 4;
-        cacheProps.master = "mymaster";
-        cacheProps.node = Arrays.asList("localhost:26379");
-        cacheProps.username = "user";
-        cacheProps.sentinelpassword = "password";
+        // Setup any necessary mock behavior for RedisConnectionFactory if required
     }
 
     @Test
-    void testGetConnectionFactoryStandalone() {
-        // Test standalone Redis configuration
-        RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
-        
-        assertNotNull(connectionFactory);
-        // Add additional assertions based on the expected state of the connection factory
+    void testRedisTemplate() {
+        // Call the method to test
+        RedisTemplate<String, CTIDataStore> redisTemplate = redisConfigCTI.redisTemplate();
+
+        // Verify that the RedisTemplate is not null
+        assertNotNull(redisTemplate);
+
+        // Verify that the connection factory is set correctly
+        assertEquals(redisConnectionFactory, redisTemplate.getConnectionFactory());
+
+        // Verify the key serializer
+        assertTrue(redisTemplate.getKeySerializer() instanceof StringRedisSerializer);
+
+        // Verify the value serializer
+        assertTrue(redisTemplate.getValueSerializer() instanceof Jackson2JsonRedisSerializer);
+
+        // Verify the value serializer is configured for CTIDataStore
+        Jackson2JsonRedisSerializer<CTIDataStore> valueSerializer =
+                (Jackson2JsonRedisSerializer<CTIDataStore>) redisTemplate.getValueSerializer();
+        assertEquals(CTIDataStore.class, valueSerializer.getObjectMapper().getTypeFactory().constructType(CTIDataStore.class));
     }
-
-    @Test
-    void testGetConnectionFactorySentinel() {
-        // Modify properties for sentinel tests
-        cacheProps.standalone = false;
-
-        RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
-        
-        assertNotNull(connectionFactory);
-        // Add additional assertions based on the expected state of the connection factory
-    }
-
-    @Test
-    void testGetConnectionFactorySentinelWithScaleThreadsViaRuntime() {
-        // Test sentinel configuration with runtime scaling
-        cacheProps.scaleThreadsViaRuntime = true;
-
-        RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
-        
-        assertNotNull(connectionFactory);
-        // Add additional assertions based on the expected state of the connection factory
-    }
-
-    @Test
-    void testGetConnectionFactorySentinelWithDefaultThreads() {
-        // Test sentinel configuration with config-based scaling
-        cacheProps.scaleThreadsViaRuntime = false;
-        cacheProps.ioThreads = 0;
-        cacheProps.compThreads = 0;
-
-        RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
-        
-        assertNotNull(connectionFactory);
-        // Add additional assertions based on the expected state of the connection factory
-    }
-    
-    // Add more tests for edge cases, such as when properties are null or empty
 }
 ```
 
-### Key Changes:
-1. **Direct Field Access**: The fields of `cacheProps` are accessed and set directly within the `setUp()` method. Since they are public, this is permitted.
-2. **No Getter Methods Required**: Since you cannot modify the `RedisConfigProperties` class, this approach works around the need for getter methods.
-3. **Test Isolation**: Each test can modify the properties of `cacheProps` as needed without affecting other tests.
+### Explanation of the Test Class:
 
-This approach allows you to work with the existing structure of the `RedisConfigProperties` class while still achieving the desired behavior in your tests. Each test can set up its own configuration by modifying the public fields of the mocked `cacheProps` instance.
+1. **Annotations**:
+   - `@ExtendWith(MockitoExtension.class)`: Enables Mockito support for the test class.
+   - `@InjectMocks`: Automatically injects mocked dependencies into the `RedisConfigCTI` instance.
+   - `@Mock`: Creates a mock instance of `RedisConnectionFactory` (assuming this is what your `getConnectionFactory()` method returns).
+
+2. **setUp() Method**: This method runs before each test and can be used to set up any required state or mock behavior.
+
+3. **testRedisTemplate() Method**:
+   - The test method calls `redisTemplate()` to create a `RedisTemplate` instance.
+   - Assertions check that:
+     - The `RedisTemplate` is not null.
+     - The connection factory is set correctly.
+     - The key serializer is an instance of `StringRedisSerializer`.
+     - The value serializer is an instance of `Jackson2JsonRedisSerializer`.
+     - The `Jackson2JsonRedisSerializer` is configured to handle `CTIDataStore` objects.
+
+### Additional Notes:
+- Ensure you have the necessary dependencies for JUnit 5 and Mockito in your project.
+- Adjust the `RedisConnectionFactory` mock setup in the `setUp()` method if your `getConnectionFactory()` method has specific behavior that needs to be accounted for.
+- If you need to test different configurations or scenarios, you can add additional test methods to cover those cases.

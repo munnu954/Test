@@ -1,24 +1,25 @@
-To cover the missing code paths in the `RedisConfigCTI` class, specifically the conditional logic associated with `cacheProps.scaleThreadsViaRuntime`, we will create additional test cases. These test cases will ensure that when `scaleThreadsViaRuntime` is set to `true`, the appropriate thread pool sizes are configured based on the available processors.
+To create JUnit test cases that specifically cover the conditional logic in the `RedisConfigCTI` class related to the `scaleThreadsViaRuntime` property, we will ensure that the tests validate the behavior when this property is set to both `true` and `false`. 
 
-### Updated JUnit 5 Test Class
+Here’s the adjusted test class that includes tests for the `scaleThreadsViaRuntime` logic, ensuring that the correct thread pool sizes are being used based on the runtime configuration:
 
-Here’s how your updated test class would look with additional test cases to cover the missing logic:
+### Adjusted JUnit Test Class for RedisConfigCTI
 
 ```java
 import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.Arrays;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 
 import io.lettuce.core.resource.ClientResources;
 import io.lettuce.core.resource.DefaultClientResources;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 
 @ExtendWith(MockitoExtension.class)
 class RedisConfigCTITest {
@@ -32,32 +33,34 @@ class RedisConfigCTITest {
     @BeforeEach
     void setUp() {
         // Set default values for cacheProps to avoid null pointer exceptions
-        when(cacheProps.standalone).thenReturn(true);
-        when(cacheProps.standaloneHost).thenReturn("localhost");
-        when(cacheProps.standalonePort).thenReturn(6379);
-        when(cacheProps.commandTimeout).thenReturn(60000L);
-        when(cacheProps.shutdownTimeout).thenReturn(10000L);
-        when(cacheProps.ioThreads).thenReturn(1);
-        when(cacheProps.compThreads).thenReturn(20);
-        when(cacheProps.node).thenReturn(List.of("localhost:26379"));
+        cacheProps.commandTimeout = 60000L;
+        cacheProps.shutdownTimeout = 10000L;
+        cacheProps.standalone = true; // Default for standalone tests
+        cacheProps.standaloneHost = "localhost";
+        cacheProps.standalonePort = 6379;
+        cacheProps.ioThreads = 2;
+        cacheProps.compThreads = 4;
+        cacheProps.master = "mymaster";
+        cacheProps.node = Arrays.asList("localhost:26379");
+        cacheProps.username = "user";
+        cacheProps.sentinelpassword = "password";
     }
 
     @Test
     void testGetConnectionFactoryWithScaleThreadsViaRuntimeTrue() {
         // Set the scaleThreadsViaRuntime property to true
-        when(cacheProps.scaleThreadsViaRuntime).thenReturn(true);
+        cacheProps.scaleThreadsViaRuntime = true;
 
         // Execute the method to get the connection factory
         RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
 
-        // Verify the type of connection factory returned
+        // Verify that the connection factory is not null
+        assertNotNull(connectionFactory);
         assertTrue(connectionFactory instanceof LettuceConnectionFactory);
 
-        // Verify that the appropriate ClientResources were created
+        // Verify that the ClientResources were created with runtime processor counts
         ClientResources clientResources = ((LettuceConnectionFactory) connectionFactory).getClientResources();
         assertNotNull(clientResources);
-
-        // Verify that the ioThreadPoolSize is set to available processors
         assertEquals(Runtime.getRuntime().availableProcessors(), clientResources.getIoThreadPoolSize());
         assertEquals(Runtime.getRuntime().availableProcessors(), clientResources.getComputationThreadPoolSize());
     }
@@ -65,53 +68,72 @@ class RedisConfigCTITest {
     @Test
     void testGetConnectionFactoryWithScaleThreadsViaRuntimeFalse() {
         // Set the scaleThreadsViaRuntime property to false
-        when(cacheProps.scaleThreadsViaRuntime).thenReturn(false);
+        cacheProps.scaleThreadsViaRuntime = false;
 
         // Execute the method to get the connection factory
         RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
 
-        // Verify the type of connection factory returned
+        // Verify that the connection factory is not null
+        assertNotNull(connectionFactory);
         assertTrue(connectionFactory instanceof LettuceConnectionFactory);
 
-        // Verify that the appropriate ClientResources were created
+        // Verify that the ClientResources were created with configured thread counts
         ClientResources clientResources = ((LettuceConnectionFactory) connectionFactory).getClientResources();
         assertNotNull(clientResources);
-
-        // Verify that the ioThreadPoolSize is set to the configured value
-        assertEquals(1, clientResources.getIoThreadPoolSize());
-        assertEquals(20, clientResources.getComputationThreadPoolSize());
+        assertEquals(2, clientResources.getIoThreadPoolSize()); // Expected mocked value
+        assertEquals(4, clientResources.getComputationThreadPoolSize()); // Expected mocked value
     }
 
     @Test
-    void testGetConnectionFactoryForStandalone() {
-        // Ensure that we are testing the standalone configuration
-        when(cacheProps.standalone).thenReturn(true);
-        when(cacheProps.standaloneHost).thenReturn("localhost");
-        when(cacheProps.standalonePort).thenReturn(6379);
+    void testGetConnectionFactorySentinelWithScaleThreadsViaRuntimeTrue() {
+        // Test sentinel configuration with runtime scaling
+        cacheProps.standalone = false; // Ensure we are testing sentinel mode
+        cacheProps.scaleThreadsViaRuntime = true;
 
-        // Execute the method to get the connection factory
         RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
 
-        // Verify the type of connection factory returned
+        assertNotNull(connectionFactory);
         assertTrue(connectionFactory instanceof LettuceConnectionFactory);
+
+        // Verify that the ClientResources were created with runtime processor counts
+        ClientResources clientResources = ((LettuceConnectionFactory) connectionFactory).getClientResources();
+        assertNotNull(clientResources);
+        assertEquals(Runtime.getRuntime().availableProcessors(), clientResources.getIoThreadPoolSize());
+        assertEquals(Runtime.getRuntime().availableProcessors(), clientResources.getComputationThreadPoolSize());
     }
 
-    // Add more tests for other configurations as needed
+    @Test
+    void testGetConnectionFactorySentinelWithScaleThreadsViaRuntimeFalse() {
+        // Test sentinel configuration with config-based scaling
+        cacheProps.standalone = false; // Ensure we are testing sentinel mode
+        cacheProps.scaleThreadsViaRuntime = false;
+        cacheProps.ioThreads = 0; // Test default behavior
+        cacheProps.compThreads = 0; // Test default behavior
+
+        RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
+
+        assertNotNull(connectionFactory);
+        assertTrue(connectionFactory instanceof LettuceConnectionFactory);
+
+        // Verify that the ClientResources were created with default values
+        ClientResources clientResources = ((LettuceConnectionFactory) connectionFactory).getClientResources();
+        assertNotNull(clientResources);
+        assertEquals(DefaultClientResources.DEFAULT_IO_THREADS, clientResources.getIoThreadPoolSize());
+        assertEquals(DefaultClientResources.DEFAULT_COMPUTATION_THREADS, clientResources.getComputationThreadPoolSize());
+    }
 }
 ```
 
-### Key Changes and New Tests:
+### Key Changes Explained:
 
-1. **Test for `scaleThreadsViaRuntime` True**:
-   - The `testGetConnectionFactoryWithScaleThreadsViaRuntimeTrue` method tests the scenario where `scaleThreadsViaRuntime` is set to `true`.
-   - It verifies that the `ioThreadPoolSize` and `computationThreadPoolSize` are set to the number of available processors.
+1. **Direct Field Access**: The public fields of the `RedisConfigProperties` class are directly mocked and set in the `setUp()` method.
 
-2. **Test for `scaleThreadsViaRuntime` False**:
-   - The `testGetConnectionFactoryWithScaleThreadsViaRuntimeFalse` method tests the scenario where `scaleThreadsViaRuntime` is set to `false`.
-   - It verifies that the `ioThreadPoolSize` and `computationThreadPoolSize` are set to their configured values as specified in the `RedisConfigProperties`.
+2. **Tests for `scaleThreadsViaRuntime`**:
+   - **`testGetConnectionFactoryWithScaleThreadsViaRuntimeTrue`**: This test ensures that when `scaleThreadsViaRuntime` is `true`, the `ClientResources` are configured using the number of available processors.
+   - **`testGetConnectionFactoryWithScaleThreadsViaRuntimeFalse`**: This test verifies that when `scaleThreadsViaRuntime` is `false`, the `ClientResources` use the configured values.
+   - **Sentinel-specific tests**: Additional tests ensure that the logic works correctly when testing with sentinel configurations, checking both conditions of `scaleThreadsViaRuntime`.
 
-3. **Test for Standalone Configuration**:
-   - The `testGetConnectionFactoryForStandalone` method ensures that the connection factory is created correctly for standalone Redis when the relevant properties are set.
+3. **Assertions**: Each test includes assertions that verify the expected values for thread pool sizes based on the configuration provided.
 
 ### Summary
-These additional test cases ensure that you cover the conditional logic related to `scaleThreadsViaRuntime` in the `RedisConfigCTI` class. Adjust the configuration values in the mocks as needed to fit your testing scenarios. You can also expand upon this by adding more tests for other configurations and edge cases.
+This revised test class provides comprehensive coverage for the conditional logic in the `RedisConfigCTI` class regarding the `scaleThreadsViaRuntime` property. It checks both scenarios (true and false) for both standalone and sentinel Redis configurations, ensuring that the thread pool sizes are set as expected.

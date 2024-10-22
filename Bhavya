@@ -1,135 +1,200 @@
-The error you're encountering indicates that you're trying to verify a method call on `cacheProps` that doesn't exist in the `RedisConfigProperties` class. Since `scaleThreadsViaRuntime` is a public field and not a method, you cannot use `verify()` like that. Instead, you can directly set the field and then assert its value within your tests.
+To provide a comprehensive set of JUnit 5 test cases for the `KafkaFalloutBatchConfigCTI` class, we need to ensure that we cover all the branches in the code, including the ones for actions like `CALL_TRANSFERRED`, `CALLIDCHANGED`, and `RELEASE`. 
 
-Instead of trying to verify that a method was called, you should focus on ensuring that the right values are being used when creating the `ClientResources`. Since the methods to set the values on `ClientResources` are not directly observable, we can make assertions based on the expected behavior instead.
-
-### Revised Test Class
-
-Here's a revised version of the test class, focusing on asserting the expected behavior without using `verify()` on non-existent methods:
+Here’s a complete set of JUnit 5 test cases that cover all the relevant branches of the `kafkaFalloutProcessorCTI` method:
 
 ```java
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
 
-import java.util.Arrays;
+import org.json.JSONObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.kafka.core.KafkaTemplate;
+import reactor.core.publisher.Mono;
 
-import io.lettuce.core.resource.ClientResources;
-import io.lettuce.core.resource.DefaultClientResources;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import java.util.Calendar;
+import java.util.Date;
 
 @ExtendWith(MockitoExtension.class)
-class RedisConfigCTITest {
+public class KafkaFalloutBatchConfigCTITest {
 
     @InjectMocks
-    private RedisConfigCTI redisConfigCTI;
+    private KafkaFalloutBatchConfigCTI kafkaFalloutBatchConfigCTI;
 
     @Mock
-    private RedisConfigProperties cacheProps;
+    private KafkaFalloutService failedMessageService;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Mock
+    private BatchLoaderUtils utils;
+
+    @Mock
+    private MtnEcpdService mtnEcpdService;
+
+    @Mock
+    private CTIEcpdService ctiEcpdService;
+
+    private KafkaFailedMessagesEntity testItem;
 
     @BeforeEach
     void setUp() {
-        // Set default values for cacheProps to avoid null pointer exceptions
-        cacheProps.commandTimeout = 60000L;
-        cacheProps.shutdownTimeout = 10000L;
-        cacheProps.standalone = true; // Default for standalone tests
-        cacheProps.standaloneHost = "localhost";
-        cacheProps.standalonePort = 6379;
-        cacheProps.ioThreads = 2;
-        cacheProps.compThreads = 4;
-        cacheProps.master = "mymaster";
-        cacheProps.node = Arrays.asList("localhost:26379");
-        cacheProps.username = "user";
-        cacheProps.sentinelpassword = "password";
+        // Initialize testItem
+        testItem = new KafkaFailedMessagesEntity();
+        testItem.setSensitivityChecked('N');
     }
 
     @Test
-    void testGetConnectionFactoryWithScaleThreadsViaRuntimeTrue() {
-        // Set the scaleThreadsViaRuntime property to true
-        cacheProps.scaleThreadsViaRuntime = true;
+    void testKafkaFalloutProcessorCTI_actionCallEstablished_notSensitive() {
+        // Set up payload for CALLESTABLISHED
+        testItem.setPayload("{\"CV2\":\"1234567890\", \"CV5\":\"validCV5\", \"CALLCONTROLID\":1, \"AGENTID\":\"agentId\", \"ACTION\":\"CALLESTABLISHED\", \"OLDCALLID\":2, \"CALLESTABLISHEDID\":3, \"CALLTYPES\":\"1\", \"CALLID1\":1, \"CALLID2\":2}");
+        
+        when(utils.isValidData(any())).thenReturn(true);
+        when(mtnEcpdService.getEcpdByAcctId("1234567890")).thenReturn(Mono.just("someEcpdId"));
+        when(utils.convert(any(), eq(CustomerEcpdModel.class))).thenReturn(new CustomerEcpdModel("someEcpdId", "N"));
 
-        // Execute the method to get the connection factory
-        RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
+        // Execute the processor
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
 
-        // Verify that the connection factory is not null
-        assertNotNull(connectionFactory);
-        assertTrue(connectionFactory instanceof LettuceConnectionFactory);
-
-        // Check that DefaultClientResources was created using available processors
-        ClientResources clientResources = ((LettuceConnectionFactory) connectionFactory).getClientResources();
-        assertNotNull(clientResources);
-
-        // Since we cannot directly check internal values, we assume that the factory is correctly configured
-        // We can check if the returned instance is of the correct type and assume the configuration is correct
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+        verify(ctiEcpdService).saveCTIData(any());
     }
 
     @Test
-    void testGetConnectionFactoryWithScaleThreadsViaRuntimeFalse() {
-        // Set the scaleThreadsViaRuntime property to false
-        cacheProps.scaleThreadsViaRuntime = false;
+    void testKafkaFalloutProcessorCTI_actionCallTransferred() {
+        // Set up payload for CALL_TRANSFERRED
+        testItem.setPayload("{\"CALLID1\":1, \"CALLID2\":2, \"ACTION\":\"CALL_TRANSFERRED\"}");
+        
+        when(utils.isValidData(any())).thenReturn(true);
+        when(ctiEcpdService.findById("1")).thenReturn(new CTIDataStore("ecpd1", "mtn1", "N", 1, "ivrId"));
+        when(ctiEcpdService.findById("2")).thenReturn(new CTIDataStore("ecpd2", "mtn2", "N", 2, "ivrId"));
 
-        // Execute the method to get the connection factory
-        RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
+        // Execute the processor
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
 
-        // Verify that the connection factory is not null
-        assertNotNull(connectionFactory);
-        assertTrue(connectionFactory instanceof LettuceConnectionFactory);
-
-        // Check that DefaultClientResources was created using configured thread counts
-        ClientResources clientResources = ((LettuceConnectionFactory) connectionFactory).getClientResources();
-        assertNotNull(clientResources);
-
-        // Again, we assume the factory is set up correctly
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+        verify(ctiEcpdService).findById("1");
+        verify(ctiEcpdService).findById("2");
     }
 
     @Test
-    void testGetConnectionFactorySentinelWithScaleThreadsViaRuntimeTrue() {
-        // Test sentinel configuration with runtime scaling
-        cacheProps.standalone = false; // Ensure we are testing sentinel mode
-        cacheProps.scaleThreadsViaRuntime = true;
+    void testKafkaFalloutProcessorCTI_actionCallIDChanged() {
+        // Set up payload for CALLIDCHANGED
+        testItem.setPayload("{\"OLDCALLID\":1, \"ACTION\":\"CALLIDCHANGED\"}");
+        
+        when(utils.isValidData(any())).thenReturn(true);
+        when(ctiEcpdService.findById("1")).thenReturn(new CTIDataStore("ecpd", "mtn", "N", 1, "ivrId"));
 
-        RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
+        // Execute the processor
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
 
-        assertNotNull(connectionFactory);
-        assertTrue(connectionFactory instanceof LettuceConnectionFactory);
-
-        // Check that DefaultClientResources was created using available processors
-        ClientResources clientResources = ((LettuceConnectionFactory) connectionFactory).getClientResources();
-        assertNotNull(clientResources);
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+        verify(ctiEcpdService).findById("1");
     }
 
     @Test
-    void testGetConnectionFactorySentinelWithScaleThreadsViaRuntimeFalse() {
-        // Test sentinel configuration with config-based scaling
-        cacheProps.standalone = false; // Ensure we are testing sentinel mode
-        cacheProps.scaleThreadsViaRuntime = false;
-        cacheProps.ioThreads = 0; // Test default behavior
-        cacheProps.compThreads = 0; // Test default behavior
+    void testKafkaFalloutProcessorCTI_actionRelease() {
+        // Set up payload for RELEASE
+        testItem.setPayload("{\"CALLCONTROLID\":1, \"ACTION\":\"RELEASE\"}");
 
-        RedisConnectionFactory connectionFactory = redisConfigCTI.getConnectionFactory();
+        when(utils.isValidData(any())).thenReturn(true);
+        when(ctiEcpdService.findById("1")).thenReturn(new CTIDataStore("ecpd", "mtn", "N", 1, "ivrId"));
 
-        assertNotNull(connectionFactory);
-        assertTrue(connectionFactory instanceof LettuceConnectionFactory);
+        // Execute the processor
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
 
-        // Check that DefaultClientResources was created with default values
-        ClientResources clientResources = ((LettuceConnectionFactory) connectionFactory).getClientResources();
-        assertNotNull(clientResources);
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+        verify(ctiEcpdService).findById("1");
+    }
+
+    @Test
+    void testKafkaFalloutProcessorCTI_actionHold() {
+        // Set up payload for HOLD
+        testItem.setPayload("{\"CALLCONTROLID\":1, \"ACTION\":\"HOLD\"}");
+
+        when(utils.isValidData(any())).thenReturn(true);
+        when(ctiEcpdService.findById("1")).thenReturn(new CTIDataStore("ecpd", "mtn", "N", 1, "ivrId"));
+
+        // Execute the processor
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
+
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+        verify(ctiEcpdService).findById("1");
+    }
+
+    @Test
+    void testKafkaFalloutProcessorCTI_actionRTPStarted() {
+        // Set up payload for RTPSTARTED
+        testItem.setPayload("{\"CALLCONTROLID\":1, \"ACTION\":\"RTPSTARTED\"}");
+
+        when(utils.isValidData(any())).thenReturn(true);
+        when(ctiEcpdService.findById("1")).thenReturn(new CTIDataStore("ecpd", "mtn", "N", 1, "ivrId"));
+
+        // Execute the processor
+        ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
+        KafkaFailedMessagesEntity result = processor.process(testItem);
+
+        assertNotNull(result);
+        assertEquals('Y', result.getSensitivityChecked());
+        verify(ctiEcpdService).findById("1");
+    }
+
+    @Test
+    void testFalloutExpiryCheckAndDelete_messageExpired() {
+        // Set up test for expired message
+        Date currentDate = new Date();
+        testItem.getId().setCreatedDate(new Date(currentDate.getTime() - 1000 * 60 * 60 * 2)); // 2 hours ago
+        kafkaFalloutBatchConfigCTI.falloutExpiryCheckAndDelete(testItem, currentDate, "callId");
+
+        verify(failedMessageService).purgeRepublishedRecord(testItem);
+    }
+
+    @Test
+    void testFalloutExpiryCheckAndDelete_messageNotExpired() {
+        // Set up test for non-expired message
+        Date currentDate = new Date();
+        testItem.getId().setCreatedDate(new Date(currentDate.getTime() - 1000 * 60 * 30)); // 30 minutes ago
+        kafkaFalloutBatchConfigCTI.falloutExpiryCheckAndDelete(testItem, currentDate, "callId");
+
+        verify(failedMessageService, never()).purgeRepublishedRecord(testItem);
     }
 }
 ```
 
-### Key Changes and Explanation:
+### Explanation of the Test Cases:
+1. **Test for `CALLESTABLISHED` Action**: Tests the path when the action is `CALLESTABLISHED` and the data is not sensitive.
+   
+2. **Test for `CALL_TRANSFERRED` Action**: Tests the path for `CALL_TRANSFERRED`, ensuring it retrieves data for both call IDs.
 
-1. **Remove Verification for Non-existent Methods**: The `verify(cacheProps).scaleThreadsViaRuntime();` line was removed, since `scaleThreadsViaRuntime` is a field, not a method.
+3. **Test for `CALLIDCHANGED` Action**: Tests the path when the action is `CALLIDCHANGED`, ensuring that it looks up the old call ID correctly.
 
-2. **Assertions on Configuration**: The tests now focus on asserting that the connection factory is not null and is of the expected type (`LettuceConnectionFactory`). While we can't directly assert the internal state of `ClientResources`, we can assume that if the factory is created successfully, the configuration is likely correct based on the inputs provided.
+4. **Test for `RELEASE` Action**: Tests the path when the action is `RELEASE`, checking that the data is retrieved and processed correctly.
 
-3. **Focus on Behavior**: The tests are structured to ensure that the `RedisConfigCTI` class behaves as expected when different configurations are applied, without needing to verify method calls on the mock.
+5. **Test for `HOLD` Action**: Validates the `HOLD` action to ensure it behaves as expected.
 
-### Summary
-This approach allows you to effectively test the configurations being used in your `RedisConfigCTI` class without trying to verify method calls that do not exist. It focuses on the expected behavior and ensures that the connection factory is set up correctly based on the properties provided. You may need to adapt any further assertions if you have specific expectations about the internal state of the `ClientResources` that are accessible through other means.
+6. **Test for `RTPSTARTED` Action**: Tests the path when the action is `RTPSTARTED`, ensuring it retrieves the data correctly.
+
+7. **Test Expiry Check (Expired Message)**: Validates the behavior when the message has expired.
+
+8. **Test Expiry Check (Non-Expired Message)**: Validates the behavior when the message has not expired.
+
+### Notes:
+- Make sure that all mocks and dependencies are correctly set up to match your actual business logic.
+- Adjust any method names, classes, or data structures according to your actual implementations.
+- The tests should cover all the branches of the method provided, ensuring comprehensive coverage.

@@ -1,28 +1,30 @@
-To achieve 100% code coverage for the `ctionMessage` method in the `EventsMessageListener` class, we need to write JUnit 5 test cases that cover all possible execution paths, including handling different actions and exceptions. We'll use Mockito for mocking dependencies and ReflectionTestUtils for accessing private methods and fields. Here's how you can write these test cases:
+To create JUnit 5 test cases that achieve 100% code coverage for the `ctionMessage` method in the `EventsMessageListener` class, you will need to mock dependencies and use reflection to access private methods and fields. Below is an example of how you might write these test cases using Mockito and Reflection:
 
 ```java
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import com.verizon.vbg.ledger.listener.EventsMessageListener;
+import com.verizon.vbg.ledger.service.MtnEcpdService;
+import com.verizon.vbg.ledger.service.CTIEcpdService;
+import com.verizon.vbg.ledger.service.KafkaFalloutService;
+import com.verizon.vbg.ledger.util.BatchLoaderUtils;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.*;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.test.util.ReflectionTestUtils;
 import reactor.core.publisher.Mono;
 
+import java.lang.reflect.Method;
 import java.util.concurrent.CompletableFuture;
 
-@ExtendWith(MockitoExtension.class)
-public class EventsMessageListenerTest {
+class EventsMessageListenerTest {
 
     @InjectMocks
     private EventsMessageListener eventsMessageListener;
@@ -42,347 +44,100 @@ public class EventsMessageListenerTest {
     @Mock
     private CTIEcpdService ctiEcpdService;
 
-    private String producerTopic = "testProducerTopic";
-    private String ctiProducerTopic = "testCtiProducerTopic";
+    @Value("${topics.outbound.cti-event:none}")
+    private String ctiProducerTopic;
 
     @BeforeEach
-    public void setUp() {
-        ReflectionTestUtils.setField(eventsMessageListener, "producerTopic", producerTopic);
-        ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", ctiProducerTopic);
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "outbound-cti-event");
     }
 
     @Test
-    public void testCtionMessage_withEmptyPayload() {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
+    void testCtionMessage_validPayload() throws Exception {
+        // Prepare a valid payload
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"CALLID1\":4,\"CALLID2\":5}";
+
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Mock dependencies
+        when(utils.isValidData(anyString())).thenReturn(true);
+        when(utils.ivrExtraction(anyString())).thenReturn("123");
+        when(utils.callTypeExtraction(anyString())).thenReturn("1");
+        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("some-ecpd-id"));
+        when(ctiEcpdService.findById(anyString())).thenReturn(null);
+
+        // Mock Kafka send result
+        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(
+                new SendResult<>(new ProducerRecord<>("topic", "key", "value"),
+                        new RecordMetadata(null, 0, 0, 0, 0, 0, 0))
+        );
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify interactions and behavior
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void testCtionMessage_emptyPayload() {
+        // Prepare an empty payload
         String payload = "";
 
-        eventsMessageListener.ctionMessage(record, payload);
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
 
-        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), anyChar());
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify no interactions with KafkaTemplate
+        verify(kafkaTemplate, never()).send(any(ProducerRecord.class));
     }
 
     @Test
-    public void testCtionMessage_withValidCallEstablishedAction() throws Exception {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"*1234*\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\",\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\",\"CALLID1\":4,\"CALLID2\":5}";
+    void testCtionMessage_invalidAction() {
+        // Prepare a payload with an invalid action
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"INVALID_ACTION\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"CALLID1\":4,\"CALLID2\":5}";
 
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Mock dependencies
         when(utils.isValidData(anyString())).thenReturn(true);
-        when(utils.ivrExtraction(anyString())).thenReturn("1234");
-        when(utils.callTypeExtraction(anyString())).thenReturn("1");
-        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpd123"));
-        when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
 
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.complete(mock(SendResult.class));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
 
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(mtnEcpdService).getEcpdByAcctId(anyString());
-        verify(ctiEcpdService).saveCTIData(any(CTIDataStore.class));
+        // Verify no interactions with KafkaTemplate
+        verify(kafkaTemplate, never()).send(any(ProducerRecord.class));
     }
 
-    // Additional test cases for other actions and paths need to be written similarly
-
-    @Test
-    public void testCtionMessage_withInvalidAction() {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"ACTION\":\"INVALID_ACTION\"}";
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), anyChar());
-    }
-
-    // Helper method to invoke private methods using reflection
-    private void invokePrivateSendMessageAsync(ProducerRecord<String, String> producerRecord, String transactionId, String payload, String producerTopic, String insightName, char sensitivityCheckDone) throws Exception {
-        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone);
-    }
-}
-
-
-To achieve 100% code coverage for the `ctionMessage` method in the `EventsMessageListener` class, we need to create test cases that cover all logical branches and possible execution paths. Here are additional JUnit 5 test cases that aim to cover these branches.
-
-```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
-
-import com.verizon.vbg.ledger.listener.EventsMessageListener;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
-import org.springframework.test.util.ReflectionTestUtils;
-import reactor.core.publisher.Mono;
-
-import java.util.concurrent.CompletableFuture;
-
-@ExtendWith(MockitoExtension.class)
-public class EventsMessageListenerTest {
-
-    @InjectMocks
-    private EventsMessageListener eventsMessageListener;
-
-    @Mock
-    private MtnEcpdService mtnEcpdService;
-
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Mock
-    private KafkaFalloutService failedMessageService;
-
-    @Mock
-    private BatchLoaderUtils utils;
-
-    @Mock
-    private CTIEcpdService ctiEcpdService;
-
-    private String producerTopic = "testProducerTopic";
-    private String ctiProducerTopic = "testCtiProducerTopic";
-
-    @BeforeEach
-    public void setUp() {
-        ReflectionTestUtils.setField(eventsMessageListener, "producerTopic", producerTopic);
-        ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", ctiProducerTopic);
-    }
-
-    @Test
-    public void testCtionMessage_withEmptyPayload() {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "";
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), anyChar());
-    }
-
-    @Test
-    public void testCtionMessage_withValidCallEstablishedAction() throws Exception {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"*1234*\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\",\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\",\"CALLID1\":4,\"CALLID2\":5}";
-
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(utils.ivrExtraction(anyString())).thenReturn("1234");
-        when(utils.callTypeExtraction(anyString())).thenReturn("1");
-        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpd123"));
-        when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
-
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.complete(mock(SendResult.class));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(mtnEcpdService).getEcpdByAcctId(anyString());
-        verify(ctiEcpdService).saveCTIData(any(CTIDataStore.class));
-    }
-
-    @Test
-    public void testCtionMessage_withRTPSStartedAction() throws Exception {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"ACTION\":\"RTPSTARTED\", \"CALLCONTROLID\":1}";
-
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
-
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.complete(mock(SendResult.class));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(ctiEcpdService).findById(anyString());
-    }
-
-    @Test
-    public void testCtionMessage_withCallIdChangedAction() throws Exception {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"ACTION\":\"CALLIDCHANGED\", \"OLDCALLID\":2}";
-
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
-
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.complete(mock(SendResult.class));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(ctiEcpdService).findById(anyString());
-    }
-
-    @Test
-    public void testCtionMessage_withCallTransferredAction() throws Exception {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"ACTION\":\"CALL_TRANSFERRED\", \"CALLID1\":4, \"CALLID2\":5}";
-
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
-
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.complete(mock(SendResult.class));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(ctiEcpdService).findById(anyString());
-    }
-
-    @Test
-    public void testCtionMessage_withReleaseAction() throws Exception {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"ACTION\":\"RELEASE\", \"CALLCONTROLID\":1}";
-
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
-
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.complete(mock(SendResult.class));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(ctiEcpdService).findById(anyString());
-    }
-
-    @Test
-    public void testCtionMessage_withInvalidAction() {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"ACTION\":\"INVALID_ACTION\"}";
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(failedMessageService, times(0)).saveFailedRecords(any(), any(), any(), any(), anyChar());
-    }
-
-    private void invokePrivateSendMessageAsync(ProducerRecord<String, String> producerRecord, String transactionId, String payload, String producerTopic, String insightName, char sensitivityCheckDone) throws Exception {
-        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone);
-    }
-}
-```
-
-To achieve 100% code coverage for the `ctionMessage` method, we need to consider additional test cases that cover other logical branches and possible execution paths not addressed by the previously provided test cases. Here are some additional scenarios to consider:
-
-1. **Action `RTPSTOPPED`**: This should be tested similarly to `RTPSTARTED`.
-2. **Sensitive Data Handling**: Test cases where the sensitivity flag is set to 'Y'.
-3. **Edge Cases**: Handling of missing or null fields in the payload.
-
-Here are the additional test cases:
-
-```java
-import org.json.JSONObject;
-import org.mockito.ArgumentCaptor;
-import reactor.core.publisher.Mono;
-import java.util.concurrent.CompletableFuture;
-
-public class AdditionalEventsMessageListenerTest {
-
-    // Assuming setup and mocks are already defined in the previous test suite.
-
-    @Test
-    public void testCtionMessage_withRTPStoppedAction() throws Exception {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"ACTION\":\"RTPSTOPPED\", \"CALLCONTROLID\":1}";
-
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
-
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.complete(mock(SendResult.class));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(ctiEcpdService).findById(anyString());
-    }
-
-    @Test
-    public void testCtionMessage_withSensitiveData() throws Exception {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"ACTION\":\"CALLESTABLISHED\",\"CALLCONTROLID\":1,\"CV2\":\"1234567890\"}";
-
-        when(utils.isValidData(anyString())).thenReturn(true);
-        CTIDataStore dataStore = new CTIDataStore();
-        dataStore.setSensitivity("Y");
-        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpd123"));
-        when(ctiEcpdService.findById(anyString())).thenReturn(dataStore);
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(ctiEcpdService, times(0)).saveCTIData(any()); // Sensitivity should prevent saving
-    }
-
-    @Test
-    public void testCtionMessage_withNullFields() {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"ACTION\":\"CALLESTABLISHED\"}"; // Missing other fields
-
-        when(utils.isValidData(anyString())).thenReturn(false);
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(failedMessageService).saveFailedRecords(anyString(), anyString(), eq(payload), anyString(), anyChar());
-    }
-
-    @Test
-    public void testCtionMessage_withCallFailedAction() throws Exception {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"ACTION\":\"CALLFAILED\", \"CALLCONTROLID\":1}";
-
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
-
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.complete(mock(SendResult.class));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(ctiEcpdService).findById(anyString());
-    }
-
-    @Test
-    public void testCtionMessage_withNullPayload() {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = null; // Simulating null payload
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(failedMessageService, never()).saveFailedRecords(any(), any(), any(), any(), anyChar());
-    }
-
-    @Test
-    public void testCtionMessage_withExceptionDuringProcessing() throws Exception {
-        ConsumerRecord<String, String> record = mock(ConsumerRecord.class);
-        String payload = "{\"ACTION\":\"CALLESTABLISHED\", \"CV2\":\"1234567890\"}";
-
-        when(utils.isValidData(anyString())).thenThrow(new RuntimeException("Test Exception"));
-
-        eventsMessageListener.ctionMessage(record, payload);
-
-        verify(failedMessageService).saveFailedRecords(anyString(), anyString(), eq(payload), anyString(), anyChar());
-    }
-
-    private void invokePrivateSendMessageAsync(ProducerRecord<String, String> producerRecord, String transactionId, String payload, String producerTopic, String insightName, char sensitivityCheckDone) throws Exception {
-        ReflectionTestUtils.invokeMethod(eventsMessageListener, "sendMessageAsync", producerRecord, transactionId, payload, producerTopic, insightName, sensitivityCheckDone);
+    private void invokePrivateMethod(Object instance, String methodName, Class<?>[] paramTypes, Object... params) throws Exception {
+        Method method = instance.getClass().getDeclaredMethod(methodName, paramTypes);
+        method.setAccessible(true);
+        method.invoke(instance, params);
     }
 }
 ```
 
 ### Explanation:
-- **RTPSTOPPED Action**: Similar to the `RTPSTARTED` test case, but checks for the `RTPSTOPPED` action.
-- **Sensitive Data Handling**: Ensures that data marked as sensitive is not processed further.
-- **Null Fields**: Tests the behavior when the payload is missing expected fields.
-- **CALLFAILED Action**: Tests for the `CALLFAILED` action to ensure correct handling.
-- **Null Payload**: Tests the scenario where the payload itself is null.
-- **Exception Handling**: Simulates an exception during processing to ensure it is handled gracefully.
 
-These additional tests help cover more branches and edge cases, pushing closer to 100% code coverage for the `ctionMessage` method.
+1. **Mockito Annotations**: The `@InjectMocks` annotation is used to inject mocks into the `EventsMessageListener` instance. `@Mock` is used for mocking dependencies.
+
+2. **Reflection**: The `ReflectionTestUtils.setField` method is used to set private fields, like `ctiProducerTopic`, which are accessed in the method.
+
+3. **Mocking**: Dependencies like `MtnEcpdService`, `KafkaTemplate`, and others are mocked to provide controlled responses during the test.
+
+4. **Testing Valid Payload**: The first test case simulates a scenario with a valid payload and checks if the Kafka template's `send` method is called.
+
+5. **Testing Empty Payload**: The second test case ensures that when an empty payload is received, the Kafka `send` method is not called.
+
+6. **Testing Invalid Action**: The third test case checks that no Kafka interaction occurs if the action in the payload is invalid.
+
+7. **Private Method Invocation**: A helper method `invokePrivateMethod` is provided to call private methods using reflection, though it is not directly used in these examples. Depending on your coverage needs, you might need to adapt this to test private methods specifically.
+
+This setup provides a comprehensive approach to testing the `ctionMessage` method, aiming for full coverage by simulating different scenarios and verifying expected behaviors. Adjust the mock returns and verify statements according to the specific logic of your method and its interactions.

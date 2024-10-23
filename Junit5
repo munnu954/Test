@@ -1,4 +1,4 @@
-To ensure full coverage of the conditional statement `if (utils.isValidData(mtn) && action.equals("CALLESTABLISHED") && !callTypeValue.equals("0")) { }`, we need to test scenarios where each condition is both true and false, and explore the outcomes when combinations of these conditions are met. Here are additional test cases focusing on combinations not previously tested:
+To ensure comprehensive test coverage for the `ctionMessage` method, let's focus on any remaining branches and subtle scenarios that might not have been fully explored. Here are some additional test cases to consider:
 
 ```java
 import com.verizon.vbg.ledger.listener.EventsMessageListener;
@@ -7,14 +7,20 @@ import com.verizon.vbg.ledger.service.CTIEcpdService;
 import com.verizon.vbg.ledger.service.KafkaFalloutService;
 import com.verizon.vbg.ledger.util.BatchLoaderUtils;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.*;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
+import reactor.core.publisher.Mono;
+
+import java.util.concurrent.CompletableFuture;
 
 import static org.mockito.Mockito.*;
 
-class EventsMessageListenerConditionalTests2 {
+class EventsMessageListenerAdditionalTests5 {
 
     @InjectMocks
     private EventsMessageListener eventsMessageListener;
@@ -41,73 +47,119 @@ class EventsMessageListenerConditionalTests2 {
     }
 
     @Test
-    void testCtionMessage_validMtnAndActionButCallTypeZero() {
-        // Prepare a payload where MTN is valid and action is "CALLESTABLISHED" but callTypeValue is "0"
+    void testCtionMessage_actionRtpStoppedWithValidData() {
+        // Prepare a payload with action "RTPSTOPPED" and valid data
         String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"0;2\"," +
+                "\"ACTION\":\"RTPSTOPPED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
                 "\"CALLID1\":4,\"CALLID2\":5}";
 
         ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
 
-        // Mock the utility method
-        when(utils.isValidData("1234567890")).thenReturn(true);  // Valid MTN
-        when(utils.callTypeExtraction("0;2")).thenReturn("0");  // Call type value is "0"
+        // Mock dependencies
+        when(utils.isValidData(anyString())).thenReturn(true);
+        CTIDataStore ctiDataStore = new CTIDataStore();
+        ctiDataStore.setEcpd("ecpd-123");
+        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
+
+        // Mock Kafka send result
+        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(
+                new SendResult<>(new ProducerRecord<>("topic", "key", "value"),
+                        new RecordMetadata(null, 0, 0, 0, 0, 0, 0))
+        );
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
         // Call the method under test
         eventsMessageListener.ctionMessage(consumerRecord, payload);
 
-        // Verify that no interactions with KafkaTemplate occur
-        verify(kafkaTemplate, never()).send(any());
+        // Verify interactions and behavior
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
     }
 
     @Test
-    void testCtionMessage_validMtnAndCallTypeButActionNotCallEstablished() {
-        // Prepare a payload where MTN is valid and callTypeValue is not "0" but action is not "CALLESTABLISHED"
+    void testCtionMessage_actionHoldWithMissingCTIData() {
+        // Prepare a payload with action "HOLD" and missing CTIData
         String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"OTHER_ACTION\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"ACTION\":\"HOLD\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
                 "\"CALLID1\":4,\"CALLID2\":5}";
 
         ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
 
-        // Mock the utility method
-        when(utils.isValidData("1234567890")).thenReturn(true);  // Valid MTN
-        when(utils.callTypeExtraction("1;2")).thenReturn("1");  // Call type value is not "0"
+        // Mock dependencies to simulate missing CTIData
+        when(utils.isValidData(anyString())).thenReturn(true);
+        when(ctiEcpdService.findById(anyString())).thenReturn(null);
 
         // Call the method under test
         eventsMessageListener.ctionMessage(consumerRecord, payload);
 
-        // Verify that no interactions with KafkaTemplate occur
-        verify(kafkaTemplate, never()).send(any());
+        // Verify that a failed record is saved
+        verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
     }
 
     @Test
-    void testCtionMessage_actionCallEstablishedAndCallTypeValidButMtnInvalid() {
-        // Prepare a payload where action is "CALLESTABLISHED" and callTypeValue is not "0" but MTN is invalid
-        String payload = "{\"CV2\":\"\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+    void testCtionMessage_actionCallReleasedAfterSensitivityCheck() {
+        // Prepare a payload with action "RELEASE" after sensitivity check
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"RELEASE\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
                 "\"CALLID1\":4,\"CALLID2\":5}";
 
         ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
 
-        // Mock the utility method
-        when(utils.isValidData("")).thenReturn(false);  // Invalid MTN
-        when(utils.callTypeExtraction("1;2")).thenReturn("1");  // Call type value is not "0"
+        // Mock dependencies
+        when(utils.isValidData(anyString())).thenReturn(true);
+        CTIDataStore ctiDataStore = new CTIDataStore();
+        ctiDataStore.setEcpd("ecpd-123");
+        ctiDataStore.setSensitivity("N");
+        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
+
+        // Mock Kafka send result
+        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(
+                new SendResult<>(new ProducerRecord<>("topic", "key", "value"),
+                        new RecordMetadata(null, 0, 0, 0, 0, 0, 0))
+        );
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
         // Call the method under test
         eventsMessageListener.ctionMessage(consumerRecord, payload);
 
-        // Verify that no interactions with KafkaTemplate occur
-        verify(kafkaTemplate, never()).send(any());
+        // Verify interactions and behavior
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void testCtionMessage_actionCallIdChangedWithDeleteFailure() {
+        // Prepare a payload with action "CALLIDCHANGED" and deletion failure
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"CALLIDCHANGED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"CALLID1\":4,\"CALLID2\":5}";
+
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Mock dependencies
+        when(utils.isValidData(anyString())).thenReturn(true);
+        CTIDataStore ctiDataStore = new CTIDataStore();
+        ctiDataStore.setEcpd("ecpd-123");
+        ctiDataStore.setCiscoCallId(2L);
+        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
+        when(ctiEcpdService.deleteById(anyString())).thenReturn(false);  // Simulate delete failure
+
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify interactions and that a failed record is saved
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+        verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
     }
 }
 ```
 
-### Explanation of the Tests:
+### Explanation of Additional Tests:
 
-1. **Valid MTN and Action but Call Type is "0"**: This test ensures that even if the MTN is valid and the action is "CALLESTABLISHED", the presence of `callTypeValue` as "0" should prevent further processing.
+1. **Action `RTPSTOPPED` with Valid Data**: Tests the scenario where the action is "RTPSTOPPED" and data is valid, ensuring that the message is processed and sent.
 
-2. **Valid MTN and Call Type but Wrong Action**: Here, the MTN and call type are valid, but the action is not "CALLESTABLISHED", which should stop any further action.
+2. **Action `HOLD` with Missing CTIData**: Simulates a situation where CTIData is not found for the "HOLD" action, ensuring that a failed record is logged.
 
-3. **Action and Call Type Valid but Invalid MTN**: This test covers the scenario where the action is "CALLESTABLISHED" and the call type is valid, but the MTN is invalid, ensuring no further processing occurs.
+3. **Action `RELEASE` After Sensitivity Check**: Tests the scenario where a "RELEASE" action occurs after confirming that data is not sensitive, ensuring the message is processed and sent.
 
-These test cases are designed to ensure that each condition in the `if` statement is evaluated properly, and combinations of these conditions are covered comprehensively to achieve full test coverage. Adjust the payloads and mock returns as necessary to fit your specific application logic and requirements.
+4. **Action `CALLIDCHANGED` with Deletion Failure**: Covers the case where the action is "CALLIDCHANGED", but the deletion of the old ID fails, ensuring that the message is still sent, and a failed record is logged.
+
+These additional test cases explore various scenarios, including successful and unsuccessful processing paths, to ensure comprehensive coverage of the `ctionMessage` method. Adjust the mock returns and payloads as necessary to align with your application's logic and behavior.

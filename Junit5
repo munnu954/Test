@@ -1,4 +1,4 @@
-To ensure comprehensive test coverage for the `ctionMessage` method, let's focus on any remaining branches and subtle scenarios that might not have been fully explored. Here are some additional test cases to consider:
+To ensure full coverage of the `ctionMessage` method, we need to explore any remaining branches or unique scenarios that might not have been fully covered yet. Here are additional test cases to consider, focusing on different combinations of input conditions and ensuring that each possible branch of logic is tested.
 
 ```java
 import com.verizon.vbg.ledger.listener.EventsMessageListener;
@@ -20,7 +20,7 @@ import java.util.concurrent.CompletableFuture;
 
 import static org.mockito.Mockito.*;
 
-class EventsMessageListenerAdditionalTests5 {
+class EventsMessageListenerAdditionalTests6 {
 
     @InjectMocks
     private EventsMessageListener eventsMessageListener;
@@ -47,10 +47,25 @@ class EventsMessageListenerAdditionalTests5 {
     }
 
     @Test
-    void testCtionMessage_actionRtpStoppedWithValidData() {
-        // Prepare a payload with action "RTPSTOPPED" and valid data
+    void testCtionMessage_invalidJsonStructure() {
+        // Prepare a payload with an invalid JSON structure
         String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"RTPSTOPPED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\",";
+
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify that a failed record is saved due to JSON parsing error
+        verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
+
+    @Test
+    void testCtionMessage_actionAgentLoginWithValidData() {
+        // Prepare a payload with action "AGENTLOGIN" and valid data
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"AGENTLOGIN\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
                 "\"CALLID1\":4,\"CALLID2\":5}";
 
         ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
@@ -76,10 +91,10 @@ class EventsMessageListenerAdditionalTests5 {
     }
 
     @Test
-    void testCtionMessage_actionHoldWithMissingCTIData() {
-        // Prepare a payload with action "HOLD" and missing CTIData
+    void testCtionMessage_actionAgentLogoutWithoutCTIData() {
+        // Prepare a payload with action "AGENTLOGOUT" and no CTIData
         String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"HOLD\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"ACTION\":\"AGENTLOGOUT\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
                 "\"CALLID1\":4,\"CALLID2\":5}";
 
         ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
@@ -96,10 +111,10 @@ class EventsMessageListenerAdditionalTests5 {
     }
 
     @Test
-    void testCtionMessage_actionCallReleasedAfterSensitivityCheck() {
-        // Prepare a payload with action "RELEASE" after sensitivity check
+    void testCtionMessage_actionCallTransferredWithValidEcpd() {
+        // Prepare a payload with action "CALL_TRANSFERRED" and valid ECPD
         String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"RELEASE\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"ACTION\":\"CALL_TRANSFERRED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
                 "\"CALLID1\":4,\"CALLID2\":5}";
 
         ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
@@ -108,7 +123,6 @@ class EventsMessageListenerAdditionalTests5 {
         when(utils.isValidData(anyString())).thenReturn(true);
         CTIDataStore ctiDataStore = new CTIDataStore();
         ctiDataStore.setEcpd("ecpd-123");
-        ctiDataStore.setSensitivity("N");
         when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
 
         // Mock Kafka send result
@@ -124,42 +138,17 @@ class EventsMessageListenerAdditionalTests5 {
         // Verify interactions and behavior
         verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
     }
-
-    @Test
-    void testCtionMessage_actionCallIdChangedWithDeleteFailure() {
-        // Prepare a payload with action "CALLIDCHANGED" and deletion failure
-        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"CALLIDCHANGED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
-                "\"CALLID1\":4,\"CALLID2\":5}";
-
-        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
-
-        // Mock dependencies
-        when(utils.isValidData(anyString())).thenReturn(true);
-        CTIDataStore ctiDataStore = new CTIDataStore();
-        ctiDataStore.setEcpd("ecpd-123");
-        ctiDataStore.setCiscoCallId(2L);
-        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
-        when(ctiEcpdService.deleteById(anyString())).thenReturn(false);  // Simulate delete failure
-
-        // Call the method under test
-        eventsMessageListener.ctionMessage(consumerRecord, payload);
-
-        // Verify interactions and that a failed record is saved
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
-        verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-    }
 }
 ```
 
 ### Explanation of Additional Tests:
 
-1. **Action `RTPSTOPPED` with Valid Data**: Tests the scenario where the action is "RTPSTOPPED" and data is valid, ensuring that the message is processed and sent.
+1. **Invalid JSON Structure**: Simulates the case where the payload has an invalid JSON structure, ensuring that a failed record is logged due to parsing issues.
 
-2. **Action `HOLD` with Missing CTIData**: Simulates a situation where CTIData is not found for the "HOLD" action, ensuring that a failed record is logged.
+2. **Action `AGENTLOGIN` with Valid Data**: Tests the scenario where the action is "AGENTLOGIN" and data is valid, ensuring the message is processed and sent.
 
-3. **Action `RELEASE` After Sensitivity Check**: Tests the scenario where a "RELEASE" action occurs after confirming that data is not sensitive, ensuring the message is processed and sent.
+3. **Action `AGENTLOGOUT` Without CTIData**: Simulates a situation where CTIData is not found for the "AGENTLOGOUT" action, ensuring that a failed record is logged.
 
-4. **Action `CALLIDCHANGED` with Deletion Failure**: Covers the case where the action is "CALLIDCHANGED", but the deletion of the old ID fails, ensuring that the message is still sent, and a failed record is logged.
+4. **Action `CALL_TRANSFERRED` with Valid ECPD**: Tests the scenario where the action is "CALL_TRANSFERRED" with valid ECPD data, ensuring the message is processed and sent.
 
-These additional test cases explore various scenarios, including successful and unsuccessful processing paths, to ensure comprehensive coverage of the `ctionMessage` method. Adjust the mock returns and payloads as necessary to align with your application's logic and behavior.
+These additional test cases explore different scenarios, including actions that might not have been covered before, to ensure comprehensive test coverage of the `ctionMessage` method. Adjust the mock returns and payloads as necessary to fit your specific application logic and requirements.

@@ -1,4 +1,4 @@
-To achieve full coverage of the `ctionMessage` method, we should identify any remaining logical branches or specific conditions that might not yet be tested. Here are additional test cases that should help cover those:
+To achieve 100% code coverage of the `ctionMessage` method in the `EventsMessageListener` class, we'll explore some remaining edge cases and logical branches that might not have been fully covered. Here are some additional test cases:
 
 ```java
 import com.verizon.vbg.ledger.listener.EventsMessageListener;
@@ -14,13 +14,12 @@ import org.junit.jupiter.api.Test;
 import org.mockito.*;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
-import reactor.core.publisher.Mono;
 
 import java.util.concurrent.CompletableFuture;
 
 import static org.mockito.Mockito.*;
 
-class EventsMessageListenerAdditionalTests7 {
+class EventsMessageListenerAdditionalTests8 {
 
     @InjectMocks
     private EventsMessageListener eventsMessageListener;
@@ -47,10 +46,76 @@ class EventsMessageListenerAdditionalTests7 {
     }
 
     @Test
-    void testCtionMessage_validDataWithExceptionInKafkaSend() {
-        // Prepare a payload with valid data
+    void testCtionMessage_actionCallHeldWithValidData() {
+        // Prepare a payload with action "CALLHELD" and valid data
         String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"ACTION\":\"CALLHELD\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"CALLID1\":4,\"CALLID2\":5}";
+
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Mock dependencies
+        when(utils.isValidData(anyString())).thenReturn(true);
+        when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
+
+        // Mock Kafka send result
+        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(
+                new SendResult<>(new ProducerRecord<>("topic", "key", "value"),
+                        new RecordMetadata(null, 0, 0, 0, 0, 0, 0))
+        );
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify interactions and behavior
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void testCtionMessage_actionCallResumedWithoutExistingData() {
+        // Prepare a payload with action "CALLRESUMED" and no existing CTIData
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"CALLRESUMED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"CALLID1\":4,\"CALLID2\":5}";
+
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Mock dependencies to simulate no existing CTIData
+        when(utils.isValidData(anyString())).thenReturn(true);
+        when(ctiEcpdService.findById(anyString())).thenReturn(null);
+
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify that a failed record is saved
+        verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
+
+    @Test
+    void testCtionMessage_actionCallEstablishedWithEmptyCallTypes() {
+        // Prepare a payload with action "CALLESTABLISHED" and empty CALLTYPES
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"\"," +
+                "\"CALLID1\":4,\"CALLID2\":5}";
+
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Mock dependencies
+        when(utils.isValidData(anyString())).thenReturn(true);
+
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify that no interactions with KafkaTemplate occur due to empty call types
+        verify(kafkaTemplate, never()).send(any());
+    }
+
+    @Test
+    void testCtionMessage_actionCallReleasedWithSensitivelyFlaggedData() {
+        // Prepare a payload with action "RELEASE" and data flagged as sensitive
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"RELEASE\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
                 "\"CALLID1\":4,\"CALLID2\":5}";
 
         ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
@@ -59,87 +124,26 @@ class EventsMessageListenerAdditionalTests7 {
         when(utils.isValidData(anyString())).thenReturn(true);
         CTIDataStore ctiDataStore = new CTIDataStore();
         ctiDataStore.setEcpd("ecpd-123");
+        ctiDataStore.setSensitivity("Y");
         when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
 
-        // Simulate Kafka send exception
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.completeExceptionally(new RuntimeException("Kafka send failed"));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
         // Call the method under test
         eventsMessageListener.ctionMessage(consumerRecord, payload);
 
-        // Verify that a failed record is saved due to Kafka send exception
-        verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-    }
-
-    @Test
-    void testCtionMessage_actionOtherThanExpected() {
-        // Prepare a payload with an unexpected action
-        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"UNEXPECTED_ACTION\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
-                "\"CALLID1\":4,\"CALLID2\":5}";
-
-        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
-
-        // Mock dependencies
-        when(utils.isValidData(anyString())).thenReturn(true);
-
-        // Call the method under test
-        eventsMessageListener.ctionMessage(consumerRecord, payload);
-
-        // Verify that no interactions with KafkaTemplate occur
-        verify(kafkaTemplate, never()).send(any());
-    }
-
-    @Test
-    void testCtionMessage_actionCallEstablishedWithNullCallId() {
-        // Prepare a payload with action "CALLESTABLISHED" and null CALLID
-        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
-                "\"CALLID1\":null,\"CALLID2\":5}";
-
-        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
-
-        // Mock dependencies
-        when(utils.isValidData(anyString())).thenReturn(true);
-
-        // Call the method under test
-        eventsMessageListener.ctionMessage(consumerRecord, payload);
-
-        // Verify that a failed record is saved due to null CALLID
-        verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-    }
-
-    @Test
-    void testCtionMessage_actionCallEstablishedWithMissingMtn() {
-        // Prepare a payload with action "CALLESTABLISHED" and missing MTN
-        String payload = "{\"CV2\":\"\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
-                "\"CALLID1\":4,\"CALLID2\":5}";
-
-        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
-
-        // Mock dependencies
-        when(utils.isValidData("")).thenReturn(false);  // Simulate missing MTN
-
-        // Call the method under test
-        eventsMessageListener.ctionMessage(consumerRecord, payload);
-
-        // Verify that no interactions with KafkaTemplate occur
-        verify(kafkaTemplate, never()).send(any());
+        // Verify that the message is not sent due to sensitivity
+        verify(kafkaTemplate, never()).send(any(ProducerRecord.class));
     }
 }
 ```
 
 ### Explanation of Additional Tests:
 
-1. **Valid Data with Exception in Kafka Send**: Tests the scenario where valid data is processed but an exception occurs during Kafka message sending, ensuring that a failed record is logged.
+1. **Action `CALLHELD` with Valid Data**: Tests the scenario where the action is "CALLHELD" and data is valid, ensuring the message is processed and sent.
 
-2. **Unexpected Action**: Tests the case where the action is not one of the expected values, ensuring that the message is ignored and not sent.
+2. **Action `CALLRESUMED` Without Existing CTIData**: Simulates a situation where CTIData is not found for the "CALLRESUMED" action, ensuring that a failed record is logged.
 
-3. **Action `CALLESTABLISHED` with Null `CALLID`**: Tests the condition where a `CALLID` is null, ensuring that the method gracefully handles this and logs a failure.
+3. **Action `CALLESTABLISHED` with Empty Call Types**: Covers the case where `CALLTYPES` is empty, ensuring that no message is sent due to missing call type information.
 
-4. **Action `CALLESTABLISHED` with Missing MTN**: Covers the scenario where MTN is missing, ensuring that the message is not processed or sent.
+4. **Action `RELEASE` with Sensitively Flagged Data**: Tests the scenario where the action is "RELEASE" and the data is flagged as sensitive, ensuring that the message is not sent.
 
-These additional test cases are designed to help you achieve comprehensive test coverage by exploring less obvious paths and potential edge cases within the `ctionMessage` method. Adjust the mock behaviors and payloads as necessary according to your application's specific logic and requirements.
+These test cases aim to explore any remaining paths and edge cases to achieve comprehensive coverage of the `ctionMessage` method. Adjust the mock returns and payloads as necessary to fit your application's specific logic and requirements.

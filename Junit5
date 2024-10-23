@@ -1,163 +1,139 @@
-To write JUnit 5 test cases for the `ctiOnMessage` method in `EventsMessageListener`, covering specific conditional statements, you will need to mock dependencies and use reflection to access private methods. Here's a step-by-step guide with code examples to achieve this:
+To achieve 100% code coverage for the `ctiOnMessage` method of the `EventsMessageListener` class, you need to write test cases that cover all the branches and possible paths in the method. Below are additional test cases to cover the remaining branches:
 
-### Step 1: Set Up Your Test Class
-
-You'll need to create a test class for `EventsMessageListener` and set it up to use JUnit 5, Mockito for mocking, and Spring's `ReflectionTestUtils` for accessing private methods and fields.
-
-```java
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.support.SendResult;
-import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.listener.ConsumerRecord;
-import org.springframework.kafka.support.Acknowledgment;
-import org.springframework.util.StringUtils;
-import reactor.core.publisher.Mono;
-
-import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
-
-@ExtendWith(MockitoExtension.class)
-public class EventsMessageListenerTest {
-
-    @InjectMocks
-    private EventsMessageListener eventsMessageListener;
-
-    @Mock
-    private MtnEcpdService mtnEcpdService;
-
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @Mock
-    private KafkaFalloutService failedMessageService;
-
-    @Mock
-    private BatchLoaderUtils utils;
-
-    @Mock
-    private CTIEcpdService ctiEcpdService;
-
-    private ConsumerRecord<String, String> consumerRecord;
-    private String payload;
-
-    @BeforeEach
-    void setUp() {
-        consumerRecord = mock(ConsumerRecord.class);
-        payload = "{\"CV2\": \"12345\", \"CV5\": \"CV5_data\", \"CALLCONTROLID\": 123456, \"AGENTID\": \"agent123\", \"ACTION\": \"CALLESTABLISHED\", \"OLDCALLID\": 654321, \"CALLESTABLISHEDID\": 111222, \"CALLTYPES\": \"type1\"}";
-
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(utils.ivrExtraction(anyString())).thenReturn("ivrCallId");
-        when(utils.callTypeExtraction(anyString())).thenReturn("1");
-    }
-
-    // Add test methods here
-}
-```
-
-### Step 2: Write Test Methods
-
-You'll need to write test methods for each of the conditions you want to cover. Use Mockito to set up the behavior of the mocked services and use ReflectionTestUtils to call private methods.
-
-#### Test for `if(utils.isValidData(customerEcpdModel.getSensitivity()))`
+### Test for Empty Payload Scenario
 
 ```java
 @Test
-void testValidDataSensitivity() throws Exception {
-    // Mocking the behavior of repository and service calls
-    when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdData"));
-    when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
-
-    // Set up payload and consumer record
-    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
-
-    // Call the method under test
-    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, payload);
-
-    // Verify interactions and behaviors
-    verify(mtnEcpdService, times(1)).getEcpdByAcctId(anyString());
-    verify(ctiEcpdService, times(1)).saveCTIData(any(CTIDataStore.class));
-}
-```
-
-#### Test for `if(StringUtils.hasLength(customerEcpdModel.getSensitivity()))`
-
-```java
-@Test
-void testHasLengthSensitivity() throws Exception {
-    CTIDataStore dataStore = new CTIDataStore();
-    dataStore.setSensitivity("Y");
-    when(ctiEcpdService.findById(anyString())).thenReturn(dataStore);
+void testEmptyPayload() {
+    String emptyPayload = "";
 
     ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
 
-    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, payload);
+    assertThrows(FalloutException.class, () -> 
+        ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, emptyPayload)
+    );
 
-    verify(ctiEcpdService, times(1)).findById(anyString());
-    assertNotNull(dataStore.getSensitivity());
+    verifyNoInteractions(mtnEcpdService, ctiEcpdService, failedMessageService);
 }
 ```
 
-#### Test for `if(sentityvityFlag.equalsIgnoreCase("Y"))`
+### Test for Invalid Action Scenario
 
 ```java
 @Test
-void testSensitivityFlag() throws Exception {
-    CTIDataStore dataStore = new CTIDataStore();
-    dataStore.setSensitivity("Y");
-    when(ctiEcpdService.findById(anyString())).thenReturn(dataStore);
-
-    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
-
-    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, payload);
-
-    verify(ctiEcpdService, times(1)).findById(anyString());
-    assertEquals("Y", dataStore.getSensitivity());
-}
-```
-
-### Step 3: Mocking Database Interactions
-
-Ensure that your repository interactions are properly mocked to avoid actual database calls:
-
-```java
-@Test
-void testDatabaseInteractions() throws Exception {
-    when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdData"));
-    when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
-
-    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
-
-    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, payload);
-
-    verify(failedMessageService, times(0)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-}
-```
-
-### Step 4: Test Private Method Using Reflection
-
-For testing the private `sendMessageAsync` method, you can use reflection to invoke it directly.
-
-```java
-@Test
-void testSendMessageAsync() throws Exception {
-    // Prepare the ProducerRecord and other parameters
-    ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
+void testInvalidAction() throws Exception {
+    String invalidActionPayload = "{\"ACTION\": \"INVALID_ACTION\", \"CV2\": \"12345\", \"CALLCONTROLID\": 123456}";
     
-    // Use ReflectionTestUtils to call the private method
-    ReflectionTestUtils.invokeMethod(eventsMessageListener, 
-        "sendMessageAsync", producerRecord, "transactionId", "payload", "producerTopic", "insightName", 'Y');
+    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
 
-    // Verify the KafkaTemplate interaction
-    verify(kafkaTemplate, times(1)).send(producerRecord);
+    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, invalidActionPayload);
+
+    verifyNoInteractions(mtnEcpdService, ctiEcpdService, failedMessageService);
 }
 ```
 
-### Conclusion
+### Test for Sensitive Data Scenario
 
-This setup uses Mockito for mocking dependencies and ReflectionTestUtils for accessing private methods and fields. Adjust the test cases as needed based on the actual logic and conditions in your code. Make sure to cover all necessary cases and verify the behaviors and interactions with your mocked services.
+```java
+@Test
+void testSensitiveDataScenario() throws Exception {
+    CTIDataStore dataStore = new CTIDataStore();
+    dataStore.setSensitivity("Y");
+    dataStore.setEcpd("SensitiveEcpd");
+    dataStore.setMtn("SensitiveMtn");
+
+    when(ctiEcpdService.findById(anyString())).thenReturn(dataStore);
+
+    String sensitiveDataPayload = "{\"ACTION\": \"RELEASE\", \"CALLCONTROLID\": 123456}";
+
+    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
+
+    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, sensitiveDataPayload);
+
+    verify(ctiEcpdService, times(1)).findById(anyString());
+    verifyNoMoreInteractions(ctiEcpdService);
+    verifyNoInteractions(failedMessageService);
+}
+```
+
+### Test for Call Established with Call Type 0
+
+```java
+@Test
+void testCallEstablishedWithCallTypeZero() throws Exception {
+    String callTypeZeroPayload = "{\"ACTION\": \"CALLESTABLISHED\", \"CALLTYPES\": \"0\", \"CV2\": \"12345\"}";
+
+    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
+
+    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, callTypeZeroPayload);
+
+    verify(utils, times(1)).isValidData(anyString());
+    verifyNoInteractions(mtnEcpdService, ctiEcpdService, failedMessageService);
+}
+```
+
+### Test for Call ID Changed Scenario
+
+```java
+@Test
+void testCallIdChangedScenario() throws Exception {
+    CTIDataStore ctiDataStore = new CTIDataStore();
+    ctiDataStore.setEcpd("Ecpd123");
+    ctiDataStore.setMtn("Mtn123");
+
+    when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
+
+    String callIdChangedPayload = "{\"ACTION\": \"CALLIDCHANGED\", \"OLDCALLID\": 654321}";
+
+    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
+
+    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, callIdChangedPayload);
+
+    verify(ctiEcpdService, times(1)).findById(anyString());
+    verify(ctiEcpdService, times(1)).saveCTIData(any(CTIDataStore.class));
+    verify(ctiEcpdService, times(1)).deleteById(anyString());
+}
+```
+
+### Test for RTP Started Scenario
+
+```java
+@Test
+void testRtpStartedScenario() throws Exception {
+    CTIDataStore ctiDataStore = new CTIDataStore();
+    ctiDataStore.setEcpd("Ecpd123");
+    ctiDataStore.setMtn("Mtn123");
+
+    when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
+
+    String rtpStartedPayload = "{\"ACTION\": \"RTPSTARTED\", \"CALLCONTROLID\": 123456}";
+
+    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
+
+    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, rtpStartedPayload);
+
+    verify(ctiEcpdService, times(1)).findById(anyString());
+    verifyNoMoreInteractions(ctiEcpdService);
+    verifyNoInteractions(failedMessageService);
+}
+```
+
+### Test for Release Action with Null CTIDataStore
+
+```java
+@Test
+void testReleaseActionWithNullCTIDataStore() throws Exception {
+    when(ctiEcpdService.findById(anyString())).thenReturn(null);
+
+    String releasePayload = "{\"ACTION\": \"RELEASE\", \"CALLCONTROLID\": 123456}";
+
+    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
+
+    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, releasePayload);
+
+    verify(ctiEcpdService, times(1)).findById(anyString());
+    verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+}
+```
+
+These test cases should help in achieving 100% code coverage for the `ctiOnMessage` method by testing various branches and conditions. Adjust the payloads and mock behavior accordingly to fit the exact logic and data structures used in your application.

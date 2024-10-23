@@ -1,39 +1,38 @@
-To achieve 100% code coverage for the `ctiOnMessage` method in the `EventsMessageListener` class, you'll need to cover all branches and scenarios. Below are additional test cases that cover different branches and conditions not previously tested:
+To write JUnit 5 test cases for the `ctiOnMessage` method in `EventsMessageListener`, covering specific conditional statements, you will need to mock dependencies and use reflection to access private methods. Here's a step-by-step guide with code examples to achieve this:
+
+### Step 1: Set Up Your Test Class
+
+You'll need to create a test class for `EventsMessageListener` and set it up to use JUnit 5, Mockito for mocking, and Spring's `ReflectionTestUtils` for accessing private methods and fields.
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.kafka.core.KafkaTemplate;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.support.SendResult;
-import org.springframework.util.ReflectionUtils;
-import org.springframework.util.concurrent.SettableListenableFuture;
-
-import com.verizon.vbg.ledger.listener.EventsMessageListener;
-import com.verizon.vbg.ledger.service.BatchLoaderUtils;
-import com.verizon.vbg.ledger.service.CTIEcpdService;
-import com.verizon.vbg.ledger.service.KafkaFalloutService;
-import com.verizon.vbg.ledger.service.MtnEcpdService;
-
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.ConsumerRecord;
+import org.springframework.kafka.support.Acknowledgment;
+import org.springframework.util.StringUtils;
 import reactor.core.publisher.Mono;
 
-public class EventsMessageListenerAdditionalTest {
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+@ExtendWith(MockitoExtension.class)
+public class EventsMessageListenerTest {
+
+    @InjectMocks
+    private EventsMessageListener eventsMessageListener;
 
     @Mock
     private MtnEcpdService mtnEcpdService;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
 
     @Mock
     private KafkaFalloutService failedMessageService;
@@ -44,154 +43,121 @@ public class EventsMessageListenerAdditionalTest {
     @Mock
     private CTIEcpdService ctiEcpdService;
 
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
-
-    @InjectMocks
-    private EventsMessageListener eventsMessageListener;
+    private ConsumerRecord<String, String> consumerRecord;
+    private String payload;
 
     @BeforeEach
-    public void setUp() throws Exception {
-        MockitoAnnotations.openMocks(this);
+    void setUp() {
+        consumerRecord = mock(ConsumerRecord.class);
+        payload = "{\"CV2\": \"12345\", \"CV5\": \"CV5_data\", \"CALLCONTROLID\": 123456, \"AGENTID\": \"agent123\", \"ACTION\": \"CALLESTABLISHED\", \"OLDCALLID\": 654321, \"CALLESTABLISHEDID\": 111222, \"CALLTYPES\": \"type1\"}";
 
-        // Use reflection to set the private kafkaTemplate field
-        Field kafkaTemplateField = ReflectionUtils.findField(EventsMessageListener.class, "kafkaTemplate");
-        ReflectionUtils.makeAccessible(kafkaTemplateField);
-        ReflectionUtils.setField(kafkaTemplateField, eventsMessageListener, kafkaTemplate);
+        when(utils.isValidData(anyString())).thenReturn(true);
+        when(utils.ivrExtraction(anyString())).thenReturn("ivrCallId");
+        when(utils.callTypeExtraction(anyString())).thenReturn("1");
     }
 
-    @Test
-    public void testCtiOnMessage_EmptyPayload() {
-        String payload = "";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
-
-        eventsMessageListener.ctiOnMessage(record, payload);
-
-        verify(failedMessageService, never()).saveFailedRecords(any(), any(), any(), any(), anyChar());
-    }
-
-    @Test
-    public void testCtiOnMessage_InvalidAction() {
-        String payload = "{\"CV2\":\"123456\",\"ACTION\":\"INVALID_ACTION\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
-
-        when(utils.isValidData(any())).thenReturn(true);
-
-        eventsMessageListener.ctiOnMessage(record, payload);
-
-        verify(failedMessageService, never()).saveFailedRecords(any(), any(), any(), any(), anyChar());
-    }
-
-    @Test
-    public void testCtiOnMessage_CallEstablishedWithInvalidData() {
-        String payload = "{\"CV2\":\"\",\"CALLCONTROLID\":1,\"ACTION\":\"CALLESTABLISHED\",\"CALLTYPES\":\"0\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
-
-        when(utils.isValidData(any())).thenReturn(false);
-
-        eventsMessageListener.ctiOnMessage(record, payload);
-
-        verify(failedMessageService, never()).saveFailedRecords(any(), any(), any(), any(), anyChar());
-    }
-
-    @Test
-    public void testCtiOnMessage_RTPStartedWithMissingData() {
-        String payload = "{\"CALLCONTROLID\":1,\"ACTION\":\"RTPSTARTED\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
-
-        when(utils.isValidData(any())).thenReturn(false);
-        when(ctiEcpdService.findById(any())).thenReturn(null);
-
-        eventsMessageListener.ctiOnMessage(record, payload);
-
-        verify(failedMessageService, times(1)).saveFailedRecords(any(), any(), any(), any(), anyChar());
-    }
-
-    @Test
-    public void testCtiOnMessage_CallIdChangedWithSensitiveData() throws Exception {
-        String payload = "{\"OLDCALLID\":1,\"ACTION\":\"CALLIDCHANGED\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
-
-        CTIDataStore dataStore = new CTIDataStore();
-        dataStore.setEcpd("ecpd123");
-        dataStore.setSensitivity("y");
-        when(ctiEcpdService.findById(any())).thenReturn(dataStore);
-        when(utils.isValidData(any())).thenReturn(true);
-
-        eventsMessageListener.ctiOnMessage(record, payload);
-
-        verify(failedMessageService, never()).saveFailedRecords(any(), any(), any(), any(), anyChar());
-    }
-
-    @Test
-    public void testCtiOnMessage_ReleaseWithNonSensitiveData() throws Exception {
-        String payload = "{\"CALLCONTROLID\":1,\"ACTION\":\"RELEASE\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
-
-        CTIDataStore dataStore = new CTIDataStore();
-        dataStore.setEcpd("ecpd123");
-        dataStore.setSensitivity("n");
-        when(ctiEcpdService.findById(any())).thenReturn(dataStore);
-        when(utils.isValidData(any())).thenReturn(true);
-
-        eventsMessageListener.ctiOnMessage(record, payload);
-
-        // Verify that it tries to send a message
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
-    }
-
-    @Test
-    public void testCtiOnMessage_CallTransferredWithValidData() throws Exception {
-        String payload = "{\"CALLID1\":1,\"CALLID2\":2,\"ACTION\":\"CALL_TRANSFERRED\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
-
-        CTIDataStore dataStore = new CTIDataStore();
-        dataStore.setEcpd("ecpd123");
-        dataStore.setSensitivity("n");
-        when(ctiEcpdService.findById("1")).thenReturn(dataStore);
-        when(ctiEcpdService.findById("2")).thenReturn(null);
-        when(utils.isValidData(any())).thenReturn(true);
-
-        eventsMessageListener.ctiOnMessage(record, payload);
-
-        // Verify that it tries to send a message
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
-    }
-
-    @Test
-    public void testCtiOnMessage_CallTransferredWithSensitiveData() {
-        String payload = "{\"CALLID1\":1,\"CALLID2\":2,\"ACTION\":\"CALL_TRANSFERRED\"}";
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
-
-        CTIDataStore dataStore = new CTIDataStore();
-        dataStore.setEcpd("ecpd123");
-        dataStore.setSensitivity("y");
-        when(ctiEcpdService.findById("1")).thenReturn(dataStore);
-        when(utils.isValidData(any())).thenReturn(true);
-
-        eventsMessageListener.ctiOnMessage(record, payload);
-
-        verify(failedMessageService, never()).saveFailedRecords(any(), any(), any(), any(), anyChar());
-    }
+    // Add test methods here
 }
 ```
 
-### Explanation:
+### Step 2: Write Test Methods
 
-1. **testCtiOnMessage_EmptyPayload:** Tests handling of an empty payload scenario.
+You'll need to write test methods for each of the conditions you want to cover. Use Mockito to set up the behavior of the mocked services and use ReflectionTestUtils to call private methods.
 
-2. **testCtiOnMessage_InvalidAction:** Tests the handling of an invalid action in the payload.
+#### Test for `if(utils.isValidData(customerEcpdModel.getSensitivity()))`
 
-3. **testCtiOnMessage_CallEstablishedWithInvalidData:** Tests when the `CALLESTABLISHED` action is received but data is invalid.
+```java
+@Test
+void testValidDataSensitivity() throws Exception {
+    // Mocking the behavior of repository and service calls
+    when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdData"));
+    when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
 
-4. **testCtiOnMessage_RTPStartedWithMissingData:** Tests when `RTPSTARTED` action is received with missing data.
+    // Set up payload and consumer record
+    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
 
-5. **testCtiOnMessage_CallIdChangedWithSensitiveData:** Tests when `CALLIDCHANGED` action is received and the data is sensitive.
+    // Call the method under test
+    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, payload);
 
-6. **testCtiOnMessage_ReleaseWithNonSensitiveData:** Tests when `RELEASE` action is received with non-sensitive data.
+    // Verify interactions and behaviors
+    verify(mtnEcpdService, times(1)).getEcpdByAcctId(anyString());
+    verify(ctiEcpdService, times(1)).saveCTIData(any(CTIDataStore.class));
+}
+```
 
-7. **testCtiOnMessage_CallTransferredWithValidData:** Tests when `CALL_TRANSFERRED` action is received with valid data.
+#### Test for `if(StringUtils.hasLength(customerEcpdModel.getSensitivity()))`
 
-8. **testCtiOnMessage_CallTransferredWithSensitiveData:** Tests when `CALL_TRANSFERRED` action is received with sensitive data.
+```java
+@Test
+void testHasLengthSensitivity() throws Exception {
+    CTIDataStore dataStore = new CTIDataStore();
+    dataStore.setSensitivity("Y");
+    when(ctiEcpdService.findById(anyString())).thenReturn(dataStore);
 
-Each test case is designed to cover a specific path or decision point within the `ctiOnMessage` method, aiming for comprehensive branch coverage. Adjustments might be required based on any additional logic or conditions present in the method.
+    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
+
+    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, payload);
+
+    verify(ctiEcpdService, times(1)).findById(anyString());
+    assertNotNull(dataStore.getSensitivity());
+}
+```
+
+#### Test for `if(sentityvityFlag.equalsIgnoreCase("Y"))`
+
+```java
+@Test
+void testSensitivityFlag() throws Exception {
+    CTIDataStore dataStore = new CTIDataStore();
+    dataStore.setSensitivity("Y");
+    when(ctiEcpdService.findById(anyString())).thenReturn(dataStore);
+
+    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
+
+    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, payload);
+
+    verify(ctiEcpdService, times(1)).findById(anyString());
+    assertEquals("Y", dataStore.getSensitivity());
+}
+```
+
+### Step 3: Mocking Database Interactions
+
+Ensure that your repository interactions are properly mocked to avoid actual database calls:
+
+```java
+@Test
+void testDatabaseInteractions() throws Exception {
+    when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdData"));
+    when(ctiEcpdService.findById(anyString())).thenReturn(new CTIDataStore());
+
+    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
+
+    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, payload);
+
+    verify(failedMessageService, times(0)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+}
+```
+
+### Step 4: Test Private Method Using Reflection
+
+For testing the private `sendMessageAsync` method, you can use reflection to invoke it directly.
+
+```java
+@Test
+void testSendMessageAsync() throws Exception {
+    // Prepare the ProducerRecord and other parameters
+    ProducerRecord<String, String> producerRecord = new ProducerRecord<>("topic", "key", "value");
+    
+    // Use ReflectionTestUtils to call the private method
+    ReflectionTestUtils.invokeMethod(eventsMessageListener, 
+        "sendMessageAsync", producerRecord, "transactionId", "payload", "producerTopic", "insightName", 'Y');
+
+    // Verify the KafkaTemplate interaction
+    verify(kafkaTemplate, times(1)).send(producerRecord);
+}
+```
+
+### Conclusion
+
+This setup uses Mockito for mocking dependencies and ReflectionTestUtils for accessing private methods and fields. Adjust the test cases as needed based on the actual logic and conditions in your code. Make sure to cover all necessary cases and verify the behaviors and interactions with your mocked services.

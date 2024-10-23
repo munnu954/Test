@@ -1,4 +1,4 @@
-To achieve 100% code coverage for the `ctionMessage` method in the `EventsMessageListener` class, you need to write additional test cases to cover all branches and possible scenarios. Below are new test cases that complement the previously provided ones:
+To achieve 100% code coverage for the `ctionMessage` method, we need to cover all logical branches and conditions not previously covered. Here are additional test cases that explore some of the less obvious branches and scenarios:
 
 ```java
 import com.verizon.vbg.ledger.listener.EventsMessageListener;
@@ -22,8 +22,8 @@ import java.util.concurrent.CompletableFuture;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-class EventsMessageListenerAdditionalTests {
-    
+class EventsMessageListenerAdditionalTests2 {
+
     @InjectMocks
     private EventsMessageListener eventsMessageListener;
 
@@ -49,40 +49,77 @@ class EventsMessageListenerAdditionalTests {
     }
 
     @Test
-    void testCtionMessage_actionCallEstablishedInvalidCallType() {
-        // Prepare a payload with action "CALLESTABLISHED" and invalid callTypeValue
+    void testCtionMessage_actionAgentStatus() {
+        // Prepare a payload with action "AGENTSTATUS"
         String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"0;2\"," +
+                "\"ACTION\":\"AGENTSTATUS\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"0;2\"," +
                 "\"CALLID1\":4,\"CALLID2\":5}";
 
         ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
 
         // Mock dependencies
         when(utils.isValidData(anyString())).thenReturn(true);
-        when(utils.callTypeExtraction(anyString())).thenReturn("0");
+
+        // Mock Kafka send result
+        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(
+                new SendResult<>(new ProducerRecord<>("topic", "key", "value"),
+                        new RecordMetadata(null, 0, 0, 0, 0, 0, 0))
+        );
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
 
         // Call the method under test
         eventsMessageListener.ctionMessage(consumerRecord, payload);
 
-        // Verify no interactions with KafkaTemplate
-        verify(kafkaTemplate, never()).send(any(ProducerRecord.class));
+        // Verify interactions and behavior
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
     }
 
     @Test
-    void testCtionMessage_actionCallEstablishedSensitiveData() {
-        // Prepare a payload with action "CALLESTABLISHED" and sensitive data
+    void testCtionMessage_actionCallIdChanged() {
+        // Prepare a payload with action "CALLIDCHANGED"
         String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"CALLESTABLISHED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"ACTION\":\"CALLIDCHANGED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
                 "\"CALLID1\":4,\"CALLID2\":5}";
 
         ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
 
         // Mock dependencies
         when(utils.isValidData(anyString())).thenReturn(true);
-        when(utils.callTypeExtraction(anyString())).thenReturn("1");
-        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("some-ecpd-id"));
-        when(ctiEcpdService.findById(anyString())).thenReturn(null);
-        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("sensitive-ecpd-id"));
+        CTIDataStore ctiDataStore = new CTIDataStore();
+        ctiDataStore.setEcpd("ecpd-123");
+        ctiDataStore.setCiscoCallId(1L);
+        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
+
+        // Mock Kafka send result
+        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(
+                new SendResult<>(new ProducerRecord<>("topic", "key", "value"),
+                        new RecordMetadata(null, 0, 0, 0, 0, 0, 0))
+        );
+        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
+
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify interactions and behavior
+        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+        verify(ctiEcpdService, times(1)).deleteById(anyString());
+    }
+
+    @Test
+    void testCtionMessage_actionRetrieveWithSensitiveData() {
+        // Prepare a payload with action "RETRIEVE" and sensitive data
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"RETRIEVE\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"CALLID1\":4,\"CALLID2\":5}";
+
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Mock dependencies
+        when(utils.isValidData(anyString())).thenReturn(true);
+        CTIDataStore ctiDataStore = new CTIDataStore();
+        ctiDataStore.setEcpd("ecpd-123");
+        ctiDataStore.setSensitivity("Y");
+        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
 
         // Call the method under test
         eventsMessageListener.ctionMessage(consumerRecord, payload);
@@ -92,104 +129,17 @@ class EventsMessageListenerAdditionalTests {
     }
 
     @Test
-    void testCtionMessage_actionRtpStarted() {
-        // Prepare a payload with action "RTPSTARTED"
+    void testCtionMessage_exceptionInProcessing() {
+        // Prepare a payload that will cause an exception
         String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"RTPSTARTED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"ACTION\":\"CALLIDCHANGED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
                 "\"CALLID1\":4,\"CALLID2\":5}";
 
         ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
 
-        // Mock dependencies
+        // Mock dependencies to throw an exception
         when(utils.isValidData(anyString())).thenReturn(true);
-        CTIDataStore ctiDataStore = new CTIDataStore();
-        ctiDataStore.setEcpd("ecpd-123");
-        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
-
-        // Mock Kafka send result
-        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(
-                new SendResult<>(new ProducerRecord<>("topic", "key", "value"),
-                        new RecordMetadata(null, 0, 0, 0, 0, 0, 0))
-        );
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        // Call the method under test
-        eventsMessageListener.ctionMessage(consumerRecord, payload);
-
-        // Verify interactions and behavior
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
-    }
-
-    @Test
-    void testCtionMessage_actionHold() {
-        // Prepare a payload with action "HOLD"
-        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"HOLD\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
-                "\"CALLID1\":4,\"CALLID2\":5}";
-
-        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
-
-        // Mock dependencies
-        when(utils.isValidData(anyString())).thenReturn(true);
-        CTIDataStore ctiDataStore = new CTIDataStore();
-        ctiDataStore.setEcpd("ecpd-123");
-        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
-
-        // Mock Kafka send result
-        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(
-                new SendResult<>(new ProducerRecord<>("topic", "key", "value"),
-                        new RecordMetadata(null, 0, 0, 0, 0, 0, 0))
-        );
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        // Call the method under test
-        eventsMessageListener.ctionMessage(consumerRecord, payload);
-
-        // Verify interactions and behavior
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
-    }
-
-    @Test
-    void testCtionMessage_actionCallTransferred() {
-        // Prepare a payload with action "CALL_TRANSFERRED"
-        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"CALL_TRANSFERRED\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
-                "\"CALLID1\":4,\"CALLID2\":5}";
-
-        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
-
-        // Mock dependencies
-        when(utils.isValidData(anyString())).thenReturn(true);
-        CTIDataStore ctiDataStore = new CTIDataStore();
-        ctiDataStore.setEcpd("ecpd-123");
-        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
-
-        // Mock Kafka send result
-        CompletableFuture<SendResult<String, String>> future = CompletableFuture.completedFuture(
-                new SendResult<>(new ProducerRecord<>("topic", "key", "value"),
-                        new RecordMetadata(null, 0, 0, 0, 0, 0, 0))
-        );
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        // Call the method under test
-        eventsMessageListener.ctionMessage(consumerRecord, payload);
-
-        // Verify interactions and behavior
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
-    }
-
-    @Test
-    void testCtionMessage_actionReleaseWithNullData() {
-        // Prepare a payload with action "RELEASE" and null CTIDataStore
-        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
-                "\"ACTION\":\"RELEASE\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
-                "\"CALLID1\":4,\"CALLID2\":5}";
-
-        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
-
-        // Mock dependencies
-        when(utils.isValidData(anyString())).thenReturn(true);
-        when(ctiEcpdService.findById(anyString())).thenReturn(null);
+        when(ctiEcpdService.findById(anyString())).thenThrow(new RuntimeException("Service exception"));
 
         // Call the method under test
         eventsMessageListener.ctionMessage(consumerRecord, payload);
@@ -202,16 +152,12 @@ class EventsMessageListenerAdditionalTests {
 
 ### Explanation of Additional Tests:
 
-1. **Action `CALLESTABLISHED` with Invalid Call Type**: This test case handles the scenario where the call type is invalid, ensuring that no Kafka message is sent.
+1. **Action `AGENTSTATUS`**: Tests the scenario where the action is "AGENTSTATUS", ensuring that the message is processed correctly and sent to Kafka.
 
-2. **Action `CALLESTABLISHED` with Sensitive Data**: This test simulates a scenario where the data is marked as sensitive, checking that the Kafka message is not sent.
+2. **Action `CALLIDCHANGED`**: Covers the case where the action is "CALLIDCHANGED", verifying that the old call ID is deleted and the message is sent.
 
-3. **Action `RTPSTARTED`**: Tests the scenario where the action is "RTPSTARTED" and ensures the message is sent to Kafka.
+3. **Action `RETRIEVE` with Sensitive Data**: This test checks that when the action is "RETRIEVE" and the data is sensitive, the Kafka message is not sent.
 
-4. **Action `HOLD`**: Tests the scenario where the action is "HOLD", ensuring that the method processes this action correctly by sending the message.
+4. **Exception in Processing**: Simulates an exception during the processing of a message, ensuring that the failure is logged and a failed record is saved.
 
-5. **Action `CALL_TRANSFERRED`**: Covers the case where the action is "CALL_TRANSFERRED", verifying that the message is sent correctly.
-
-6. **Action `RELEASE` with Null Data**: This test ensures that when the action is "RELEASE" and no data is found, a failed record is saved.
-
-These additional test cases, combined with the previous ones, cover all logical branches and paths in the `ctionMessage` method, aiming for comprehensive coverage. Adjust the payloads and mock behaviors as needed to match your actual data and application logic.
+These additional test cases ensure comprehensive coverage of all logical branches and error conditions in the `ctionMessage` method. They complement previous tests to achieve 100% code coverage by addressing edge cases and specific conditions. Adjust the mock behaviors and payloads according to your actual application logic and expected behavior.

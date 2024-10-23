@@ -1,48 +1,94 @@
-The error you're encountering indicates a `NullPointerException` when the method attempts to access `getCreatedDate()` on a `KafkaFailedMessagesPK` object, which is null. This typically means that the `KafkaFailedMessagesEntity` instance being processed either does not have an ID set or the ID is not properly initialized.
+To cover the specified lines in your `KafkaFalloutBatchConfigCTI` class where you handle a null `redisEcpdid`, you can create a JUnit 5 test case that simulates the scenario where `redisEcpdid` is null. This will allow you to verify that the logging occurs and the method `falloutExpiryCheckAndDelete` is called as expected.
 
-To resolve this, you need to ensure that the `KafkaFailedMessagesEntity` instance you are working with has a valid ID before you call methods on it. Here's how you can modify your test method to handle this situation:
-
-### Revised Test Method for `actionCallIDChanged`
+### JUnit 5 Test Case
 
 ```java
-@Test
-void testKafkaFalloutProcessorCTI_actionCallIDChanged() throws Exception {
-    // Create a valid KafkaFailedMessagesEntity with a non-null ID
-    KafkaFailedMessagesEntity testEntity = new KafkaFailedMessagesEntity();
-    
-    // Set up a valid primary key (KafkaFailedMessagesPK)
-    KafkaFailedMessagesPK primaryKey = new KafkaFailedMessagesPK();
-    primaryKey.setCreatedDate(new Date()); // ensure created date is set
-    testEntity.setId(primaryKey); // set the ID on the KafkaFailedMessagesEntity
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
-    // Additional setup for the test entity, if necessary
-    testEntity.setSomeOtherField("someValue"); // replace with actual fields
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
-    // Mock behavior for the falloutExpiryCheckAndDelete method
-    when(kafkaFalloutBatchConfigCTI.falloutExpiryCheckAndDelete(any())).thenReturn(true);
+import java.util.Date;
 
-    // Execute the processor with the test entity
-    ItemProcessor<KafkaFailedMessagesEntity, KafkaFailedMessagesEntity> processor = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI();
-    KafkaFailedMessagesEntity result = processor.process(testEntity);
+class KafkaFalloutBatchConfigCTITest {
 
-    // Assertions
-    assertNotNull(result);
-    // Add additional assertions as needed based on your logic
+    @InjectMocks
+    private KafkaFalloutBatchConfigCTI kafkaFalloutBatchConfigCTI;
+
+    @Mock
+    private SomeDependencyType someDependency; // Replace with actual dependency type
+
+    @Mock
+    private Logger LOGGER; // Mock the logger if necessary
+
+    private KafkaFailedMessagesEntity item;
+    private String mtn = "1234567890"; // Example MTN
+    private long callEstablishedId = 1L; // Example Call Established ID
+    private Date currentDate = new Date(); // Current date for testing
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        item = new KafkaFailedMessagesEntity();
+        // Set up item properties if needed
+    }
+
+    @Test
+    void testFalloutWhenRedisEcpdIdIsNull() {
+        // Simulate the scenario where redisEcpdid is null
+        when(someDependency.getEcpdId(mtn)).thenReturn(null); // Mock the behavior to return null
+
+        // Call the method under test
+        KafkaFailedMessagesEntity result = kafkaFalloutBatchConfigCTI.kafkaFalloutProcessorCTI().process(item);
+
+        // Verify that the logging occurs
+        ArgumentCaptor<String> debugCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> warnCaptor = ArgumentCaptor.forClass(String.class);
+        
+        verify(LOGGER, times(1)).debug(debugCaptor.capture(), eq(mtn), any());
+        verify(LOGGER, times(1)).warn(warnCaptor.capture(), eq(mtn));
+
+        // Assert the captured log messages
+        assertEquals("Unable to get ecpdid for the MTN: {}, payload {}", debugCaptor.getValue());
+        assertEquals("Unable to get ecpdid for the MTN: {}", warnCaptor.getValue());
+
+        // Verify that falloutExpiryCheckAndDelete is called
+        verify(kafkaFalloutBatchConfigCTI, times(1)).falloutExpiryCheckAndDelete(item, currentDate, String.valueOf(callEstablishedId));
+
+        // Assert the result is null
+        assertNull(result, "The result should be null when redisEcpdid is null");
+    }
 }
 ```
 
-### Key Changes Made:
-1. **Initialize ID Properly**: 
-   - A valid `KafkaFailedMessagesPK` object is created, and its `createdDate` is set to ensure that the ID is not null. This prevents the `NullPointerException` when invoking `getCreatedDate()`.
+### Key Components of the Test Case:
 
-2. **Set the ID on the Entity**: 
-   - The `KafkaFailedMessagesEntity` now has its ID properly set, making it valid for processing.
+1. **Mocking Dependencies**:
+   - Use Mockito to mock the dependencies required by the `KafkaFalloutBatchConfigCTI` class, including the logger and any other service required to fetch `redisEcpdid`.
 
-3. **Mocking Behavior**: 
-   - If needed, you can mock the behavior of `falloutExpiryCheckAndDelete` to control its outcome during testing.
+2. **Setting Up the Scenario**:
+   - In the `setUp` method, initialize the necessary objects and set up any properties needed for your test.
+
+3. **Simulating Null Condition**:
+   - Mock the behavior of the method that retrieves `redisEcpdid` to return null. This simulates the condition you're trying to test.
+
+4. **Verifying Logging**:
+   - Use `ArgumentCaptor` to capture the log messages and verify that they match the expected values.
+
+5. **Verifying Method Calls**:
+   - Check that `falloutExpiryCheckAndDelete` is called with the correct parameters when `redisEcpdid` is null.
+
+6. **Asserting the Result**:
+   - Finally, assert that the result of the processor is null, as expected in this scenario.
 
 ### Additional Considerations:
-- **Review Entity Setup**: Make sure that all necessary fields in your `KafkaFailedMessagesEntity` are properly initialized for your specific test case.
-- **Test Assertions**: Add assertions that validate the expected outcomes of your processing logic, ensuring that the function behaves as intended after the process call.
+- Ensure you replace `SomeDependencyType` with the actual type of the dependency you are mocking.
+- Adapt logging verification based on how your logger is set up; you may not need to mock it if you're using a static logger.
+- The specific method name `kafkaFalloutProcessorCTI()` should match the actual method you want to test.
 
-By ensuring that your test entities are properly initialized, you should avoid `NullPointerExceptions` and ensure that your tests run smoothly. If you continue to face issues, please provide more context or details about the underlying logic of the `falloutExpiryCheckAndDelete` method.
+By following this structure, you will effectively cover the specified lines of code in your unit test.

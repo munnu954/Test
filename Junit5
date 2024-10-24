@@ -1,32 +1,33 @@
-To write JUnit 5 test cases for the specific conditional branch in the `ctionMessage` method of the `EventsMessageListener` class, we will focus on ensuring that all conditions are covered and the logic inside the block is executed correctly. We'll use Mockito to mock the dependencies and ReflectionTestUtils to access private methods. Here's how you can create these tests:
+To cover the conditional statement `if(utils.isValidData(mtn) && action.equals("CALLESTABLISHED") && !callTypeValue.equals("0"))` in the `ctionMessage` method of the `EventsMessageListener` class, we can write JUnit 5 test cases. These test cases will utilize Mockito for mocking dependencies and reflection to access private methods.
+
+Here's an example of how you can implement the test cases:
 
 ```java
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+import java.lang.reflect.Method;
+import java.util.UUID;
+
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.common.header.Headers;
 import org.json.JSONObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
-class EventsMessageListenerTest {
+@ExtendWith(MockitoExtension.class)
+public class EventsMessageListenerTest {
 
     @InjectMocks
     private EventsMessageListener eventsMessageListener;
 
     @Mock
     private MtnEcpdService mtnEcpdService;
-
-    @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
 
     @Mock
     private KafkaFalloutService failedMessageService;
@@ -37,69 +38,100 @@ class EventsMessageListenerTest {
     @Mock
     private CTIEcpdService ctiEcpdService;
 
-    private String validPayload;
-    private String invalidPayload;
-
+    private ConsumerRecord<String, String> record;
+    private String transactionId;
+    private String payload;
+    
     @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-
-        validPayload = new JSONObject()
-                .put("CV2", "someMtn")
-                .put("CV5", "someCV5")
-                .put("CALLCONTROLID", 12345L)
-                .put("AGENTID", "someAgentId")
+    public void setUp() {
+        // Setup test data
+        transactionId = UUID.randomUUID().toString();
+        payload = new JSONObject()
+                .put("CV2", "sampleCV2")
+                .put("CV5", "sample*IVRCallId")
+                .put("CALLCONTROLID", 12345)
+                .put("AGENTID", "agent123")
                 .put("ACTION", "CALLESTABLISHED")
-                .put("OLDCALLID", 67890L)
-                .put("CALLESTABLISHEDID", 112233L)
-                .put("CALLTYPES", "1")
-                .put("CALLID1", 11111L)
-                .put("CALLID2", 22222L)
+                .put("OLDCALLID", 67890)
+                .put("CALLESTABLISHEDID", 54321)
+                .put("CALLTYPES", "1;2")
+                .put("CALLID1", 11111)
+                .put("CALLID2", 22222)
                 .toString();
-
-        invalidPayload = new JSONObject().put("ACTION", "CALLESTABLISHED").toString();
+        
+        record = new ConsumerRecord<>("topic", 0, 0, transactionId, payload);
     }
 
     @Test
-    void testCtionMessageWithValidDataAndCallEstablishedAction() throws Exception {
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, null, validPayload);
+    public void testCtiMessageWhenValidData() throws Exception {
+        // Mocking utils behavior
+        when(utils.isValidData(anyString())).thenReturn(true);
+        when(utils.callTypeExtraction(anyString())).thenReturn("1");
+        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdValue"));
 
-        when(utils.isValidData("someMtn")).thenReturn(true);
-        when(utils.isValidData("1")).thenReturn(true);
-        when(utils.ivrExtraction("someCV5")).thenReturn("extractedIvrCallId");
-        when(utils.callTypeExtraction("1")).thenReturn("1");
-        when(mtnEcpdService.getEcpdByAcctId("someMtn")).thenReturn(Mono.just("ecpdId"));
+        // Accessing the private method ctionMessage using reflection
+        Method method = EventsMessageListener.class.getDeclaredMethod("ctionMessage", ConsumerRecord.class, String.class);
+        method.setAccessible(true);
+        
+        // Invoke the method
+        method.invoke(eventsMessageListener, record, payload);
 
-        ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctionMessage", record, validPayload);
-
-        // Verify that sendMessageAsync was invoked using reflection
+        // Verify interactions
         verify(ctiEcpdService).saveCTIData(any(CTIDataStore.class));
     }
 
     @Test
-    void testCtionMessageWithInvalidMtnData() throws Exception {
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, null, invalidPayload);
+    public void testCtiMessageWhenInvalidData() throws Exception {
+        // Mocking invalid data scenario
+        when(utils.isValidData(anyString())).thenReturn(false);
+        
+        // Accessing the private method ctionMessage using reflection
+        Method method = EventsMessageListener.class.getDeclaredMethod("ctionMessage", ConsumerRecord.class, String.class);
+        method.setAccessible(true);
+        
+        // Invoke the method
+        method.invoke(eventsMessageListener, record, payload);
 
-        when(utils.isValidData("0")).thenReturn(false);
-
-        ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctionMessage", record, invalidPayload);
-
-        // Verify that sendMessageAsync was not invoked
-        verify(ctiEcpdService, never()).saveCTIData(any(CTIDataStore.class));
+        // Verify that saveFailedRecords was called since data was invalid
+        verify(failedMessageService).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
     }
 
-    // Further test cases can be added to cover 100% of the branches
+    @Test
+    public void testCtiMessageWhenCallTypeValueIsZero() throws Exception {
+        // Setup payload with callTypeValue "0"
+        JSONObject jsonPayload = new JSONObject(payload);
+        jsonPayload.put("CALLTYPES", "0;2");
+        payload = jsonPayload.toString();
+        
+        // Mocking valid data scenario
+        when(utils.isValidData(anyString())).thenReturn(true);
+        when(utils.callTypeExtraction(anyString())).thenReturn("0");
+        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("ecpdValue"));
+
+        // Accessing the private method ctionMessage using reflection
+        Method method = EventsMessageListener.class.getDeclaredMethod("ctionMessage", ConsumerRecord.class, String.class);
+        method.setAccessible(true);
+        
+        // Invoke the method
+        method.invoke(eventsMessageListener, record, payload);
+
+        // Verify that saveFailedRecords was called since callTypeValue was "0"
+        verify(failedMessageService).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
 }
 ```
 
 ### Explanation:
+1. **Setup**: The `setUp` method initializes the necessary test data, including a sample Kafka `ConsumerRecord` and payload as a JSON string.
 
-1. **Setup Mocks**: We mock the dependencies like `MtnEcpdService`, `KafkaTemplate`, `KafkaFalloutService`, `BatchLoaderUtils`, and `CTIEcpdService`.
+2. **Test Cases**:
+   - **testCtiMessageWhenValidData**: This test case checks if the method behaves correctly when valid data is passed. It mocks the behavior of the utility and service classes and verifies that the `saveCTIData` method is called.
+   - **testCtiMessageWhenInvalidData**: This test ensures that when invalid data is detected, the `saveFailedRecords` method is called.
+   - **testCtiMessageWhenCallTypeValueIsZero**: This verifies that when the call type value is "0", the system behaves as expected and calls the `saveFailedRecords` method.
 
-2. **Test Initialization**: In `setUp()`, we initialize the mocks using MockitoAnnotations.
+3. **Reflection**: The test cases use Java Reflection to access the private method `ctionMessage`.
 
-3. **Test Case for Valid Data**: In `testCtionMessageWithValidDataAndCallEstablishedAction()`, we set up a valid payload and mock the `utils` and `mtnEcpdService` to return expected values. We then use `ReflectionTestUtils` to invoke the private method and verify that certain operations are performed.
+4. **Mockito**: The `@Mock` annotations are used to create mock instances of dependencies, allowing for isolated unit tests.
 
-4. **Test Case for Invalid Data**: In `testCtionMessageWithInvalidMtnData()`, we use an invalid payload and ensure that certain methods are not called.
-
-This test class is designed to cover different branches of the condition `if(utils.isValidData(mtn) && action.equals("CALLESTABLISHED") && !callTypeValue.equals("0"))`. You can add more test cases to cover edge cases or different branches as needed.
+### Note:
+Make sure to include the necessary dependencies in your build configuration (like Maven or Gradle) for JUnit, Mockito, and any other libraries you are using.

@@ -1,32 +1,29 @@
-To write JUnit 5 test cases for the `ctionMessage` method in the `EventsMessageListener` class, focusing specifically on the conditional branch `if(utils.isValidData(mtn) && action.equals("CALLESTABLISHED") && !callTypeValue.equals("0"))`, we will use mock objects to simulate the interactions with the services and repositories. Mocking is essential to isolate the unit under test and ensure that we can verify the behavior of the method.
+To achieve 100% code coverage for the conditional statement `if(utils.isValidData(mtn) && action.equals("CALLESTABLISHED") && !callTypeValue.equals("0"))` within the `ctionMessage` method, you'll need to write additional test cases to cover all possible branches and edge cases. Here are the necessary test cases:
 
-Here’s how you can write these test cases using JUnit 5, Mockito, and Reflection to access the private method `sendMessageAsync`:
+1. **Invalid MTN (Mobile Transaction Number):** Test what happens when `mtn` is invalid.
+2. **Invalid Action:** Test when the `action` is not "CALLESTABLISHED".
+3. **CallTypeValue Equals Zero:** Test when `callTypeValue` equals "0".
+
+Below are the additional JUnit 5 test cases to cover these scenarios:
 
 ```java
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.support.SendResult;
-import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.listener.ConsumerAwareListenerErrorHandler;
-import org.springframework.kafka.listener.MessageListenerContainer;
-import org.springframework.kafka.support.Acknowledgment;
-import org.springframework.messaging.Message;
-import org.springframework.messaging.MessageHeaders;
-import org.springframework.test.util.ReflectionTestUtils;
 import reactor.core.publisher.Mono;
 
-import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class EventsMessageListenerTest {
+public class EventsMessageListenerAdditionalTest {
 
     @InjectMocks
     private EventsMessageListener eventsMessageListener;
@@ -53,53 +50,71 @@ public class EventsMessageListenerTest {
     }
 
     @Test
-    public void testCtionMessage_whenValidDataAndCallEstablishedAndNonZeroCallType() throws Exception {
+    public void testCtionMessage_whenInvalidMtn() {
         // Arrange
-        String mtn = "validMtn";
+        String mtn = "invalidMtn";
         String action = "CALLESTABLISHED";
         String callTypeValue = "1"; // Non-zero call type
-        String payload = "{\"CV2\": \"validMtn\", \"CV5\": \"*123*456\", \"CALLCONTROLID\": 12345, \"AGENTID\": \"agent1\", \"ACTION\": \"CALLESTABLISHED\", \"OLDCALLID\": 67890, \"CALLESTABLISHEDID\": 23456, \"CALLTYPES\": \"1;2\", \"CALLID1\": 34567, \"CALLID2\": 45678}";
-        
-        // Mocking utility methods and service calls
-        when(utils.isValidData(mtn)).thenReturn(true);
-        when(utils.isValidData(callTypeValue)).thenReturn(true);
-        when(utils.ivrExtraction(anyString())).thenReturn("ivr123");
-        when(utils.callTypeExtraction(anyString())).thenReturn(callTypeValue);
-        when(mtnEcpdService.getEcpdByAcctId(anyString())).thenReturn(Mono.just("mockEcpdId"));
-        
-        CTIDataStore dataStore = new CTIDataStore();
-        dataStore.setEcpd("mockEcpdId");
-        dataStore.setMtn(mtn);
-        dataStore.setSensitivity("N");
-        when(ctiEcpdService.findById(anyString())).thenReturn(dataStore);
+        String payload = "{\"CV2\": \"invalidMtn\", \"ACTION\": \"CALLESTABLISHED\", \"CALLTYPES\": \"1;2\"}";
 
-        CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
-        future.complete(mock(SendResult.class));
-        when(kafkaTemplate.send(any(ProducerRecord.class))).thenReturn(future);
-
-        // Reflection to call private method
-        ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "testTopic");
+        when(utils.isValidData(mtn)).thenReturn(false);
 
         ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
 
         // Act
         eventsMessageListener.ctionMessage(record, payload);
 
-        // Verify
-        verify(kafkaTemplate, times(1)).send(any(ProducerRecord.class));
+        // Assert
+        verifyNoInteractions(kafkaTemplate);
+        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
+
+    @Test
+    public void testCtionMessage_whenActionNotCallEstablished() {
+        // Arrange
+        String mtn = "validMtn";
+        String action = "NOT_CALLESTABLISHED";
+        String callTypeValue = "1"; // Non-zero call type
+        String payload = "{\"CV2\": \"validMtn\", \"ACTION\": \"NOT_CALLESTABLISHED\", \"CALLTYPES\": \"1;2\"}";
+
+        when(utils.isValidData(mtn)).thenReturn(true);
+        
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+
+        // Act
+        eventsMessageListener.ctionMessage(record, payload);
+
+        // Assert
+        verifyNoInteractions(kafkaTemplate);
+        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+    }
+
+    @Test
+    public void testCtionMessage_whenCallTypeValueIsZero() {
+        // Arrange
+        String mtn = "validMtn";
+        String action = "CALLESTABLISHED";
+        String callTypeValue = "0"; // Call type value is zero
+        String payload = "{\"CV2\": \"validMtn\", \"ACTION\": \"CALLESTABLISHED\", \"CALLTYPES\": \"0;1\"}";
+
+        when(utils.isValidData(mtn)).thenReturn(true);
+        when(utils.callTypeExtraction(anyString())).thenReturn(callTypeValue);
+
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+
+        // Act
+        eventsMessageListener.ctionMessage(record, payload);
+
+        // Assert
+        verifyNoInteractions(kafkaTemplate);
+        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
     }
 }
 ```
 
 ### Explanation
-1. **Setup Mocks:** We use `@Mock` to set up mock objects for all dependencies of the `EventsMessageListener` class.
+1. **Invalid MTN Test:** This test case ensures that if `mtn` is invalid, the method does not proceed to send any messages to Kafka.
+2. **Invalid Action Test:** This verifies that the method does not proceed when the `action` is not "CALLESTABLISHED".
+3. **CallTypeValue Equals Zero Test:** This checks that the method does not proceed when `callTypeValue` equals "0".
 
-2. **Before Each Test:** Initialize the mocks using `MockitoAnnotations.openMocks(this)`.
-
-3. **Test Method:**
-   - **Arrange:** Set up the test data and mock behaviors for `utils`, `mtnEcpdService`, and `ctiEcpdService`.
-   - **Reflection:** Use `ReflectionTestUtils` to set private fields and call private methods if needed.
-   - **Act:** Call the `ctionMessage` method with a mock `ConsumerRecord`.
-   - **Assert/Verify:** Use Mockito’s `verify` to check that the `kafkaTemplate.send` method is called.
-
-This test case ensures that the branch `if(utils.isValidData(mtn) && action.equals("CALLESTABLISHED") && !callTypeValue.equals("0"))` is covered by simulating valid scenarios and checking interactions with dependencies.
+These test cases ensure that all logical branches of the condition are tested, and they utilize Mockito to verify that the `kafkaTemplate` and `failedMessageService` are not interacted with when the conditions are not met.

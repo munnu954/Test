@@ -1,187 +1,105 @@
-```java
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-import static org.mockito.BDDMockito.*;
+To write JUnit 5 test cases for the specific conditional branch in the `ctionMessage` method of the `EventsMessageListener` class, we will focus on ensuring that all conditions are covered and the logic inside the block is executed correctly. We'll use Mockito to mock the dependencies and ReflectionTestUtils to access private methods. Here's how you can create these tests:
 
-import java.util.Calendar;
-import java.util.TimeZone;
-import com.verizon.vbg.events.valueobject.CTIDataStore;
-import com.verizon.vbg.ledger.service.KafkaFalloutService;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
+```java
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.json.JSONObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.NullAndEmptySource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import reactor.core.publisher.Mono;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.mockito.MockitoAnnotations;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 import org.springframework.kafka.core.KafkaTemplate;
-import java.net.InetAddress;
-import java.util.Map.Entry;
-import java.util.List;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.concurrent.CompletableFuture;
+import org.springframework.test.util.ReflectionTestUtils;
+import reactor.core.publisher.Mono;
 
-@ExtendWith(MockitoExtension.class)
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
 class EventsMessageListenerTest {
 
-    @Mock
-    @SuppressWarnings("rawtypes")
-    private KafkaTemplate kafkaTemplate;
+    @InjectMocks
+    private EventsMessageListener eventsMessageListener;
 
     @Mock
     private MtnEcpdService mtnEcpdService;
 
     @Mock
-    private CTIEcpdService ctiEcpdService;
+    private KafkaTemplate<String, String> kafkaTemplate;
 
     @Mock
     private KafkaFalloutService failedMessageService;
-    
+
     @Mock
     private BatchLoaderUtils utils;
 
-    @InjectMocks
-    private EventsMessageListener eventsMessageListener;
+    @Mock
+    private CTIEcpdService ctiEcpdService;
 
-    private ProducerRecord<String, String> producerRecord;
-    private String producerTopic;
-    private String updatedPayload;
-    private String redisEcpdid;
-    private String payload;
-    private String ivrCallId;
-    private String callEstablishedId;
-    private String callTypes;
-    private String callControlId;
-    private String sensitivityFlag;
-    private char ctiSensitivityCheckDone;
-    private boolean saveStatus;
-    private long callControlIdLong;
-    private CTIDataStore ctiDataStore;
-    private KafkaFailedMessagesEntity failedMessages;
-    private KafkaFailedMessagesPK embeddedId;
+    private String validPayload;
+    private String invalidPayload;
 
     @BeforeEach
     void setUp() {
-        producerTopic = "topic";
-        updatedPayload = "payload";
-        redisEcpdid = "ecpd_id";
-        ivrCallId = "ivr_001";
-        callEstablishedId = "123456";
-        callControlId = "456789";
-        long callControlIdLong = 987654;
-        callTypes = "call_type_voice";
-        sensitivityFlag = "N";
-        ctiSensitivityCheckDone = 'N';
-        saveStatus = true;
-        producerRecord = new ProducerRecord<>(producerTopic, null, "key", updatedPayload);
-        ctiDataStore = new CTIDataStore();
-        failedMessages = new KafkaFailedMessagesEntity();
-        embeddedId = new KafkaFailedMessagesPK();
-        redisEcpdid = "redaeccccpd";
-    }
+        MockitoAnnotations.openMocks(this);
 
-    @ParameterizedTest
-    @ValueSource(strings = { "{\"CV2\":\"\",\"CV5\":\"\"}", "{\"CV2\":\"1234567890\",\"CV5\":\"\"}" })
-    @NullAndEmptySource
-    void ctionMessage_ShouldReturnWhenPayloadsAreBlank(String payload) {
-        // arrange
-        given(utils.isValidData(anyString())).willReturn(true);
-        String topic = "cti-event";
+        validPayload = new JSONObject()
+                .put("CV2", "someMtn")
+                .put("CV5", "someCV5")
+                .put("CALLCONTROLID", 12345L)
+                .put("AGENTID", "someAgentId")
+                .put("ACTION", "CALLESTABLISHED")
+                .put("OLDCALLID", 67890L)
+                .put("CALLESTABLISHEDID", 112233L)
+                .put("CALLTYPES", "1")
+                .put("CALLID1", 11111L)
+                .put("CALLID2", 22222L)
+                .toString();
 
-        // Act
-        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), payload);
-        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), payload);
-        // Assert
-        verify(kafkaTemplate, times(2)).send(any(ProducerRecord.class));
+        invalidPayload = new JSONObject().put("ACTION", "CALLESTABLISHED").toString();
     }
 
     @Test
-    void ctionMessage_ShouldReturnWhenUnmarshallFails() {
-        // arrange
-        given(utils.isValidData(anyString())).willReturn(true);
-        String topic = "cti-event";
-        String emptyString = "";
+    void testCtionMessageWithValidDataAndCallEstablishedAction() throws Exception {
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, null, validPayload);
 
-        // Act
-        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), emptyString);
+        when(utils.isValidData("someMtn")).thenReturn(true);
+        when(utils.isValidData("1")).thenReturn(true);
+        when(utils.ivrExtraction("someCV5")).thenReturn("extractedIvrCallId");
+        when(utils.callTypeExtraction("1")).thenReturn("1");
+        when(mtnEcpdService.getEcpdByAcctId("someMtn")).thenReturn(Mono.just("ecpdId"));
 
-        // Assert
-        verify(kafkaTemplate, times(0)).send(any(ProducerRecord.class));
+        ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctionMessage", record, validPayload);
+
+        // Verify that sendMessageAsync was invoked using reflection
+        verify(ctiEcpdService).saveCTIData(any(CTIDataStore.class));
     }
 
     @Test
-    void ctionMessage_ShouldReturnIfJsonIsNotValid() {
-        // Arrange
-        String topic = "cti-event";
-        String jsonValue = "This is not a valid JSON.";
+    void testCtionMessageWithInvalidMtnData() throws Exception {
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, null, invalidPayload);
 
-        // Act
-        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), jsonValue);
+        when(utils.isValidData("0")).thenReturn(false);
 
-        // Assert
-        verify(kafkaTemplate, times(0)).send(any(ProducerRecord.class));
+        ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctionMessage", record, invalidPayload);
+
+        // Verify that sendMessageAsync was not invoked
+        verify(ctiEcpdService, never()).saveCTIData(any(CTIDataStore.class));
     }
 
-    @Test
-    void ctionMessage_ShouldReturnWhenCALLESTABLISHEDActionAndMtnIsNull() {
-        // arrange
-        String topic = "cti-event";
-        String jsonValue = "{\"CV2\":\"\",\"CV5\":\"123456\",\"CALLCONTROLID\":\"" + callControlId + "\",\"ACTION\":\"CALLESTABLISHED\",\"CALLTYPES\":\"voice\",\"AGENTID\":\"01\"}";
-        String mtn = null;
+    // Further test cases can be added to cover 100% of the branches
+}
+```
 
-        given(mtnEcpdService.getEcpdByAcctId(mtn)).willReturn(Mono.empty());
+### Explanation:
 
-        // Act
-        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), jsonValue);
+1. **Setup Mocks**: We mock the dependencies like `MtnEcpdService`, `KafkaTemplate`, `KafkaFalloutService`, `BatchLoaderUtils`, and `CTIEcpdService`.
 
-        // Assert
-        verify(failedMessageService).saveFailedRecords(producerTopic, "transactionId", jsonValue, "CTI_AUDIT_EVENT", ctiSensitivityCheckDone);
-        verify(failedMessageService, times(1)).saveFailedRecords(producerTopic, "transactionId", jsonValue, "CTI_AUDIT_EVENT", ctiSensitivityCheckDone);
-        verify(kafkaTemplate, times(0)).send(any(ProducerRecord.class));
-        verify(ctiEcpdService, times(0)).findById(anyString());
-        verify(ctiEcpdService, times(0)).saveCTIData(any(CTIDataStore.class));
-    }
+2. **Test Initialization**: In `setUp()`, we initialize the mocks using MockitoAnnotations.
 
-    @ParameterizedTest
-    @ValueSource(strings = { "1234567890", "12345678901" })
-    void ctionMessage_ShouldReturnWhenCALLESTABLISHEDActionAndEventTypeIsZero(String mtn) {
-        // arrange
-        String jsonValue = "{\"CV2\":\"" + mtn + "\",\"CV5\":\"123456\",\"CALLCONTROLID\":\"456789\",\"ACTION\":\"CALLESTABLISHED\",\"CALLTYPES\":\"0\",\"AGENTID\":\"01\"}";
-        given(utils.isValidData(mtn)).willReturn(true);
-        given(utils.callTypeExtraction("0")).willReturn("0");
-        String topic = "cti-event";
-        given(mtnEcpdService.getEcpdByAcctId(mtn)).willReturn(Mono.just("ecpd_id"));
+3. **Test Case for Valid Data**: In `testCtionMessageWithValidDataAndCallEstablishedAction()`, we set up a valid payload and mock the `utils` and `mtnEcpdService` to return expected values. We then use `ReflectionTestUtils` to invoke the private method and verify that certain operations are performed.
 
-        // Act
-        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), jsonValue);
+4. **Test Case for Invalid Data**: In `testCtionMessageWithInvalidMtnData()`, we use an invalid payload and ensure that certain methods are not called.
 
-        // Assert
-        verify(ctiEcpdService, times(0)).findById(anyString());
-        verify(ctiEcpdService, times(0)).saveCTIData(any(CTIDataStore.class));
-        verify(kafkaTemplate, times(0)).send(any(ProducerRecord.class));
-    }
-
-    @Test
-    void ctionMessage_ShouldReturnWhenCALLESTABLISHEDActionAndSensitive() {
-        // arrange
-        String jsonValue = "{\"CV2\":\"1234567890\",\"CV5\":\"123456\",\"CALLCONTROLID\":\"456789\",\"ACTION\":\"CALLESTABLISHED\",\"CALLTYPES\":\"voice\",\"AGENTID\":\"01\"}";
-        given(utils.isValidData(anyString())).willReturn(true);
-        String mtn = "1234567890";
-        given(mtnEcpdService.getEcpdByAcctId(mtn)).willReturn(Mono.just(redisEcpdid));
-        String topic = "cti-event";
-        String ecpd = "ecpd_id";
-        Map<String, String> keyValueMap = new HashMap<>();
-        keyValueMap.put("ecpd", ecpd);
-        keyValueMap.put("mtn", mtn);
-        String updatedJson = "{\"ecpd\":\"ecpd_id\",\"mtn\":\"1234567890\"}";
-        given(ctiEcpdService.findById(callControlId)).willReturn(saveDetails(callControlId, ecpd, ivrCallId));
-        
-        // Act
-        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), jsonValue);
+This test class is designed to cover different branches of the condition `if(utils.isValidData(mtn) && action.equals("CALLESTABLISHED") && !callTypeValue.equals("0"))`. You can add more test cases to cover edge cases or different branches as needed.

@@ -1,139 +1,146 @@
-To achieve 100% code coverage for the `ctiOnMessage` method of the `EventsMessageListener` class, you need to write test cases that cover all the branches and possible paths in the method. Below are additional test cases to cover the remaining branches:
-
-### Test for Empty Payload Scenario
+To achieve full coverage of the specified conditional statements within the `ctionMessage` method of the `EventsMessageListener` class, we need to ensure that we cover scenarios where each condition evaluates to both true and false. Below are test cases specifically targeting these conditions:
 
 ```java
-@Test
-void testEmptyPayload() {
-    String emptyPayload = "";
+import com.verizon.vbg.ledger.listener.EventsMessageListener;
+import com.verizon.vbg.ledger.service.MtnEcpdService;
+import com.verizon.vbg.ledger.service.CTIEcpdService;
+import com.verizon.vbg.ledger.service.KafkaFalloutService;
+import com.verizon.vbg.ledger.util.BatchLoaderUtils;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.*;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.util.StringUtils;
 
-    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
+import static org.mockito.Mockito.*;
 
-    assertThrows(FalloutException.class, () -> 
-        ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, emptyPayload)
-    );
+class EventsMessageListenerConditionalTests {
 
-    verifyNoInteractions(mtnEcpdService, ctiEcpdService, failedMessageService);
+    @InjectMocks
+    private EventsMessageListener eventsMessageListener;
+
+    @Mock
+    private MtnEcpdService mtnEcpdService;
+
+    @Mock
+    private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Mock
+    private KafkaFalloutService failedMessageService;
+
+    @Mock
+    private BatchLoaderUtils utils;
+
+    @Mock
+    private CTIEcpdService ctiEcpdService;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "outbound-cti-event");
+    }
+
+    @Test
+    void testCtionMessage_validSensitivityData() {
+        // Prepare a payload with valid sensitivity data
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"RELEASE\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"CALLID1\":4,\"CALLID2\":5}";
+        
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Mock dependencies
+        when(utils.isValidData("Y")).thenReturn(true);  // Sensitivity is valid
+        CTIDataStore ctiDataStore = new CTIDataStore();
+        ctiDataStore.setEcpd("ecpd-123");
+        ctiDataStore.setSensitivity("Y");
+        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
+
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify that the message is not sent due to sensitivity
+        verify(kafkaTemplate, never()).send(any());
+    }
+
+    @Test
+    void testCtionMessage_invalidSensitivityData() {
+        // Prepare a payload with invalid sensitivity data
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"RELEASE\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"CALLID1\":4,\"CALLID2\":5}";
+        
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Mock dependencies
+        when(utils.isValidData("N")).thenReturn(false);  // Sensitivity is invalid
+        CTIDataStore ctiDataStore = new CTIDataStore();
+        ctiDataStore.setEcpd("ecpd-123");
+        ctiDataStore.setSensitivity("N");
+        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
+
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify that the message is processed since sensitivity is invalid
+        verify(kafkaTemplate, times(1)).send(any());
+    }
+
+    @Test
+    void testCtionMessage_sensitivityDataWithLength() {
+        // Prepare a payload with sensitivity data that has length
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"RELEASE\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"CALLID1\":4,\"CALLID2\":5}";
+
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Mock dependencies
+        CTIDataStore ctiDataStore = new CTIDataStore();
+        ctiDataStore.setEcpd("ecpd-123");
+        ctiDataStore.setSensitivity("YES");
+        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
+
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify that the message is not sent due to sensitivity having length
+        verify(kafkaTemplate, never()).send(any());
+    }
+
+    @Test
+    void testCtionMessage_sensitivityFlagNotY() {
+        // Prepare a payload with sensitivity flag not equal to "Y"
+        String payload = "{\"CV2\":\"1234567890\",\"CV5\":\"ivr*123\",\"CALLCONTROLID\":1,\"AGENTID\":\"agent1\"," +
+                "\"ACTION\":\"RELEASE\",\"OLDCALLID\":2,\"CALLESTABLISHEDID\":3,\"CALLTYPES\":\"1;2\"," +
+                "\"CALLID1\":4,\"CALLID2\":5}";
+
+        ConsumerRecord<String, String> consumerRecord = new ConsumerRecord<>("inbound-cti-event", 0, 0L, null, payload);
+
+        // Mock dependencies
+        CTIDataStore ctiDataStore = new CTIDataStore();
+        ctiDataStore.setEcpd("ecpd-123");
+        ctiDataStore.setSensitivity("N");
+        when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
+
+        // Call the method under test
+        eventsMessageListener.ctionMessage(consumerRecord, payload);
+
+        // Verify that the message is processed since sensitivity flag is not "Y"
+        verify(kafkaTemplate, times(1)).send(any());
+    }
 }
 ```
 
-### Test for Invalid Action Scenario
+### Explanation of Test Scenarios:
 
-```java
-@Test
-void testInvalidAction() throws Exception {
-    String invalidActionPayload = "{\"ACTION\": \"INVALID_ACTION\", \"CV2\": \"12345\", \"CALLCONTROLID\": 123456}";
-    
-    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
+1. **Valid Sensitivity Data**: Tests when the sensitivity data is valid (`"Y"`), ensuring the message is not sent due to sensitivity.
 
-    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, invalidActionPayload);
+2. **Invalid Sensitivity Data**: Tests when sensitivity is invalid (e.g., `"N"`), ensuring the message is processed.
 
-    verifyNoInteractions(mtnEcpdService, ctiEcpdService, failedMessageService);
-}
-```
+3. **Sensitivity Data with Length**: Covers cases where the sensitivity string is present and has a length, ensuring the message is not sent if flagged.
 
-### Test for Sensitive Data Scenario
+4. **Sensitivity Flag Not `"Y"`**: Tests when the sensitivity flag is something other than `"Y"`, ensuring the message is processed.
 
-```java
-@Test
-void testSensitiveDataScenario() throws Exception {
-    CTIDataStore dataStore = new CTIDataStore();
-    dataStore.setSensitivity("Y");
-    dataStore.setEcpd("SensitiveEcpd");
-    dataStore.setMtn("SensitiveMtn");
-
-    when(ctiEcpdService.findById(anyString())).thenReturn(dataStore);
-
-    String sensitiveDataPayload = "{\"ACTION\": \"RELEASE\", \"CALLCONTROLID\": 123456}";
-
-    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
-
-    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, sensitiveDataPayload);
-
-    verify(ctiEcpdService, times(1)).findById(anyString());
-    verifyNoMoreInteractions(ctiEcpdService);
-    verifyNoInteractions(failedMessageService);
-}
-```
-
-### Test for Call Established with Call Type 0
-
-```java
-@Test
-void testCallEstablishedWithCallTypeZero() throws Exception {
-    String callTypeZeroPayload = "{\"ACTION\": \"CALLESTABLISHED\", \"CALLTYPES\": \"0\", \"CV2\": \"12345\"}";
-
-    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
-
-    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, callTypeZeroPayload);
-
-    verify(utils, times(1)).isValidData(anyString());
-    verifyNoInteractions(mtnEcpdService, ctiEcpdService, failedMessageService);
-}
-```
-
-### Test for Call ID Changed Scenario
-
-```java
-@Test
-void testCallIdChangedScenario() throws Exception {
-    CTIDataStore ctiDataStore = new CTIDataStore();
-    ctiDataStore.setEcpd("Ecpd123");
-    ctiDataStore.setMtn("Mtn123");
-
-    when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
-
-    String callIdChangedPayload = "{\"ACTION\": \"CALLIDCHANGED\", \"OLDCALLID\": 654321}";
-
-    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
-
-    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, callIdChangedPayload);
-
-    verify(ctiEcpdService, times(1)).findById(anyString());
-    verify(ctiEcpdService, times(1)).saveCTIData(any(CTIDataStore.class));
-    verify(ctiEcpdService, times(1)).deleteById(anyString());
-}
-```
-
-### Test for RTP Started Scenario
-
-```java
-@Test
-void testRtpStartedScenario() throws Exception {
-    CTIDataStore ctiDataStore = new CTIDataStore();
-    ctiDataStore.setEcpd("Ecpd123");
-    ctiDataStore.setMtn("Mtn123");
-
-    when(ctiEcpdService.findById(anyString())).thenReturn(ctiDataStore);
-
-    String rtpStartedPayload = "{\"ACTION\": \"RTPSTARTED\", \"CALLCONTROLID\": 123456}";
-
-    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
-
-    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, rtpStartedPayload);
-
-    verify(ctiEcpdService, times(1)).findById(anyString());
-    verifyNoMoreInteractions(ctiEcpdService);
-    verifyNoInteractions(failedMessageService);
-}
-```
-
-### Test for Release Action with Null CTIDataStore
-
-```java
-@Test
-void testReleaseActionWithNullCTIDataStore() throws Exception {
-    when(ctiEcpdService.findById(anyString())).thenReturn(null);
-
-    String releasePayload = "{\"ACTION\": \"RELEASE\", \"CALLCONTROLID\": 123456}";
-
-    ReflectionTestUtils.setField(eventsMessageListener, "ctiProducerTopic", "test-topic");
-
-    ReflectionTestUtils.invokeMethod(eventsMessageListener, "ctiOnMessage", consumerRecord, releasePayload);
-
-    verify(ctiEcpdService, times(1)).findById(anyString());
-    verify(failedMessageService, times(1)).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-}
-```
-
-These test cases should help in achieving 100% code coverage for the `ctiOnMessage` method by testing various branches and conditions. Adjust the payloads and mock behavior accordingly to fit the exact logic and data structures used in your application.
+These test cases are intended to fully cover the branches related to sensitivity checks within the `ctionMessage` method. Adjust the mock data and assertions as necessary to align with your specific logic and behavior.

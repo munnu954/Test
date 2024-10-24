@@ -1,120 +1,187 @@
-To achieve 100% code coverage for the conditional statement `if(utils.isValidData(mtn) && action.equals("CALLESTABLISHED") && !callTypeValue.equals("0"))` within the `ctionMessage` method, you'll need to write additional test cases to cover all possible branches and edge cases. Here are the necessary test cases:
-
-1. **Invalid MTN (Mobile Transaction Number):** Test what happens when `mtn` is invalid.
-2. **Invalid Action:** Test when the `action` is not "CALLESTABLISHED".
-3. **CallTypeValue Equals Zero:** Test when `callTypeValue` equals "0".
-
-Below are the additional JUnit 5 test cases to cover these scenarios:
-
 ```java
-import org.apache.kafka.clients.consumer.ConsumerRecord;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+import static org.mockito.BDDMockito.*;
+
+import java.util.Calendar;
+import java.util.TimeZone;
+import com.verizon.vbg.events.valueobject.CTIDataStore;
+import com.verizon.vbg.ledger.service.KafkaFalloutService;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
 import reactor.core.publisher.Mono;
-
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.kafka.core.KafkaTemplate;
+import java.net.InetAddress;
+import java.util.Map.Entry;
+import java.util.List;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.concurrent.CompletableFuture;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
 @ExtendWith(MockitoExtension.class)
-public class EventsMessageListenerAdditionalTest {
+class EventsMessageListenerTest {
 
-    @InjectMocks
-    private EventsMessageListener eventsMessageListener;
+    @Mock
+    @SuppressWarnings("rawtypes")
+    private KafkaTemplate kafkaTemplate;
 
     @Mock
     private MtnEcpdService mtnEcpdService;
 
     @Mock
-    private KafkaTemplate<String, String> kafkaTemplate;
+    private CTIEcpdService ctiEcpdService;
 
     @Mock
     private KafkaFalloutService failedMessageService;
-
+    
     @Mock
     private BatchLoaderUtils utils;
 
-    @Mock
-    private CTIEcpdService ctiEcpdService;
+    @InjectMocks
+    private EventsMessageListener eventsMessageListener;
+
+    private ProducerRecord<String, String> producerRecord;
+    private String producerTopic;
+    private String updatedPayload;
+    private String redisEcpdid;
+    private String payload;
+    private String ivrCallId;
+    private String callEstablishedId;
+    private String callTypes;
+    private String callControlId;
+    private String sensitivityFlag;
+    private char ctiSensitivityCheckDone;
+    private boolean saveStatus;
+    private long callControlIdLong;
+    private CTIDataStore ctiDataStore;
+    private KafkaFailedMessagesEntity failedMessages;
+    private KafkaFailedMessagesPK embeddedId;
 
     @BeforeEach
-    public void setUp() {
-        // Initialize mocks
-        MockitoAnnotations.openMocks(this);
+    void setUp() {
+        producerTopic = "topic";
+        updatedPayload = "payload";
+        redisEcpdid = "ecpd_id";
+        ivrCallId = "ivr_001";
+        callEstablishedId = "123456";
+        callControlId = "456789";
+        long callControlIdLong = 987654;
+        callTypes = "call_type_voice";
+        sensitivityFlag = "N";
+        ctiSensitivityCheckDone = 'N';
+        saveStatus = true;
+        producerRecord = new ProducerRecord<>(producerTopic, null, "key", updatedPayload);
+        ctiDataStore = new CTIDataStore();
+        failedMessages = new KafkaFailedMessagesEntity();
+        embeddedId = new KafkaFailedMessagesPK();
+        redisEcpdid = "redaeccccpd";
     }
 
-    @Test
-    public void testCtionMessage_whenInvalidMtn() {
-        // Arrange
-        String mtn = "invalidMtn";
-        String action = "CALLESTABLISHED";
-        String callTypeValue = "1"; // Non-zero call type
-        String payload = "{\"CV2\": \"invalidMtn\", \"ACTION\": \"CALLESTABLISHED\", \"CALLTYPES\": \"1;2\"}";
-
-        when(utils.isValidData(mtn)).thenReturn(false);
-
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
+    @ParameterizedTest
+    @ValueSource(strings = { "{\"CV2\":\"\",\"CV5\":\"\"}", "{\"CV2\":\"1234567890\",\"CV5\":\"\"}" })
+    @NullAndEmptySource
+    void ctionMessage_ShouldReturnWhenPayloadsAreBlank(String payload) {
+        // arrange
+        given(utils.isValidData(anyString())).willReturn(true);
+        String topic = "cti-event";
 
         // Act
-        eventsMessageListener.ctionMessage(record, payload);
-
+        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), payload);
+        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), payload);
         // Assert
-        verifyNoInteractions(kafkaTemplate);
-        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
+        verify(kafkaTemplate, times(2)).send(any(ProducerRecord.class));
     }
 
     @Test
-    public void testCtionMessage_whenActionNotCallEstablished() {
-        // Arrange
-        String mtn = "validMtn";
-        String action = "NOT_CALLESTABLISHED";
-        String callTypeValue = "1"; // Non-zero call type
-        String payload = "{\"CV2\": \"validMtn\", \"ACTION\": \"NOT_CALLESTABLISHED\", \"CALLTYPES\": \"1;2\"}";
+    void ctionMessage_ShouldReturnWhenUnmarshallFails() {
+        // arrange
+        given(utils.isValidData(anyString())).willReturn(true);
+        String topic = "cti-event";
+        String emptyString = "";
 
-        when(utils.isValidData(mtn)).thenReturn(true);
+        // Act
+        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), emptyString);
+
+        // Assert
+        verify(kafkaTemplate, times(0)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void ctionMessage_ShouldReturnIfJsonIsNotValid() {
+        // Arrange
+        String topic = "cti-event";
+        String jsonValue = "This is not a valid JSON.";
+
+        // Act
+        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), jsonValue);
+
+        // Assert
+        verify(kafkaTemplate, times(0)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void ctionMessage_ShouldReturnWhenCALLESTABLISHEDActionAndMtnIsNull() {
+        // arrange
+        String topic = "cti-event";
+        String jsonValue = "{\"CV2\":\"\",\"CV5\":\"123456\",\"CALLCONTROLID\":\"" + callControlId + "\",\"ACTION\":\"CALLESTABLISHED\",\"CALLTYPES\":\"voice\",\"AGENTID\":\"01\"}";
+        String mtn = null;
+
+        given(mtnEcpdService.getEcpdByAcctId(mtn)).willReturn(Mono.empty());
+
+        // Act
+        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), jsonValue);
+
+        // Assert
+        verify(failedMessageService).saveFailedRecords(producerTopic, "transactionId", jsonValue, "CTI_AUDIT_EVENT", ctiSensitivityCheckDone);
+        verify(failedMessageService, times(1)).saveFailedRecords(producerTopic, "transactionId", jsonValue, "CTI_AUDIT_EVENT", ctiSensitivityCheckDone);
+        verify(kafkaTemplate, times(0)).send(any(ProducerRecord.class));
+        verify(ctiEcpdService, times(0)).findById(anyString());
+        verify(ctiEcpdService, times(0)).saveCTIData(any(CTIDataStore.class));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "1234567890", "12345678901" })
+    void ctionMessage_ShouldReturnWhenCALLESTABLISHEDActionAndEventTypeIsZero(String mtn) {
+        // arrange
+        String jsonValue = "{\"CV2\":\"" + mtn + "\",\"CV5\":\"123456\",\"CALLCONTROLID\":\"456789\",\"ACTION\":\"CALLESTABLISHED\",\"CALLTYPES\":\"0\",\"AGENTID\":\"01\"}";
+        given(utils.isValidData(mtn)).willReturn(true);
+        given(utils.callTypeExtraction("0")).willReturn("0");
+        String topic = "cti-event";
+        given(mtnEcpdService.getEcpdByAcctId(mtn)).willReturn(Mono.just("ecpd_id"));
+
+        // Act
+        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), jsonValue);
+
+        // Assert
+        verify(ctiEcpdService, times(0)).findById(anyString());
+        verify(ctiEcpdService, times(0)).saveCTIData(any(CTIDataStore.class));
+        verify(kafkaTemplate, times(0)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void ctionMessage_ShouldReturnWhenCALLESTABLISHEDActionAndSensitive() {
+        // arrange
+        String jsonValue = "{\"CV2\":\"1234567890\",\"CV5\":\"123456\",\"CALLCONTROLID\":\"456789\",\"ACTION\":\"CALLESTABLISHED\",\"CALLTYPES\":\"voice\",\"AGENTID\":\"01\"}";
+        given(utils.isValidData(anyString())).willReturn(true);
+        String mtn = "1234567890";
+        given(mtnEcpdService.getEcpdByAcctId(mtn)).willReturn(Mono.just(redisEcpdid));
+        String topic = "cti-event";
+        String ecpd = "ecpd_id";
+        Map<String, String> keyValueMap = new HashMap<>();
+        keyValueMap.put("ecpd", ecpd);
+        keyValueMap.put("mtn", mtn);
+        String updatedJson = "{\"ecpd\":\"ecpd_id\",\"mtn\":\"1234567890\"}";
+        given(ctiEcpdService.findById(callControlId)).willReturn(saveDetails(callControlId, ecpd, ivrCallId));
         
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
-
         // Act
-        eventsMessageListener.ctionMessage(record, payload);
-
-        // Assert
-        verifyNoInteractions(kafkaTemplate);
-        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-    }
-
-    @Test
-    public void testCtionMessage_whenCallTypeValueIsZero() {
-        // Arrange
-        String mtn = "validMtn";
-        String action = "CALLESTABLISHED";
-        String callTypeValue = "0"; // Call type value is zero
-        String payload = "{\"CV2\": \"validMtn\", \"ACTION\": \"CALLESTABLISHED\", \"CALLTYPES\": \"0;1\"}";
-
-        when(utils.isValidData(mtn)).thenReturn(true);
-        when(utils.callTypeExtraction(anyString())).thenReturn(callTypeValue);
-
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("topic", 0, 0, "key", payload);
-
-        // Act
-        eventsMessageListener.ctionMessage(record, payload);
-
-        // Assert
-        verifyNoInteractions(kafkaTemplate);
-        verify(failedMessageService, never()).saveFailedRecords(anyString(), anyString(), anyString(), anyString(), anyChar());
-    }
-}
-```
-
-### Explanation
-1. **Invalid MTN Test:** This test case ensures that if `mtn` is invalid, the method does not proceed to send any messages to Kafka.
-2. **Invalid Action Test:** This verifies that the method does not proceed when the `action` is not "CALLESTABLISHED".
-3. **CallTypeValue Equals Zero Test:** This checks that the method does not proceed when `callTypeValue` equals "0".
-
-These test cases ensure that all logical branches of the condition are tested, and they utilize Mockito to verify that the `kafkaTemplate` and `failedMessageService` are not interacted with when the conditions are not met.
+        eventsMessageListener.ctionMessage(mock(ConsumerRecord.class), jsonValue);

@@ -1,107 +1,100 @@
-The issue you're facing indicates that even when the response from the `restClientUtil.callEndpoint` call is `null`, the `CircuitDetailResponse` is still being instantiated or populated with default values, likely due to the logic within the `getCircuitDetails` method. To ensure that this test case behaves correctly, you need to verify the method logic to return `null` when the response is `null`.
-
-Here’s how you can address this in your test case logic and ensure the method returns `null`:
-
-1. **Review `getCircuitDetails` Logic**: Ensure that the logic within the `getCircuitDetails` method does not create or populate a `CircuitDetailResponse` object when the response is `null`.
-
-2. **Test Case Adjustment**: Let's ensure the test case is correctly set up to verify this behavior.
-
-Here's an updated version of the test case, along with a reminder to check the method logic:
-
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import java.lang.reflect.Field;
-
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.http.HttpMethod;
+import org.mockito.Spy;
+import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.is;
+import static org.mockito.AdditionalMatchers.aryEq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
 public class CircuitDetailsProviderTest {
 
-    @Mock
-    private RestClientUtil restClientUtil;
+    private static final String CIRCUIT_ID = "cktId";
+    private static final String SOURCE_SYS = "srcSys";
+    private static final String CND = "cnd";
+    private static final String PHY_MODEL = "phyMod";
 
     @InjectMocks
-    private CircuitDetailsProvider circuitDetailsProvider;
+    CircuitDetailsProvider circuitDetailsProvider;
 
-    private static final String VALID_RESPONSE = "{\"field\":\"value\"}";
-    private static final String BASE_URL = "http://mockServiceName";
-    private static final String CKT_DETAIL_URI = "/details?circuitId=#circuitId#&sourceSys=#sourceSys#";
+    @Spy
+    Gson gson = new GsonBuilder().disableHtmlEscaping().create();
 
-    @BeforeEach
-    public void setUp() throws Exception {
-        MockitoAnnotations.openMocks(this);
-        setPrivateField(circuitDetailsProvider, "cktDetailUri", CKT_DETAIL_URI);
-        setPrivateField(circuitDetailsProvider, "cktDetServiceName", "mockServiceName");
-    }
+    @Mock
+    RestClientUtil restClientUtil;
 
-    private void setPrivateField(Object targetObject, String fieldName, Object value) throws Exception {
-        Field field = targetObject.getClass().getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(targetObject, value);
-    }
+    @Mock
+    Map<String, String> circuitDetailResponseMapMock;
 
     @Test
-    public void testGetCircuitDetails_ResponseIsNotNull() {
-        // Arrange
-        String circuitId = "123";
-        String sourceSys = "sys1";
-        String cnd = "cndValue";
-        String phyModel = "phyModelValue";
-
-        String expectedUrl = BASE_URL + CKT_DETAIL_URI.replace("#circuitId#", circuitId)
-                .replace("#sourceSys#", sourceSys) + "&cnd=" + cnd + "&phyModel=" + phyModel;
-
-        when(restClientUtil.callEndpoint(eq(expectedUrl), eq(HttpMethod.GET), any()))
-                .thenReturn(VALID_RESPONSE);
-
-        // Act
-        CircuitDetailResponse response = circuitDetailsProvider.getCircuitDetails(circuitId, sourceSys, cnd, phyModel);
-
-        // Assert
-        assertNotNull(response);
-        assertEquals("value", response.getField()); // Assuming the response JSON maps to a field in CircuitDetailResponse
-        verify(restClientUtil).callEndpoint(eq(expectedUrl), eq(HttpMethod.GET), any());
-    }
-
-    @Test
-    public void testGetCircuitDetails_ResponseIsNull() {
-        // Arrange
-        String circuitId = "123";
-        String sourceSys = "sys1";
-        String cnd = "cndValue";
-        String phyModel = "phyModelValue";
-
-        String expectedUrl = BASE_URL + CKT_DETAIL_URI.replace("#circuitId#", circuitId)
-                .replace("#sourceSys#", sourceSys) + "&cnd=" + cnd + "&phyModel=" + phyModel;
-
-        when(restClientUtil.callEndpoint(eq(expectedUrl), eq(HttpMethod.GET), any()))
+    public void testNullResponse() {
+        when(restClientUtil.callEndpoint(any(String.class), any(HttpMethod.class), any(Map.class)))
                 .thenReturn(null);
 
-        // Act
-        CircuitDetailResponse response = circuitDetailsProvider.getCircuitDetails(circuitId, sourceSys, cnd, phyModel);
+        circuitDetailsProvider.getCircuitDetails(CIRCUIT_ID, SOURCE_SYS, CND, PHY_MODEL);
 
-        // Assert
-        assertNull(response, "Expected response to be null when API returns null");
-        verify(restClientUtil).callEndpoint(eq(expectedUrl), eq(HttpMethod.GET), any());
+        verify(gson, times(0)).fromJson(any(String.class), any(Class.class));
+    }
+
+    @Test
+    public void testNonNullResponse() {
+        when(restClientUtil.callEndpoint(any(String.class), any(HttpMethod.class), any(Map.class)))
+                .thenReturn("response");
+
+        circuitDetailsProvider.getCircuitDetails(CIRCUIT_ID, SOURCE_SYS, CND, PHY_MODEL);
+
+        ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
+
+        verify(gson, times(1)).fromJson(argumentCaptor.capture(), eq(CircuitDetailResponse.class));
+
+        assertThat(argumentCaptor.getValue(), is("response"));
+    }
+
+    @Test
+    public void testCallEndpoint() {
+        String BASE_URL = "http://cktDetServiceName";
+        String CKTDET_URI = "/cktDetUri";
+
+        Map<String, String> headerMap = new HashMap<>();
+        CircuitDetailsProvider spyCircuitDetailsProvider = new CircuitDetailsProvider();
+        spyCircuitDetailsProvider.cktDetServiceName = "cktDetServiceName";
+        spyCircuitDetailsProvider.cktDetailUri = CKTDET_URI;
+        spyCircuitDetailsProvider.restClientUtil = restClientUtil;
+        spyCircuitDetailsProvider.gson = gson;
+
+        when(restClientUtil.callEndpoint(any(String.class), any(HttpMethod.class), aryEq(headerMap)))
+                .thenReturn("response");
+
+        spyCircuitDetailsProvider.getCircuitDetails(CIRCUIT_ID, SOURCE_SYS, CND, PHY_MODEL);
+        ArgumentCaptor<String> finalUrlCaptor = ArgumentCaptor.forClass(String.class);
+
+        final String expectedUrl = "http://"
+                + spyCircuitDetailsProvider.cktDetServiceName
+                + spyCircuitDetailsProvider.cktDetailUri
+                .replace("#circuitId#", CIRCUIT_ID)
+                .replace("#sourceSys#", SOURCE_SYS)
+                + "&cnd=" + CND + "&phyModel=" + PHY_MODEL;
+
+        verify(restClientUtil, times(1)).callEndpoint(finalUrlCaptor.capture(), eq(HttpMethod.GET), aryEq(headerMap));
+
+        assertEquals(finalUrlCaptor.getValue(), expectedUrl);
+    }
+
+    private void assertEquals(String actual, String expected) {
+        assertThat(actual, is(expected));
     }
 }
 ```
-
-### Key Considerations:
-
-- **Method Logic Review**: Ensure the actual implementation of `getCircuitDetails` checks for `null` and returns `null` if the `response` is `null`. This might look like:
-  ```java
-  if (response == null) {
-      return null;
-  }
-  ```
-
-- **Ensure No Default Instantiation**: Double-check that there is no default instantiation of `CircuitDetailResponse` when the API response is `null`.
-
-If the method logic is correctly implemented to handle a `null` response from the API, then the test case should pass, indicating that the method returns `null` as expected. If the test still fails, please review the method logic or provide the method details for further insights.

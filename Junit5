@@ -1,79 +1,220 @@
-To achieve 100% code coverage for the "if(CommonWrapperConstants.PORT.equalsIgnoreCase(clrComponent.getType()) || CommonWrapperConstants.CHANNEL.equalsIgnoreCase(clrComponent.getType())) {}" statements in the `getAEnd()` and `getZEnd()` methods of the `CircuitDetailsProvider` class, you can write JUnit5 test cases using Mockito to mock the dependencies. Below is an example of how you can write test cases to cover all branches of these statements:
-
 ```java
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestTemplate;
 
 class CircuitDetailsProviderTest {
+  @Mock private RestClientUtil restClientUtil;
+  @InjectMocks private CircuitDetailsProvider circuitDetailsProvider;
 
-    @Mock
-    private RestClientUtil restClientUtil;
+  private CircuitInfo circuitInfo;
+  private Circuit circuit;
+  private CircuitData circuitData;
+  private CircuitCircuitComp circuitCircuitComp;
+  private CircuitDetailResponse response;
+  private ClrComponent secClrComponent;
 
-    @InjectMocks
-    private CircuitDetailsProvider circuitDetailsProvider;
+  Map<String, String> pathTypeToTest = new HashMap<>();
 
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.initMocks(this);
+  @BeforeEach
+  void setUp() {
+    MockitoAnnotations.openMocks(this);
+
+    circuit = new Circuit();
+    circuitInfo = new CircuitInfo();
+    circuitCircuitComp = new CircuitCircuitComp();
+    circuitData = new CircuitData();
+    secClrComponent = new ClrComponent();
+    response = new CircuitDetailResponse();
+
+    List<CircuitCircuitComp> circuitComps = new ArrayList<>();
+    circuitCircuitComp.setCircuitInfo(List.of(circuitInfo));
+    circuitComps.add(circuitCircuitComp);
+    ClrComponent clrComponent = new ClrComponent();
+    clrComponent.setType("PORT");
+    clrComponent.setEquipmentComp(List.of(getSomeRandomComponent()));
+    List<ClrComponent> clrComponents = new ArrayList<>();
+    clrComponents.add(clrComponent);
+    clrComponents.add(secClrComponent);
+    CircuitPath circuitPath = new CircuitPath();
+    circuitPath.setPath(List.of(getSomeRandomPath()));
+    circuitPath.setClrComponent(clrComponents);
+    List<CircuitPath> circuitPaths = new ArrayList<>();
+    circuitPaths.add(circuitPath);
+    circuitInfo.setPathLst(List.of(circuitPath));
+    circuit.setClr(List.of(circuitPaths));
+
+    List<Circuit> circuitList = new ArrayList<>();
+    circuitList.add(circuit);
+    circuitData.setCircuitLst(List.of(new CircuitLst().setCircuit(circuitList)));
+    response.setCircuitData(circuitData);
+  }
+
+  @Test
+  void getAEnd_shouldReturnAEnd_whenClrComponentTypeIsPort() {
+    // Given
+
+    secClrComponent.setType("PORT");
+    secClrComponent.setEquipmentComp(List.of(getSomeRandomComponent()));
+    // When
+
+    AEnd aEnd = circuitDetailsProvider.getAEnd("someId", "someClli", response);
+
+    // Then
+    assertNotNull(aEnd);
+    assertEquals(1L, aEnd.getPortChannel().size());
+    assertEquals(1L, aEnd.getPortChannel().get(0).getPortRef().size());
+  }
+
+  @Test
+  void getAEnd_shouldReturnNull_whenClrComponentTypeIsChannel() {
+    // Given
+
+    secClrComponent.setType("CHANNEL");
+    secClrComponent.setEquipmentComp(List.of(getSomeRandomComponent()));
+    secClrComponent.getEquipmentComp().get(0).setPartRef(List.of(getSomeRandomComponent()));
+    // When
+
+    AEnd aEnd = circuitDetailsProvider.getAEnd("someId", "someClli", response);
+
+    // Then
+    assertNull(aEnd);
+  }
+
+  @Test
+  void getAEnd_shouldReturnNull_whenClrComponentTypeIsCircuit_or_trail_and_pathSizeGe2() {
+    // Given
+
+    secClrComponent.setType("CIRCUIT");
+    circuitInfo.setPathLst(
+        List.of(
+            circuitPath(),
+            new CircuitPath().setPath(List.of(getSomeRandomPath())).setClrComponent(List.of())));
+    // When
+    equipmentComp().setPartRef(List.of(new PortRef().setClliCode("someClli")));
+    AEnd aEnd = circuitDetailsProvider.getAEnd("someId", "someClli", response);
+
+    // Then
+    assertNull(aEnd);
+  }
+
+  @Test
+  void getAEnd_shouldReturnNull_whenClrComponentTypeIsCircuit_or_trail_and_nodeNotMatched() {
+    // Given
+
+    secClrComponent.setType("CIRCUIT");
+    circuitInfo.setPathLst(
+        List.of(
+            circuitPath(),
+            new CircuitPath().setPath(List.of(getSomeRandomPath())).setClrComponent(List.of())));
+
+    // When
+
+    AEnd aEnd = circuitDetailsProvider.getAEnd("someId", "someClli", response);
+
+    // Then
+    assertNull(aEnd);
+  }
+
+  @Test
+  void getAEnd_shouldReturnAEnd_whenClrComponentTypeIsCircuitPathLink_or_segment_and_pathSizeGe3_and_PortOrChannelExist() {
+    // Given
+    secClrComponent.setType("CIRCUIT_PATH_LINK");
+    circuitInfo.setPathLst(
+        List.of(
+            circuitPath(),
+            new CircuitPath().setPath(List.of(getSomeRandomPath())).setClrComponent(List.of())));
+
+    EquipmentComp eqComp = getSomeRandomComponent();
+    secClrComponent.setEquipmentComp(List.of(eqComp));
+    eqComp.setPartRef(List.of(new PortRef().setClliCode("someClli")));
+    // When
+
+    AEnd aEnd = circuitDetailsProvider.getAEnd("someId", "someClli", response);
+
+    // Then
+    assertNotNull(aEnd);
+    assertEquals(1L, aEnd.getPortChannel().size());
+    assertEquals(1L, aEnd.getPortChannel().get(0).getPortRef().size());
+  }
+
+  @Test
+  void getAEnd_shouldReturnAEnd_whenClrComponentTypeIsCircuitPathLink_or_segment_and_pathSizeGe3_and_circuitTrailExist() {
+    // Given
+    secClrComponent.setType("SEGMENT");
+    circuitInfo.setPathLst(
+        List.of(
+            circuitPath(),
+            new CircuitPath().setPath(List.of(getSomeRandomPath())).setClrComponent(List.of())));
+    // When
+    equipmentComp().setPartRef(List.of(new PortRef().setClliCode("someClli")));
+    AEnd aEnd = circuitDetailsProvider.getAEnd("someId", "someClli", response);
+
+    // Then
+    assertNotNull(aEnd);
+    assertEquals(1L, aEnd.getPortChannel().size());
+    assertEquals(1L, aEnd.getPortChannel().get(0).getPortRef().size());
+  }
+
+  @Test
+  void getAEnd_shouldReturnNull_If_cableCompIsNotNull_and_aPortChannelListConsistsOfPortRefWithClliCode() {
+    // Given
+
+    secClrComponent.setType("PORT");
+    secClrComponent.setEquipmentComp(List.of(getSomeRandomComponent()));
+    List<PortChannel> portChannels = List.of(getPortChannel());
+    circuitInfo.setAEnd(List.of(new AEnd().setPortChannel(portChannels)));
+
+    // When
+
+    AEnd aEnd = circuitDetailsProvider.getAEnd("someId", "someClli", response);
+
+    // Then
+    assertNull(aEnd);
+  }
+
+  @Test
+  void getAEnd_shouldReturnAEnd_If_cableCompIsNull_and_aPortChannelListConsistsOfPortRefWithClliCode() {
+    // Given
+
+    secClrComponent.setType("PORT");
+    secClrComponent.setEquipmentComp(List.of(getSomeRandomComponent()));
+    List<PortChannel> portChannels = List.of(getPortChannel());
+    circuitInfo.setAEnd(List.of(new AEnd().setPortChannel(portChannels)));
+    circuitInfo.getPathLst()
+        .get(0)
+        .getPath()
+        .get(0)
+        .getClrComponent()
+        .remove(secClrComponent);
+    circuitInfo.getPathLst()
+        .get(0)
+        .getPath()
+        .get(0)
+        .getClrComponent()
+        .add(new ClrComponent().setCableComp(List.of(new CableComp())));
+
+    // When
+
+    AEnd aEnd = circuitDetailsProvider.getAEnd("someId", "someClli", response);
+
+    // Then
+    assertNotNull(aEnd);
     }
-
-    @Test
-    void testGetAEndWithPortType() {
-        // Mock the necessary data
-        CircuitDetailResponse response = new CircuitDetailResponse();
-        response.setCircuitData(new CircuitData());
-        response.getCircuitData().getCircuitLst().add(new CircuitLst());
-        Circuit circuit = new Circuit();
-        circuit.setAEnd(Collections.singletonList(new AEnd()));
-        circuit.getAEnd().get(0).setPortChannel(Collections.singletonList(new PortChannel()));
-        PortRef portRef = new PortRef();
-        portRef.setClliCode("CLLI");
-        circuit.getAEnd().get(0).getPortChannel().get(0).setPortRef(Collections.singletonList(portRef));
-        
-        // Mock the REST call
-        when(restClientUtil.callEndpoint(anyString(), any(), any())).thenReturn("");
-        
-        // Test the method
-        AEnd aEnd = circuitDetailsProvider.getAEnd("circuitId", "CLLI", response);
-        
-        // Assert the result
-        assertNotNull(aEnd);
-    }
-
-    @Test
-    void testGetZEndWithChannelType() {
-        // Mock the necessary data
-        CircuitDetailResponse response = new CircuitDetailResponse();
-        response.setCircuitData(new CircuitData());
-        response.getCircuitData().getCircuitLst().add(new CircuitLst());
-        Circuit circuit = new Circuit();
-        circuit.setClr(Collections.singletonList(new ClrComponent()));
-        ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType(CommonWrapperConstants.CHANNEL); // Set channel type
-        EquipmentComp equipmentComp = new EquipmentComp();
-        PortRef portRef = new PortRef();
-        portRef.setClliCode("CLLI");
-        equipmentComp.setPortRef(Collections.singletonList(portRef));
-        clrComponent.setEquipmentComp(Collections.singletonList(equipmentComp));
-        circuit.setAEnd(Collections.singletonList(new AEnd()));
-        
-        // Mock the REST call
-        when(restClientUtil.callEndpoint(anyString(), any(), any())).thenReturn("");
-        
-        // Test the method
-        ZEnd zEnd = circuitDetailsProvider.getZEnd("circuitId", "CLLI", response);
-        
-        // Assert the result
-        assertNotNull(zEnd);
-    }
-}
-```
-
-In these test cases, we are covering different scenarios by setting up necessary mock data and mocking the REST call to return an empty response. You can add more test cases to cover other branches as needed.
-
-Make sure to import the necessary packages and update the test cases according to your actual project setup and dependencies.

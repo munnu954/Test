@@ -1,6 +1,4 @@
-To create JUnit 5 test cases for the `getAEnd` and `getZEnd` methods of the `CircuitDetailsProvider` class, we need to cover all possible branches. This involves setting up different scenarios using mock data to ensure each conditional path is executed at least once.
-
-Below is an example of how you might write these test cases using JUnit 5 and Mockito. These tests assume that you have mock objects ready for the necessary dependencies (like `RestClientUtil` and any other services).
+To achieve 100% code coverage for the `getAEnd` and `getZEnd` methods in the `CircuitDetailsProvider` class, we need to consider additional test cases that explore different branches and conditions not previously covered. Here are some additional test cases:
 
 ```java
 import static org.junit.jupiter.api.Assertions.*;
@@ -28,31 +26,32 @@ public class CircuitDetailsProviderTest {
     public void setUp() {
         MockitoAnnotations.openMocks(this);
     }
-    
-    private CircuitDetailResponse createMockResponse(String clliCode, boolean hasAEnd, boolean hasZEnd) {
+
+    private CircuitDetailResponse createMockComplexResponse(String clliCode, boolean addIntermediateNodes) {
         CircuitDetailResponse response = new CircuitDetailResponse();
         CircuitData circuitData = new CircuitData();
         CircuitLst circuitLst = new CircuitLst();
         Circuit circuit = new Circuit();
+        ClrComponent clrComponent = new ClrComponent();
+        clrComponent.setType("PORT");
 
-        if (hasAEnd) {
-            AEnd aEnd = new AEnd();
-            PortChannel portChannel = new PortChannel();
-            PortRef portRef = new PortRef();
-            portRef.setClliCode(clliCode);
-            portChannel.setPortRef(Collections.singletonList(portRef));
-            aEnd.setPortChannel(Collections.singletonList(portChannel));
-            circuit.setAEnd(Collections.singletonList(aEnd));
-        }
+        EquipmentComp equipmentComp = new EquipmentComp();
+        PortRef portRef = new PortRef();
+        portRef.setClliCode(clliCode);
+        equipmentComp.setPortRef(Collections.singletonList(portRef));
 
-        if (hasZEnd) {
-            ZEnd zEnd = new ZEnd();
-            PortChannel portChannel = new PortChannel();
-            PortRef portRef = new PortRef();
-            portRef.setClliCode(clliCode);
-            portChannel.setPortRef(Collections.singletonList(portRef));
-            zEnd.setPortChannel(Collections.singletonList(portChannel));
-            circuit.setZEnd(Collections.singletonList(zEnd));
+        clrComponent.setEquipmentComp(Collections.singletonList(equipmentComp));
+
+        if (addIntermediateNodes) {
+            ClrComponent intermediateClrComponent = new ClrComponent();
+            intermediateClrComponent.setType("CHANNEL");
+            intermediateClrComponent.setEquipmentComp(Collections.singletonList(equipmentComp));
+            List<ClrComponent> clrComponentList = new ArrayList<>();
+            clrComponentList.add(intermediateClrComponent);
+            clrComponentList.add(clrComponent);
+            circuit.setClr(Collections.singletonList(new Clr(clrComponentList)));
+        } else {
+            circuit.setClr(Collections.singletonList(new Clr(Collections.singletonList(clrComponent))));
         }
 
         circuitLst.setCircuit(Collections.singletonList(circuit));
@@ -63,10 +62,10 @@ public class CircuitDetailsProviderTest {
     }
 
     @Test
-    public void testGetAEnd_withValidAEnd() {
+    public void testGetAEnd_withIntermediateClrComponents() {
         String circuitId = "123";
         String clli = "CLLI123";
-        CircuitDetailResponse response = createMockResponse(clli, true, false);
+        CircuitDetailResponse response = createMockComplexResponse(clli, true);
 
         AEnd aEnd = circuitDetailsProvider.getAEnd(circuitId, clli, response);
 
@@ -75,33 +74,22 @@ public class CircuitDetailsProviderTest {
     }
 
     @Test
-    public void testGetAEnd_withNoAEnd() {
+    public void testGetAEnd_withDifferentClrComponentType() {
         String circuitId = "123";
         String clli = "CLLI123";
-        CircuitDetailResponse response = createMockResponse(clli, false, false);
+        CircuitDetailResponse response = createMockComplexResponse(clli, false);
+        response.getCircuitData().getCircuitLst().get(0).getCircuit().get(0).getClr().get(0).getClrComponent().get(0).setType("CHANNEL");
 
         AEnd aEnd = circuitDetailsProvider.getAEnd(circuitId, clli, response);
 
-        assertNull(aEnd);
+        assertNull(aEnd); // Expect null since the type doesn't match
     }
 
     @Test
-    public void testGetAEnd_withNullResponse() {
+    public void testGetZEnd_withIntermediateClrComponents() {
         String circuitId = "123";
         String clli = "CLLI123";
-
-        when(restClientUtil.callEndpoint(anyString(), any(), any())).thenReturn(null);
-
-        AEnd aEnd = circuitDetailsProvider.getAEnd(circuitId, clli, null);
-
-        assertNull(aEnd);
-    }
-
-    @Test
-    public void testGetZEnd_withValidZEnd() {
-        String circuitId = "123";
-        String clli = "CLLI123";
-        CircuitDetailResponse response = createMockResponse(clli, false, true);
+        CircuitDetailResponse response = createMockComplexResponse(clli, true);
 
         ZEnd zEnd = circuitDetailsProvider.getZEnd(circuitId, clli, response);
 
@@ -110,37 +98,64 @@ public class CircuitDetailsProviderTest {
     }
 
     @Test
-    public void testGetZEnd_withNoZEnd() {
+    public void testGetZEnd_withNoClrComponents() {
         String circuitId = "123";
         String clli = "CLLI123";
-        CircuitDetailResponse response = createMockResponse(clli, false, false);
+        CircuitDetailResponse response = new CircuitDetailResponse();
+        CircuitData circuitData = new CircuitData();
+        CircuitLst circuitLst = new CircuitLst();
+        Circuit circuit = new Circuit();
+        
+        circuitLst.setCircuit(Collections.singletonList(circuit));
+        circuitData.setCircuitLst(Collections.singletonList(circuitLst));
+        response.setCircuitData(circuitData);
 
         ZEnd zEnd = circuitDetailsProvider.getZEnd(circuitId, clli, response);
 
-        assertNull(zEnd);
+        assertNull(zEnd); // No ClrComponents present
     }
 
     @Test
-    public void testGetZEnd_withNullResponse() {
+    public void testGetAEnd_withMixedClrComponentTypes() {
         String circuitId = "123";
         String clli = "CLLI123";
+        CircuitDetailResponse response = new CircuitDetailResponse();
+        CircuitData circuitData = new CircuitData();
+        CircuitLst circuitLst = new CircuitLst();
+        Circuit circuit = new Circuit();
+        ClrComponent clrComponent1 = new ClrComponent();
+        clrComponent1.setType("TRAIL");
+        ClrComponent clrComponent2 = new ClrComponent();
+        clrComponent2.setType("PORT");
 
-        when(restClientUtil.callEndpoint(anyString(), any(), any())).thenReturn(null);
+        EquipmentComp equipmentComp = new EquipmentComp();
+        PortRef portRef = new PortRef();
+        portRef.setClliCode(clli);
+        equipmentComp.setPortRef(Collections.singletonList(portRef));
+        clrComponent2.setEquipmentComp(Collections.singletonList(equipmentComp));
 
-        ZEnd zEnd = circuitDetailsProvider.getZEnd(circuitId, clli, null);
+        circuit.setClr(Collections.singletonList(new Clr(List.of(clrComponent1, clrComponent2))));
 
-        assertNull(zEnd);
+        circuitLst.setCircuit(Collections.singletonList(circuit));
+        circuitData.setCircuitLst(Collections.singletonList(circuitLst));
+        response.setCircuitData(circuitData);
+
+        AEnd aEnd = circuitDetailsProvider.getAEnd(circuitId, clli, response);
+
+        assertNotNull(aEnd);
+        assertEquals(clli, aEnd.getPortChannel().get(0).getPortRef().get(0).getClliCode());
     }
 }
 ```
 
-### Explanation:
+### Explanation of New Test Cases:
 
-- **Mocking Dependencies**: We use Mockito to mock dependencies like `RestClientUtil`.
-- **Setup Method**: Initializes mocks before each test.
-- **Test Methods**: Each method targets a specific path in the `getAEnd` and `getZEnd` methods.
-  - **Positive Test Cases**: These tests validate the expected behavior when valid data is provided.
-  - **Negative Test Cases**: These tests validate the behavior when the response is null or does not contain the expected data.
-- **Helper Method**: `createMockResponse` is used to set up the mock objects needed for the tests.
+1. **Intermediate ClrComponents**: Tests how the code handles cases where there are multiple components in the path, ensuring correct selection based on type and position.
+   
+2. **Different ClrComponent Type**: Tests to ensure the method correctly skips components of unexpected types.
 
-This setup ensures that all logical branches in your methods are covered, providing comprehensive test coverage.
+3. **No ClrComponents**: Confirms behavior when no components are present in the circuit data.
+
+4. **Mixed ClrComponent Types**: Validates the ability to handle a mix of component types and still correctly identify the desired component based on the type.
+
+These test cases further cover the various logical branches and conditions that occur within the methods, contributing to a more comprehensive test suite.

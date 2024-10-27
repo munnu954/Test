@@ -1,27 +1,35 @@
-To create JUnit 5 test cases for the `GraniteSegmentService` class, covering all branches of the methods `callCircuitDetailAPI` and `getRestObjData`, you need to mock dependencies and simulate different scenarios. Here’s a basic structure for the test cases:
-
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.Map;
-
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
-class GraniteSegmentServiceTest {
+@ExtendWith(MockitoExtension.class)
+public class GraniteSegmentServiceTest {
 
-    @InjectMocks
     private GraniteSegmentService graniteSegmentService;
 
     @Mock
@@ -30,91 +38,153 @@ class GraniteSegmentServiceTest {
     @Mock
     private ElassandraConfig elassandraConfig;
 
-    @Mock
-    private RestTemplate restTemplate;
-
     @BeforeEach
     void setUp() {
-        MockitoAnnotations.openMocks(this);
+        graniteSegmentService = new GraniteSegmentService();
+        graniteSegmentService.restClientUtil = restClientUtil;
+        graniteSegmentService.elassandraConfig = elassandraConfig;
     }
 
     @Test
-    void testCallCircuitDetailAPI_withCndTrue() {
-        // Mocking dependencies and responses
+    @DisplayName("callCircuitDetailAPI - Circuit name is not empty")
+    void testCallCircuitDetailAPIWithCircuitName() throws URISyntaxException {
+        // Arrange
+        String circuitName = "test-circuit";
+
+        // Stubbing
+        when(elassandraConfig.findServiceForName("serviceName")).thenReturn("http://localhost:8080");
+
+        Map<String, String> responseMap = new HashMap<>();
+        responseMap.put("id", "test-circuit");
+        responseMap.put("view", "INSTALLED");
+        responseMap.put("clr", "Y");
+
+        ResponseEntity<Object> responseEntity = new ResponseEntity<>(responseMap, HttpStatus.OK);
         when(restClientUtil.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Object.class)))
-            .thenReturn(new CircuitDetailResponse());
+                .thenReturn(responseEntity);
 
-        // Calling the method with cnd = true
-        CircuitDetailResponse response = graniteSegmentService.callCircuitDetailAPI("12345", true);
+        // Act
+        CircuitDetailResponse circuitDetailResponse = graniteSegmentService.callCircuitDetailAPI(circuitName, false);
 
-        // Asserting the response
-        assertNotNull(response);
+        // Assert
+        assertNotNull(circuitDetailResponse);
+        assertEquals(circuitName, circuitDetailResponse.getCircuitData().getCircuitLst().get(0).getCircuit().get(0).getId());
     }
 
     @Test
-    void testCallCircuitDetailAPI_withCndFalse() {
-        // Mocking dependencies and responses
-        when(restClientUtil.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Object.class)))
-            .thenReturn(new CircuitDetailResponse());
+    @DisplayName("callCircuitDetailAPI - Circuit name is empty")
+    void testCallCircuitDetailAPIWithoutCircuitName() throws URISyntaxException {
+        // Arrange
+        String circuitName = "";
 
-        // Calling the method with cnd = false
-        CircuitDetailResponse response = graniteSegmentService.callCircuitDetailAPI("12345", false);
+        // Act
+        CircuitDetailResponse circuitDetailResponse = graniteSegmentService.callCircuitDetailAPI(circuitName, false);
 
-        // Asserting the response
-        assertNotNull(response);
+        // Assert
+        assertNotNull(circuitDetailResponse);
     }
 
     @Test
-    void testGetRestObjData_withNonEmptyBaseUrl() throws Exception {
-        // Mocking the service name to return a valid URL
-        String serviceName = "validService";
-        String appendUrl = "/api/path";
-        when(graniteSegmentService.findServiceForName(serviceName)).thenReturn("http://localhost");
+    @DisplayName("callCircuitDetailAPI - service name is empty")
+    void testCallCircuitDetailAPIWithEmptyServiceName() throws URISyntaxException {
+        // Arrange
+        String circuitName = "test-circuit";
 
-        // Mocking RestClientUtil response
-        when(restClientUtil.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Object.class)))
-            .thenReturn(new Object());
+        // Stubbing
+        when(elassandraConfig.findServiceForName("")).thenThrow(new RuntimeException("Service name cannot be empty"));
 
-        // Preparing request parameters
+        // Act
+        CircuitDetailResponse circuitDetailResponse = graniteSegmentService.callCircuitDetailAPI(circuitName, false);
+
+        // Assert
+        assertNotNull(circuitDetailResponse);
+    }
+
+    @Test
+    @DisplayName("getRestObjData - base url is not empty")
+    void testGetRestObjDataWithBaseUrl() throws URISyntaxException, IOException {
+        // Arrange
+        ParameterizedTypeReference<String> typeReference = new ParameterizedTypeReference<>() {};
         Map<String, String> requestParams = new HashMap<>();
-        requestParams.put("param1", "value1");
+        String serviceName = "test-service";
+        String appendUrl = "/test-url";
 
-        // Calling the method
-        Object response = graniteSegmentService.getRestObjData(requestParams, serviceName, appendUrl, new ParameterizedTypeReference<Object>() {});
+        // Stubbing
+        when(elassandraConfig.findServiceForName(serviceName)).thenReturn("http://localhost:8080");
+        when(restClientUtil.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Object.class)))
+                .thenReturn(ResponseEntity.ok("{\"id\":\"test-id\"}"));
 
-        // Asserting the response
-        assertNotNull(response);
+        // Act
+        String expectedResponse = graniteSegmentService.getRestObjData(requestParams, serviceName, appendUrl, typeReference);
+
+        // Assert
+        assertNotNull(expectedResponse);
+        assertEquals("{\"id\":\"test-id\"}", expectedResponse);
     }
 
     @Test
-    void testGetRestObjData_withEmptyBaseUrl() throws Exception {
-        // Mocking the service name to return an empty URL
-        String serviceName = "invalidService";
-        String appendUrl = "/api/path";
-        when(graniteSegmentService.findServiceForName(serviceName)).thenReturn("");
-
-        // Preparing request parameters
+    @DisplayName("getRestObjData - base url is empty")
+    void testGetRestObjDataWithEmptyBaseUrl() throws URISyntaxException {
+        // Arrange
+        ParameterizedTypeReference<String> typeReference = new ParameterizedTypeReference<>() {};
         Map<String, String> requestParams = new HashMap<>();
-        requestParams.put("param1", "value1");
+        String serviceName = "";
+        String appendUrl = "/test-url";
 
-        // Calling the method and expecting an exception due to empty base URL
-        assertThrows(CommonWrapperException.class, () -> {
-            graniteSegmentService.getRestObjData(requestParams, serviceName, appendUrl, new ParameterizedTypeReference<Object>() {});
-        });
+        // Stubbing
+        when(elassandraConfig.findServiceForName(serviceName)).thenReturn("");
+
+        // Act
+        String expectedResponse = graniteSegmentService.getRestObjData(requestParams, serviceName, appendUrl, typeReference);
+
+        // Assert
+        assertNotNull(expectedResponse);
+        assertEquals("", expectedResponse);
+    }
+
+    @Test
+    @DisplayName("getRestObjData - error occurred")
+    void testGetRestObjDataWithError() throws URISyntaxException {
+        // Arrange
+        ParameterizedTypeReference<String> typeReference = new ParameterizedTypeReference<>() {};
+        Map<String, String> requestParams = new HashMap<>();
+        String serviceName = "test-service";
+        String appendUrl = "/test-url";
+
+        // Stubbing
+        when(elassandraConfig.findServiceForName(serviceName)).thenReturn("http://localhost:8080");
+        when(restClientUtil.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Object.class)))
+                .thenThrow(new ResourceAccessException("Error occurred while calling API"));
+
+        // Act
+        CommonWrapperException exception = assertThrows(CommonWrapperException.class,
+                () -> graniteSegmentService.getRestObjData(requestParams, serviceName, appendUrl, typeReference));
+
+        // Assert
+        assertEquals("Error occurred while calling API", exception.getMessage());
+    }
+
+    public HttpHeaders getHttpHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String plainCreds = "VREPAIR: VREPAIR123";
+        byte[] plainCredsBytes = plainCreds.getBytes();
+        byte[] base64CredsBytes = Base64.encodeBase64(plainCredsBytes, false);
+        String base64Creds = new String(base64CredsBytes);
+        headers.add("Authorization", "Basic" + base64Creds);
+        return headers;
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public static <T> T convertJsonStringToObject(String jsonString, Class<T> clazz) throws IOException {
+        ObjectMapper mapper = new ObjectMapper();
+        return mapper.readValue(jsonString, clazz);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public static <T> T convertJsonStringToObject(String jsonString, TypeReference<T> typeReference) throws IOException {
+        ObjectMapper mapper = new ObjectMapper();
+        return mapper.readValue(jsonString, typeReference);
     }
 }
 ```
-
-### Explanation:
-
-1. **Mocking**: We use Mockito to mock dependencies like `RestClientUtil`, `ElassandraConfig`, and `RestTemplate`.
-
-2. **Test Initialization**: We initialize mocks before each test using `@BeforeEach` and `MockitoAnnotations.openMocks(this)`.
-
-3. **Test Cases**:
-   - **callCircuitDetailAPI**: Test cases are created for both `cnd = true` and `cnd = false` scenarios. We mock the response from `RestClientUtil` to simulate different conditions.
-   - **getRestObjData**: Test cases cover scenarios where the base URL is non-empty and empty. We mock the `findServiceForName` method to simulate these conditions.
-
-4. **Assertions**: We use assertions to verify the expected outcomes of each test case.
-
-This setup covers all branches of the specified methods to ensure comprehensive test coverage.

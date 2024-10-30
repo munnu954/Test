@@ -1,175 +1,124 @@
-To achieve 100% code coverage for the `process` method of the `PathProcessor` class, we need to create JUnit 5 test cases that cover all branches of the method. Below is a set of JUnit test cases that will help ensure that each conditional branch is exercised, and care has been taken to avoid the mentioned errors.
+To achieve 100% code coverage for the `getDeviceDetailsv3` method within the `IVAPPDeviceService` class, we'll write JUnit test cases that cover all possible branches and exceptions. This includes handling successful responses, HTTP server errors, and generic exceptions. We'll use Mockito to mock dependencies like `RestTemplate` and `IVAPPDeviceUtil`.
+
+Here's a comprehensive JUnit test class for this method:
 
 ```java
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.verizon.uts.cdo.eqp.list.UTSEquipmentList;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnitRunner;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
-import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
+import static org.junit.Assert.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
-import static org.junit.jupiter.api.Assertions.*;
+@RunWith(MockitoJUnitRunner.class)
+public class IVAPPDeviceServiceTest {
 
-class PathProcessorTest {
+    @Mock
+    private RestTemplate restTemplate;
 
-    private PathProcessor pathProcessor;
-    private List<Node> nodes;
-    private List<Link> links;
-    private ClrComponent clrComponent;
-    private List<ClrComponent> clrComponentList;
-    private Map<String, List<Node>> clliNodeMap;
-    private AtomicInteger ukCount;
+    @Mock
+    private IVAPPDeviceUtil iVAPPDeviceUtil;
 
-    @BeforeEach
-    void setUp() {
-        pathProcessor = PathProcessor.getInstance();
-        nodes = new ArrayList<>();
-        links = new ArrayList<>();
-        clrComponent = new ClrComponent();
-        clrComponentList = new ArrayList<>();
-        clliNodeMap = new HashMap<>();
-        ukCount = new AtomicInteger(0);
+    @InjectMocks
+    private IVAPPDeviceService iVAPPDeviceService;
+
+    private DeviceListInputRequest mockRequest;
+    private UTSEquipmentList mockUTSEquipmentList;
+    private ObjectMapper objectMapper;
+
+    @Before
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+        mockRequest = new DeviceListInputRequest();
+        mockUTSEquipmentList = new UTSEquipmentList();
+        objectMapper = new ObjectMapper();
     }
 
     @Test
-    void testProcessWithTrail() {
-        // Setting up a valid ClrComponent and adding it to the list
-        CircuitInfo circuitInfo = new CircuitInfo();
-        circuitInfo.setCircuitName("TestCircuit");
-        circuitInfo.setType("Trail");
-        clrComponent.setCircuitComp(Collections.singletonList(new CircuitComp(circuitInfo)));
-        clrComponentList.add(clrComponent);
-        
-        pathProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, "sourceSys");
+    public void testGetDeviceDetailsv3_SuccessfulResponse() throws Exception {
+        // Arrange
+        String mockServiceUrl = "http://mockservice/mockpath";
+        JsonNode mockResponse = objectMapper.readTree("{\"equipmentLst\": {\"equipmentContainer\": []}}");
+        ResponseEntity<JsonNode> responseEntity = ResponseEntity.ok(mockResponse);
 
-        assertEquals(1, links.size());
-        Link link = links.get(0);
-        assertEquals("TestCircuit", link.getAttributes().get(0).getValue());
+        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn("http://mockservice");
+        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+            .thenReturn(responseEntity);
+        when(iVAPPDeviceUtil.covertv3format(any(JsonNode.class))).thenReturn(mockUTSEquipmentList);
+
+        // Act
+        UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(mockRequest, mockUTSEquipmentList);
+
+        // Assert
+        assertNotNull(result);
+        verify(iVAPPDeviceUtil, times(1)).covertv3format(mockResponse);
     }
 
     @Test
-    void testProcessWithPort() {
-        CircuitInfo circuitInfo = new CircuitInfo();
-        circuitInfo.setCircuitName("TestCircuit");
-        circuitInfo.setType("Port");
-        clrComponent.setCircuitComp(Collections.singletonList(new CircuitComp(circuitInfo)));
-        clrComponentList.add(clrComponent);
+    public void testGetDeviceDetailsv3_HttpServerError() throws Exception {
+        // Arrange
+        String mockServiceUrl = "http://mockservice/mockpath";
+        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn("http://mockservice");
+        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+            .thenThrow(new HttpServerErrorException(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR));
 
-        PortRef portRef = new PortRef();
-        portRef.setPortID("port1");
-        clrComponent.setEquipmentComp(Collections.singletonList(new EquipmentComp(portRef)));
-        
-        pathProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, "sourceSys");
+        // Act
+        UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(mockRequest, mockUTSEquipmentList);
 
-        assertEquals(1, links.size());
-        Link link = links.get(0);
-        assertEquals("port1", link.getSource());
+        // Assert
+        assertNotNull(result);
+        verify(iVAPPDeviceUtil, never()).covertv3format(any(JsonNode.class));
     }
 
     @Test
-    void testProcessWithSequentialComponents() {
-        // Setting up multiple ClrComponents
-        for (int i = 0; i < 3; i++) {
-            ClrComponent component = new ClrComponent();
-            CircuitInfo circuitInfo = new CircuitInfo();
-            circuitInfo.setCircuitName("Circuit" + i);
-            circuitInfo.setType(i == 0 ? "Trail" : "Port");
-            component.setCircuitComp(Collections.singletonList(new CircuitComp(circuitInfo)));
-            clrComponentList.add(component);
-        }
+    public void testGetDeviceDetailsv3_GenericException() throws Exception {
+        // Arrange
+        String mockServiceUrl = "http://mockservice/mockpath";
+        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn("http://mockservice");
+        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
+            .thenThrow(new RuntimeException("Generic Exception"));
 
-        pathProcessor.process(nodes, links, clrComponentList.get(0), clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+        // Act
+        UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(mockRequest, mockUTSEquipmentList);
 
-        assertEquals(2, links.size());
-    }
-
-    @Test
-    void testProcessWithCable() {
-        CircuitInfo circuitInfo = new CircuitInfo();
-        circuitInfo.setCircuitName("TestCableCircuit");
-        circuitInfo.setType("Cable");
-        clrComponent.setCircuitComp(Collections.singletonList(new CircuitComp(circuitInfo)));
-        clrComponentList.add(clrComponent);
-
-        pathProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, "sourceSys");
-
-        assertEquals(1, links.size());
-        Link link = links.get(0);
-        assertEquals("TestCableCircuit", link.getAttributes().get(0).getValue());
-    }
-
-    @Test
-    void testProcessWithSegment() {
-        CircuitInfo circuitInfo = new CircuitInfo();
-        circuitInfo.setCircuitName("TestSegmentCircuit");
-        circuitInfo.setType("Segment");
-        clrComponent.setCircuitComp(Collections.singletonList(new CircuitComp(circuitInfo)));
-        clrComponentList.add(clrComponent);
-
-        pathProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
-
-        assertEquals(1, links.size());
-        Link link = links.get(0);
-        assertEquals("TestSegmentCircuit", link.getAttributes().get(0).getValue());
-    }
-
-    @Test
-    void testProcessWithCablePair() {
-        CircuitInfo circuitInfo = new CircuitInfo();
-        circuitInfo.setCircuitName("TestCablePairCircuit");
-        circuitInfo.setType("CablePair");
-        clrComponent.setCircuitComp(Collections.singletonList(new CircuitComp(circuitInfo)));
-        clrComponentList.add(clrComponent);
-
-        pathProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, "sourceSys");
-
-        assertEquals(1, links.size());
-        Link link = links.get(0);
-        assertEquals("TestCablePairCircuit", link.getAttributes().get(0).getValue());
-    }
-
-    @Test
-    void testProcessWithNullClrComponent() {
-        assertThrows(NullPointerException.class, () -> {
-            pathProcessor.process(nodes, links, null, clrComponentList, clliNodeMap, 0, ukCount, "sourceSys");
-        });
-    }
-
-    @Test
-    void testProcessWithEmptyNodeList() {
-        clrComponent.setCircuitComp(Collections.singletonList(new CircuitComp(new CircuitInfo())));
-        clrComponentList.add(clrComponent);
-        pathProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, "sourceSys");
-
-        assertEquals(1, links.size());
-    }
-
-    @Test
-    void testProcessWithMultipleLinks() {
-        for (int i = 0; i < 5; i++) {
-            ClrComponent component = new ClrComponent();
-            CircuitInfo circuitInfo = new CircuitInfo();
-            circuitInfo.setCircuitName("LinkCircuit" + i);
-            circuitInfo.setType("Circuit");
-            component.setCircuitComp(Collections.singletonList(new CircuitComp(circuitInfo)));
-            clrComponentList.add(component);
-        }
-
-        for (int i = 0; i < clrComponentList.size(); i++) {
-            pathProcessor.process(nodes, links, clrComponentList.get(i), clrComponentList, clliNodeMap, i, ukCount, "sourceSys");
-        }
-
-        assertEquals(5, links.size());
+        // Assert
+        assertNotNull(result);
+        verify(iVAPPDeviceUtil, never()).covertv3format(any(JsonNode.class));
     }
 }
 ```
 
 ### Explanation:
-1. **Setup Method:** The `@BeforeEach` method initializes the necessary variables before each test to ensure a clean state.
-2. **Test Cases:**
-   - Each test case covers a different scenario, including testing with the types "Trail", "Port", "Cable", "Segment", and "CablePair".
-   - The test cases utilize assertions to check if the expected outcomes are met.
-   - Tests ensure that the process method can handle scenarios with multiple components and maintains the integrity of the node and link lists.
-3. **Error Handling:** 
-   - The last two tests check for proper handling of null inputs and empty lists, ensuring that the code does not throw null pointer exceptions.
 
-These tests should cover the various branches in the `process` method and help achieve the desired code coverage while avoiding the specified exceptions.
+1. **Initialization:** We use `@Before` to set up mock instances and initialize objects before each test.
+
+2. **Mockito Annotations:**
+   - `@Mock` is used for dependencies we want to mock.
+   - `@InjectMocks` lets us inject the mocks into the class we are testing.
+
+3. **Test Scenarios:**
+   - **Successful Response:** Mocks a successful REST call and verifies the conversion using `covertv3format`.
+   - **HTTP Server Error:** Simulates an HTTP server error and checks that no conversion is attempted.
+   - **Generic Exception:** Handles unexpected exceptions gracefully, ensuring stability.
+
+4. **Mocking Behavior:** Using Mockito's `when` and `thenReturn` to define behavior for mocked objects.
+
+5. **Assertions:** Verifies the expected outcomes for each test scenario, ensuring correct method execution and logic flow.

@@ -1,156 +1,85 @@
-If you're encountering a `NullPointerException` in the `testGetDeviceDetailsv3_ResponseNull` test case, it might be due to the assumption that the `restTemplate.exchange()` method can return `null`. Typically, it returns a `ResponseEntity`, and returning `null` directly might not be handled correctly in the service method. Instead, let's simulate a scenario where the response body itself is `null`.
-
-Here's how you can adjust the test case:
+To achieve 100% code coverage for the `IVAPPDeviceUtil` class, we need to write unit tests for all of its methods, covering different branches and edge cases. Below is an example of how you might write JUnit test cases for this class:
 
 ```java
-import static org.mockito.Mockito.*;
-import static org.junit.Assert.*;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
-import org.springframework.http.HttpEntity;
+import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.HttpServerErrorException;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.http.MediaType;
 
-import java.lang.reflect.Field;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Arrays;
 
-@RunWith(MockitoJUnitRunner.class)
-public class IVAPPDeviceServiceTest {
+import static org.junit.Assert.*;
 
-    @InjectMocks
-    private IVAPPDeviceService ivappDeviceService;
+public class IVAPPDeviceUtilTest {
 
-    @Mock
-    private IVAPPDeviceUtil iVAPPDeviceUtil;
-
-    @Mock
-    private RestTemplate restTemplate;
-
-    private DeviceListInputRequest request;
-    private UTSEquipmentList utsEquipmentList;
+    private IVAPPDeviceUtil ivappDeviceUtil;
+    private ObjectMapper objectMapper;
 
     @Before
-    public void setUp() throws Exception {
-        // Set private fields using reflection
-        setPrivateField(ivappDeviceService, "lookupServiceName", "http://testService");
-        setPrivateField(ivappDeviceService, "lookupServicePath", "/testPath");
-
-        request = new DeviceListInputRequest();
-        Map<String, Object> requestParams = new HashMap<>();
-        requestParams.put("key", "value");
-        request.setRequestParameters(requestParams);
-
-        utsEquipmentList = new UTSEquipmentList();
-
-        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn("http://testService/testPath");
-        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
-    }
-
-    private void setPrivateField(Object targetObject, String fieldName, Object fieldValue) throws Exception {
-        Field field = targetObject.getClass().getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(targetObject, fieldValue);
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+        ivappDeviceUtil = new IVAPPDeviceUtil();
+        objectMapper = new ObjectMapper();
     }
 
     @Test
-    public void testGetDeviceDetailsv3_ResponseNotNull() throws Exception {
-        String dataServiceUrl = "http://testService/testPath";
+    public void testGetHttpHeaders() {
+        HttpHeaders headers = ivappDeviceUtil.getHttpHeaders();
+        assertEquals(MediaType.APPLICATION_JSON, headers.getContentType());
+        assertEquals(Arrays.asList(MediaType.APPLICATION_JSON), headers.getAccept());
+    }
 
-        ObjectMapper mapper = new ObjectMapper();
-        JsonNode mockResponse = mapper.readTree("{ \"equipmentLst\": { \"equipmentContainer\": [] }}");
+    @Test
+    public void testFindServiceByNameWithHttp() {
+        String serviceName = "http://exampleService";
+        String result = ivappDeviceUtil.findServiceByName(serviceName);
+        assertEquals("http://exampleservice", result);
+    }
 
-        ResponseEntity<JsonNode> responseEntity = ResponseEntity.ok(mockResponse);
+    @Test
+    public void testFindServiceByNameWithoutHttp() {
+        String serviceName = "exampleService";
+        String result = ivappDeviceUtil.findServiceByName(serviceName);
+        assertEquals("http://exampleservice", result);
+    }
 
-        when(restTemplate.exchange(
-                eq(dataServiceUrl),
-                eq(HttpMethod.POST),
-                any(HttpEntity.class),
-                eq(JsonNode.class)
-        )).thenReturn(responseEntity);
+    @Test
+    public void testCovertv3formatWithData() throws Exception {
+        String json = "{ \"equipmentLst\": { \"equipmentContainer\": [{ \"location\": { \"locationClli\": \"clli\", \"locationName\": \"name\", \"locationId\": \"id\", \"state\": \"state\" }, \"virtualNE\": { \"name\": \"neName\", \"status\": \"active\", \"type\": \"type\", \"vendor\": \"vendor\", \"model\": \"model\", \"tid\": \"tid\", \"createdBySys\": \"system\" } }] } }";
+        JsonNode deviceResponse = objectMapper.readTree(json);
 
-        when(iVAPPDeviceUtil.covertv3format(any(JsonNode.class))).thenReturn(new UTSEquipmentList());
+        UTSEquipmentList result = ivappDeviceUtil.covertv3format(deviceResponse);
 
-        UTSEquipmentList result = ivappDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
         assertNotNull(result);
+        assertNotNull(result.getEquipmentLst());
+        assertEquals(1, result.getEquipmentLst().getEquipmentContainer().size());
+        
+        // Further assertions can be added to verify content
     }
 
-    @Test
-    public void testGetDeviceDetailsv3_ResponseNull() throws Exception {
-        String dataServiceUrl = "http://testService/testPath";
-
-        // Simulate a response entity with a null body
-        ResponseEntity<JsonNode> responseEntity = ResponseEntity.ok(null);
-
-        when(restTemplate.exchange(
-                eq(dataServiceUrl),
-                eq(HttpMethod.POST),
-                any(HttpEntity.class),
-                eq(JsonNode.class)
-        )).thenReturn(responseEntity);
-
-        // Ensure the method handles a null response body gracefully
-        UTSEquipmentList result = ivappDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-        assertNotNull(result);  // Ensure result is not null
-        assertNull(result.getEquipmentLst());  // Assuming getEquipmentLst() returns null if no data is present
-    }
-
-    @Test
-    public void testGetDeviceDetailsv3_HttpServerErrorException() {
-        String dataServiceUrl = "http://testService/testPath";
-
-        when(restTemplate.exchange(
-                eq(dataServiceUrl),
-                eq(HttpMethod.POST),
-                any(HttpEntity.class),
-                eq(JsonNode.class)
-        )).thenThrow(new HttpServerErrorException(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR));
-
-        try {
-            UTSEquipmentList result = ivappDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-            assertNotNull(result);  // Ensure result is not null
-            assertNull(result.getEquipmentLst());
-        } catch (Exception e) {
-            fail("Exception should not have been thrown");
-        }
-    }
-
-    @Test
-    public void testGetDeviceDetailsv3_OtherException() {
-        String dataServiceUrl = "http://testService/testPath";
-
-        when(restTemplate.exchange(
-                eq(dataServiceUrl),
-                eq(HttpMethod.POST),
-                any(HttpEntity.class),
-                eq(JsonNode.class)
-        )).thenThrow(new RuntimeException());
-
-        try {
-            UTSEquipmentList result = ivappDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-            assertNotNull(result);  // Ensure result is not null
-            assertNull(result.getEquipmentLst());
-        } catch (Exception e) {
-            fail("Exception should not have been thrown");
-        }
+    @Test(expected = NoDataFoundException.class)
+    public void testCovertv3formatWithNoData() throws Exception {
+        JsonNode deviceResponse = objectMapper.readTree("{}");
+        ivappDeviceUtil.covertv3format(deviceResponse);
     }
 }
 ```
 
 ### Explanation:
+1. **Test Setup**: 
+   - Initialize the `IVAPPDeviceUtil` and `ObjectMapper` instances before each test.
+   
+2. **Test `getHttpHeaders()`**: 
+   - Verify that the method returns `HttpHeaders` with content type and accept headers set to `application/json`.
 
-- **Simulating Null Response Body**: The test mocks a `ResponseEntity` with a `null` body instead of the entire response being `null`. This better reflects typical scenarios where an API call might succeed but return no data.
+3. **Test `findServiceByName(String name)`**: 
+   - Test both scenarios where the input string contains "http" and where it doesn't, to ensure it properly formats the URL.
 
-- **Handling Null Body Gracefully**: Ensure that the service method `getDeviceDetailsv3` correctly handles a situation where the response body is `null`, and the test asserts the expected behavior (e.g., returning an empty or default `UTSEquipmentList`).
+4. **Test `covertv3format(JsonNode deviceResponse)`**:
+   - Test with valid data to ensure it processes the JSON correctly and returns a populated `UTSEquipmentList`.
+   - Test with empty data to verify that the `NoDataFoundException` is thrown, covering the exception branch.
 
-This setup should help prevent `NullPointerException` by simulating a more realistic scenario where the response body is `null`, not the whole `ResponseEntity`. Make sure the service method is designed to handle such cases appropriately.
+This test suite should cover all the branches of the `IVAPPDeviceUtil` class for 100% code coverage. Make sure to adjust and expand the test cases as necessary to match the exact behavior and requirements of your application.

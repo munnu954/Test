@@ -1,63 +1,83 @@
-To achieve 100% branch coverage for the conditional statements in the `IVAPPDeviceUtil` class, we need to create test cases for the following scenarios:
-
-1. `deviceResponse` is null.
-2. `deviceNode` is null, even when `deviceResponse.get("equipmentLst")` is not null.
-
-Here are the additional test cases:
+Here's a refactoring of the `IVAPPDeviceUtil` class, replacing the `JsonNode` parameter in the `convertv3format` method with a `UTSEquipmentList` parameter, while keeping the existing functionality intact:
 
 ```java
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.Before;
-import org.junit.Test;
-import org.mockito.MockitoAnnotations;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
 
-public class IVAPPDeviceUtilBranchCoverageTest {
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
-    private IVAPPDeviceUtil ivappDeviceUtil;
-    private ObjectMapper objectMapper;
+@Component
+public class IVAPPDeviceUtil {
 
-    @Before
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
-        ivappDeviceUtil = new IVAPPDeviceUtil();
-        objectMapper = new ObjectMapper();
+    private static final Logger LOGGER = LoggerFactory.getLogger(IVAPPDeviceService.class);
+
+    public HttpHeaders getHttpHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setAccept(Arrays.asList(MediaType.APPLICATION_JSON));
+        return headers;
     }
 
-    @Test(expected = NoDataFoundException.class)
-    public void testCovertv3formatWithNullDeviceResponse() throws Exception {
-        // Pass a null deviceResponse
-        JsonNode deviceResponse = null;
-
-        // This should throw NoDataFoundException due to null deviceResponse
-        ivappDeviceUtil.covertv3format(deviceResponse);
+    public String findServiceByName(String name) {
+        return name.contains("http") ? name.toLowerCase() : "http://" + name.toLowerCase();
     }
 
-    @Test
-    public void testCovertv3formatWithNullDeviceNode() throws Exception {
-        // Create a JSON with equipmentLst present but equipmentContainer is empty
-        String json = "{ \"equipmentLst\": {} }";
-        JsonNode deviceResponse = objectMapper.readTree(json);
+    public UTSEquipmentList convertv3format(UTSEquipmentList deviceResponse) throws NoDataFoundException {
+        if (deviceResponse == null || deviceResponse.getEquipmentLst() == null) {
+            throw new NoDataFoundException("No Data Found");
+        }
 
-        // This should return an empty UTSEquipmentList without throwing an exception
-        UTSEquipmentList result = ivappDeviceUtil.covertv3format(deviceResponse);
+        UTSEquipmentList utsEquipmentList = new UTSEquipmentList();
+        EquipmentContainer equipmentContainer = new EquipmentContainer();
+        EquipmentLst equipmentLst = new EquipmentLst();
 
-        // Assert that the result has an empty equipment list
-        assertNotNull(result);
-        assertNotNull(result.getEquipmentLst());
-        assertEquals(0, result.getEquipmentLst().getEquipmentContainer().size());
+        List<EquipmentContainer> equipmentContainerList = new ArrayList<>();
+        EquipmentLst deviceLst = deviceResponse.getEquipmentLst();
+
+        if (deviceLst != null && deviceLst.getEquipmentContainer() != null) {
+            deviceLst.getEquipmentContainer().forEach(device -> {
+                try {
+                    Location locationNode = device.getLocation();
+                    VirtualNE neNode = device.getVirtualNE();
+
+                    Location location = new Location();
+                    location.setLocationClli(locationNode.getLocationClli());
+                    location.setSiteName(locationNode.getSiteName());
+                    location.setLocationCode(locationNode.getLocationCode());
+                    location.setState(locationNode.getState());
+
+                    VirtualNE virtualNE = new VirtualNE();
+                    virtualNE.setName(neNode.getName());
+                    virtualNE.setStatus(neNode.getStatus());
+                    virtualNE.setType(neNode.getType());
+                    virtualNE.setVendor(neNode.getVendor());
+                    virtualNE.setModel(neNode.getModel());
+                    virtualNE.setTid(neNode.getTid());
+                    virtualNE.setCreatedBySys(neNode.getCreatedBySys());
+
+                    equipmentContainer.setLocation(location);
+                    equipmentContainer.setVirtualNE(virtualNE);
+                    equipmentContainerList.add(equipmentContainer);
+                } catch (Exception e) {
+                    LOGGER.error("Exception Occurred in convertDeviceResponseToUTS:", e);
+                }
+            });
+
+            equipmentLst.setEquipmentContainer(equipmentContainerList);
+            utsEquipmentList.setEquipmentLst(equipmentLst);
+        }
+
+        return utsEquipmentList;
     }
 }
 ```
 
-### Explanation:
-
-1. **Test `testCovertv3formatWithNullDeviceResponse()`**:
-   - This test case handles the scenario where `deviceResponse` is null, which is the first branch of the statement `if (null != deviceResponse && null != deviceResponse.get("equipmentLst"))`.
-   - It expects a `NoDataFoundException` to be thrown.
-
-2. **Test `testCovertv3formatWithNullDeviceNode()`**:
-   - This test case checks when `deviceNode` is null, which means `deviceResponse.get("equipmentLst")` is not null, but it is an empty object.
-   - The method should return an empty `UTSEquipmentList` without throwing an exception, covering the branch where `deviceNode` is null.
-
-These tests should provide full coverage for all branches of the conditional statements in the `IVAPPDeviceUtil` class.
+### Key Changes:
+- The method `convertv3format` now takes a `UTSEquipmentList` as its input parameter instead of a `JsonNode`.
+- The logic for iterating and transforming the data structure remains similar, but it's now adapted to work directly with the `UTSEquipmentList` and its associated classes (`EquipmentLst`, `EquipmentContainer`, `Location`, `VirtualNE`).
+- Exception handling and the logging behavior remain unchanged to preserve existing functionality.

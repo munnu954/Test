@@ -1,126 +1,182 @@
-To create JUnit test cases for the `getDeviceDetailsv3` method in the `IVAPPDeviceService` class, we need to cover various scenarios, including successful responses, exceptions, and edge cases. This will ensure full code coverage. Below is a sample test class using JUnit and Mockito to mock dependencies like `IVAPPDeviceUtil` and `RestTemplate`.
+To create JUnit 5 test cases for the `CableProcessor` class, we need to cover the branches specifically related to the `CABLE`, `SEGEMENT`, and `PATH` conditional statements within the `if (i > 0)` block of the `process` method. We will utilize some helper methods and mock objects similar to the ones used for the `PathProcessor` class.
+
+Below is a set of JUnit 5 test cases that aim to achieve full branch coverage for the specified conditions:
 
 ```java
-import static org.mockito.Mockito.*;
-import static org.junit.Assert.*;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.mockito.junit.MockitoJUnitRunner;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.HttpServerErrorException;
-import org.springframework.web.client.RestTemplate;
-import java.util.HashMap;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
-@RunWith(MockitoJUnitRunner.class)
-public class IVAPPDeviceServiceTest {
+public class CableProcessorTest {
 
-    @InjectMocks
-    private IVAPPDeviceService iVAPPDeviceService;
+    private CableProcessor cableProcessor;
+    private List<Node> nodes;
+    private List<Link> links;
+    private Map<String, List<Node>> clliNodeMap;
+    private AtomicInteger ukCount;
+    private String sourceSys;
+    private List<ClrComponent> clrComponentList;
 
-    @Mock
-    private IVAPPDeviceUtil iVAPPDeviceUtil;
-
-    @Mock
-    private RestTemplate restTemplate;
-
-    private DeviceListInputRequest request;
-    private UTSEquipmentList utsEquipmentList;
-    private UTSEquipmentList responseEquipmentList;
-
-    @Before
+    @BeforeEach
     public void setUp() {
-        MockitoAnnotations.openMocks(this);
-        
-        request = new DeviceListInputRequest();
-        Map<String, Object> requestParams = new HashMap<>();
-        requestParams.put("key", "value");
-        request.setRequestParameters(requestParams);
-        
-        utsEquipmentList = new UTSEquipmentList();
-        
-        responseEquipmentList = new UTSEquipmentList();
-        EquipmentLst equipmentLst = new EquipmentLst();
-        equipmentLst.setEquipmentContainer(new ArrayList<>());
-        responseEquipmentList.setEquipmentLst(equipmentLst);
+        cableProcessor = CableProcessor.getInstance();
+        nodes = new ArrayList<>();
+        links = new ArrayList<>();
+        clliNodeMap = Mockito.mock(Map.class);
+        ukCount = new AtomicInteger(0);
+        sourceSys = "testSource";
+        clrComponentList = new ArrayList<>();
     }
 
     @Test
-    public void testGetDeviceDetailsv3_Success() throws Exception {
-        String serviceUrl = "http://example.com/service";
-        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
-        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
-                .thenReturn(new ResponseEntity<>(responseEquipmentList, HttpStatus.OK));
-        when(iVAPPDeviceUtil.convertV3Format(any(UTSEquipmentList.class))).thenReturn(responseEquipmentList);
+    public void testProcess_CableWithPrevCable() {
+        // Setup ClrComponents
+        ClrComponent prevClrComponent = createCableClrComponent(true);
+        ClrComponent currentClrComponent = createClrComponent(CommonWrapperConstants.CABLE);
 
-        UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
+        clrComponentList.add(prevClrComponent);
+        clrComponentList.add(currentClrComponent);
 
-        assertNotNull(result);
-        verify(restTemplate, times(1)).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class));
+        Link prevLink = new Link();
+        prevLink.setTarget("prevTarget");
+        links.add(prevLink);
+
+        Node prevNode = new Node();
+        prevNode.setShelfId("prevTarget");
+        prevNode.setPortId("prevPortId");
+        nodes.add(prevNode);
+
+        // Call the method
+        cableProcessor.process(nodes, links, currentClrComponent, clrComponentList, clliNodeMap, 1, ukCount, sourceSys);
+
+        // Verify the result
+        assertEquals(2, links.size());
+        assertEquals("prevPortId", links.get(1).getSource());
     }
 
     @Test
-    public void testGetDeviceDetailsv3_HttpServerErrorException() {
-        String serviceUrl = "http://example.com/service";
-        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
-        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
-                .thenThrow(new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR));
+    public void testProcess_SegmentWithTrail() {
+        // Setup ClrComponents
+        ClrComponent prevClrComponent = createSegmentClrComponent(true);
+        ClrComponent currentClrComponent = createClrComponent(CommonWrapperConstants.CABLE);
 
-        try {
-            iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-        } catch (Exception e) {
-            fail("Exception should not be thrown");
+        clrComponentList.add(prevClrComponent);
+        clrComponentList.add(currentClrComponent);
+
+        Link prevLink = new Link();
+        prevLink.setTarget("prevTarget");
+        links.add(prevLink);
+
+        // Call the method
+        cableProcessor.process(nodes, links, currentClrComponent, clrComponentList, clliNodeMap, 1, ukCount, sourceSys);
+
+        // Verify the result
+        assertEquals("UNKNOWN" + (ukCount.get() - 1), links.get(0).getTarget());
+    }
+
+    @Test
+    public void testProcess_PathWithUnknown() {
+        // Setup ClrComponents
+        ClrComponent prevClrComponent = createPathClrComponent(true);
+        ClrComponent currentClrComponent = createClrComponent(CommonWrapperConstants.CABLE);
+
+        clrComponentList.add(prevClrComponent);
+        clrComponentList.add(currentClrComponent);
+
+        Link prevLink = new Link();
+        prevLink.setTarget("prevTarget");
+        links.add(prevLink);
+
+        // Call the method
+        cableProcessor.process(nodes, links, currentClrComponent, clrComponentList, clliNodeMap, 1, ukCount, sourceSys);
+
+        // Verify the result
+        assertEquals("UNKNOWN" + (ukCount.get() - 1), links.get(0).getTarget());
+    }
+
+    // Helper methods to create mock ClrComponents
+    private ClrComponent createClrComponent(String type) {
+        ClrComponent clrComponent = new ClrComponent();
+        clrComponent.setType(type);
+
+        CableComp cableComp = new CableComp();
+        cableComp.setCableName("testCable");
+        cableComp.setType("testType");
+        cableComp.setLength(100);
+        cableComp.setStatus("active");
+        cableComp.setLocationA("testLocationA");
+
+        // Simulate CablePairDetails
+        CablePairDetails cablePairDetails = new CablePairDetails();
+        cablePairDetails.setStrandNumber(1);
+
+        List<CablePairDetails> cablePairList = new ArrayList<>();
+        cablePairList.add(cablePairDetails);
+        cableComp.setCablePairDetails(cablePairList);
+
+        clrComponent.getCableComp().add(cableComp);
+
+        return clrComponent;
+    }
+
+    private ClrComponent createCableClrComponent(boolean isNotNull) {
+        ClrComponent clrComponent = new ClrComponent();
+        clrComponent.setType(CommonWrapperConstants.CABLE);
+
+        if (isNotNull) {
+            CableComp cableComp = new CableComp();
+            cableComp.setCableName("prevCable");
+            cableComp.setElementId("elementId");
+            cableComp.setLocationA("testLocationA");
+
+            CablePairDetails cablePairDetails = new CablePairDetails();
+            cablePairDetails.setStrandNumber(1);
+            List<CablePairDetails> cablePairList = new ArrayList<>();
+            cablePairList.add(cablePairDetails);
+            cableComp.setCablePairDetails(cablePairList);
+
+            clrComponent.getCableComp().add(cableComp);
         }
 
-        verify(restTemplate, times(1)).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class));
+        return clrComponent;
     }
 
-    @Test
-    public void testGetDeviceDetailsv3_OtherException() {
-        String serviceUrl = "http://example.com/service";
-        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
-        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
-                .thenThrow(new RuntimeException("Unexpected error"));
+    private ClrComponent createSegmentClrComponent(boolean isNotNull) {
+        ClrComponent clrComponent = new ClrComponent();
+        clrComponent.setType(CommonWrapperConstants.SEGEMENT);
 
-        try {
-            iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-        } catch (Exception e) {
-            fail("Exception should not be thrown");
+        if (isNotNull) {
+            // Add Segment-specific setup
+            clrComponent.setType(CommonWrapperConstants.TRAIL);
         }
 
-        verify(restTemplate, times(1)).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class));
+        return clrComponent;
     }
 
-    @Test(expected = NoDataFoundException.class)
-    public void testGetDeviceDetailsv3_NoDataFoundException() throws Exception {
-        String serviceUrl = "http://example.com/service";
-        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
-        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
-                .thenReturn(new ResponseEntity<>(new UTSEquipmentList(), HttpStatus.OK));
-        when(iVAPPDeviceUtil.convertV3Format(any(UTSEquipmentList.class))).thenThrow(new NoDataFoundException());
+    private ClrComponent createPathClrComponent(boolean isNotNull) {
+        ClrComponent clrComponent = new ClrComponent();
+        clrComponent.setType(CommonWrapperConstants.PATH);
 
-        iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
+        return clrComponent;
     }
 }
 ```
 
-### Key Points:
+### Explanation:
 
-1. **Mockito**: This is used to mock dependencies like `IVAPPDeviceUtil` and `RestTemplate` so that you can control their behavior in the tests.
-2. **Various Scenarios**: The test cases cover success, `HttpServerErrorException`, other exceptions, and `NoDataFoundException`.
-3. **Assertions and Verification**: Assertions are used to check results, and Mockito's `verify` method ensures that the expected methods are called with the correct parameters.
-4. **No NullPointerException**: The setup ensures default objects are created and returned to avoid `NullPointerException`.
+1. **Test Cases:**
+   - **`testProcess_CableWithPrevCable`**: Tests the case where the previous component is a cable, ensuring the correct setup of the link source.
+   - **`testProcess_SegmentWithTrail`**: Covers the scenario where the previous component is a segment, and checks if the trail logic is applied correctly.
+   - **`testProcess_PathWithUnknown`**: Tests for a previous component of type path, ensuring that the unknown handling logic is covered.
 
-This test class should give you 100% code coverage for the `getDeviceDetailsv3` method, covering all branches and potential exceptions.
+2. **Helper Methods**:
+   - Helper methods create mock `ClrComponent` objects for each test scenario.
+   - These methods simulate the necessary attributes, ensuring each component is set up correctly for the test scenarios.
+
+This approach ensures coverage of the specified branches within the `CableProcessor` class's `process` method. Adjustments might be needed based on additional implementation details or specific class structures not fully detailed in the provided code.

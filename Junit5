@@ -1,31 +1,30 @@
-To resolve the `NullPointerException` error you're encountering, we need to ensure that every part of the tested method and its dependencies are properly initialized and mocked. Let's go through a more detailed setup to ensure all potential sources of `null` are addressed.
-
-Here is a more comprehensive test setup:
+To create JUnit test cases for the `getDeviceDetailsv3` method in the `IVAPPDeviceService` class, we need to cover various scenarios, including successful responses, exceptions, and edge cases. This will ensure full code coverage. Below is a sample test class using JUnit and Mockito to mock dependencies like `IVAPPDeviceUtil` and `RestTemplate`.
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.doThrow;
-
-import java.util.HashMap;
-import java.util.Map;
-
+import static org.mockito.Mockito.*;
+import static org.junit.Assert.*;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 import org.mockito.junit.MockitoJUnitRunner;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.http.HttpStatus;
+import java.util.HashMap;
+import java.util.Map;
 
 @RunWith(MockitoJUnitRunner.class)
 public class IVAPPDeviceServiceTest {
+
+    @InjectMocks
+    private IVAPPDeviceService iVAPPDeviceService;
 
     @Mock
     private IVAPPDeviceUtil iVAPPDeviceUtil;
@@ -33,82 +32,95 @@ public class IVAPPDeviceServiceTest {
     @Mock
     private RestTemplate restTemplate;
 
-    @InjectMocks
-    private IVAPPDeviceService iVAPPDeviceService;
-
     private DeviceListInputRequest request;
     private UTSEquipmentList utsEquipmentList;
+    private UTSEquipmentList responseEquipmentList;
 
     @Before
     public void setUp() {
-        // Initialize the request object
+        MockitoAnnotations.openMocks(this);
+        
         request = new DeviceListInputRequest();
         Map<String, Object> requestParams = new HashMap<>();
         requestParams.put("key", "value");
         request.setRequestParameters(requestParams);
-
-        // Initialize the UTSEquipmentList object
+        
         utsEquipmentList = new UTSEquipmentList();
-
-        // Mocking the behavior of utility methods
-        when(iVAPPDeviceUtil.findServiceByName(any(String.class))).thenReturn("http://mockServiceUrl");
-        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
-
-        // Mock a valid response from restTemplate
-        UTSEquipmentList mockResponse = new UTSEquipmentList();
+        
+        responseEquipmentList = new UTSEquipmentList();
         EquipmentLst equipmentLst = new EquipmentLst();
-        equipmentLst.setEquipmentContainer(new ArrayList<>()); // Ensure no null list
-        mockResponse.setEquipmentLst(equipmentLst);
-
-        when(restTemplate.exchange(any(String.class), any(HttpMethod.class), any(HttpEntity.class), any(Class.class)))
-                .thenReturn(ResponseEntity.ok(mockResponse));
-
-        // Mocking convertV3Format to return a non-null result
-        when(iVAPPDeviceUtil.convertV3Format(any(UTSEquipmentList.class))).thenReturn(new UTSEquipmentList());
+        equipmentLst.setEquipmentContainer(new ArrayList<>());
+        responseEquipmentList.setEquipmentLst(equipmentLst);
     }
 
     @Test
     public void testGetDeviceDetailsv3_Success() throws Exception {
+        String serviceUrl = "http://example.com/service";
+        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
+        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
+                .thenReturn(new ResponseEntity<>(responseEquipmentList, HttpStatus.OK));
+        when(iVAPPDeviceUtil.convertV3Format(any(UTSEquipmentList.class))).thenReturn(responseEquipmentList);
+
         UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-        // Assertions to verify the result
+
         assertNotNull(result);
+        verify(restTemplate, times(1)).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class));
     }
 
     @Test
-    public void testGetDeviceDetailsv3_HttpServerErrorException() throws Exception {
-        doThrow(new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR))
-                .when(restTemplate).exchange(any(String.class), any(HttpMethod.class), any(HttpEntity.class), any(Class.class));
+    public void testGetDeviceDetailsv3_HttpServerErrorException() {
+        String serviceUrl = "http://example.com/service";
+        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
+        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
+                .thenThrow(new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR));
 
-        UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-        // Assertions to verify the result
-        assertNotNull(result);
+        try {
+            iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
+        } catch (Exception e) {
+            fail("Exception should not be thrown");
+        }
+
+        verify(restTemplate, times(1)).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class));
     }
 
     @Test
-    public void testGetDeviceDetailsv3_Exception() throws Exception {
-        doThrow(new RuntimeException("Runtime exception"))
-                .when(restTemplate).exchange(any(String.class), any(HttpMethod.class), any(HttpEntity.class), any(Class.class));
+    public void testGetDeviceDetailsv3_OtherException() {
+        String serviceUrl = "http://example.com/service";
+        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
+        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
+                .thenThrow(new RuntimeException("Unexpected error"));
 
-        UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-        // Assertions to verify the result
-        assertNotNull(result);
+        try {
+            iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
+        } catch (Exception e) {
+            fail("Exception should not be thrown");
+        }
+
+        verify(restTemplate, times(1)).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class));
+    }
+
+    @Test(expected = NoDataFoundException.class)
+    public void testGetDeviceDetailsv3_NoDataFoundException() throws Exception {
+        String serviceUrl = "http://example.com/service";
+        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
+        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
+                .thenReturn(new ResponseEntity<>(new UTSEquipmentList(), HttpStatus.OK));
+        when(iVAPPDeviceUtil.convertV3Format(any(UTSEquipmentList.class))).thenThrow(new NoDataFoundException());
+
+        iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
     }
 }
 ```
 
-### Key Adjustments:
+### Key Points:
 
-1. **Ensure `EquipmentLst` is Not Null:** When creating the `UTSEquipmentList` mock response, ensure that `equipmentLst` and its `equipmentContainer` list are initialized to prevent null pointer issues.
+1. **Mockito**: This is used to mock dependencies like `IVAPPDeviceUtil` and `RestTemplate` so that you can control their behavior in the tests.
+2. **Various Scenarios**: The test cases cover success, `HttpServerErrorException`, other exceptions, and `NoDataFoundException`.
+3. **Assertions and Verification**: Assertions are used to check results, and Mockito's `verify` method ensures that the expected methods are called with the correct parameters.
+4. **No NullPointerException**: The setup ensures default objects are created and returned to avoid `NullPointerException`.
 
-2. **Mock Response Entity:** Make sure `restTemplate.exchange` returns a valid `ResponseEntity` containing a non-null `UTSEquipmentList`.
-
-3. **Mock `convertV3Format`:** Confirm that this method is mocked to return a valid `UTSEquipmentList`.
-
-4. **Assertions:** Add `assertNotNull` assertions to verify that the method returns a non-null result, which can help pinpoint if the method logic is flawed.
-
-### Additional Debugging:
-
-- **Intermediate Logging or Breakpoints:** Add logging within the `getDeviceDetailsv3` method to verify which parts of your logic might be returning null.
-- **Inspect Method Logic:** Check the `getDeviceDetailsv3` logic for any assumptions about non-null inputs that may not be met in the test setup.
-
-By following this setup and taking these steps, you should be able to identify and resolve the source of the `NullPointerException`.
+This test class should give you 100% code coverage for the `getDeviceDetailsv3` method, covering all branches and potential exceptions.

@@ -1,40 +1,158 @@
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import java.util.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
-public class CableProcessorTest {
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.Mockito.*;
+
+class CableProcessorTest {
+
+    private CableProcessor cableProcessor;
+    private AbstractClrComponentProcessor abstractClrComponentProcessor;
+    private List<Node> nodes;
+    private List<Link> links;
+    private ClrComponent clrComponent;
+    private List<ClrComponent> clrComponentList;
+    private Map<String, List<Node>> clliNodeMap;
+    private AtomicInteger ukCount;
+
+    @BeforeEach
+    void setUp() {
+        cableProcessor = CableProcessor.getInstance();
+        abstractClrComponentProcessor = mock(AbstractClrComponentProcessor.class);
+        nodes = new ArrayList<>();
+        links = new ArrayList<>();
+        clrComponent = new ClrComponent();
+        clrComponentList = new ArrayList<>();
+        clliNodeMap = new HashMap<>();
+        ukCount = new AtomicInteger();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CABLE", "TRAIL", "SEGEMENT", "CIRCUIT_PATH_LINK", "CIRCUIT"})
+    void testProcess_withValidType_shouldProcessCircuit(String type) {
+        // Given
+        CableComp cableComp = new CableComp();
+        clrComponent.setCableComp(List.of(cableComp));
+        clrComponent.setType(type);
+
+        // When
+        cableProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+        // Then
+        verify(abstractClrComponentProcessor).addOrUpdateNode(any(), eq(nodes), eq(clliNodeMap));
+        verify(abstractClrComponentProcessor).addPortToLink(any(), any(), eq(nodes), anyInt());
+    }
 
     @Test
-    public void testProcessCable() {
-        CableProcessor cableProcessor = CableProcessor.getInstance();
-        
-        List<Node> nodes = new ArrayList<>();
-        List<Link> links = new ArrayList<>();
-        ClrComponent clrComponent = new ClrComponent();
-        List<ClrComponent> clrComponentList = new ArrayList<>();
-        Map<String, List<Node>> clliNodeMap = new HashMap<>();
-        AtomicInteger ukCount = new AtomicInteger();
-        String sourceSys = "test";
-        
-        // Create test data and call the process method
-        ClrComponent cableComponent = new ClrComponent();
-        CableComp cable = new CableComp();
-        cable.setLocationA("LocationA");
-        cable.setCableName("TestCable");
-        cable.setType("Type");
-        cable.setStatus("Active");
-        cableComponent.getCableComp().add(cable);
-        clrComponentList.add(cableComponent);
-        
-        cableProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, sourceSys);
-        
-        // Add your assertions here
-        // For example:
-        assertEquals(1, nodes.size());
-        assertEquals(1, links.size());
-        // Add more assertions based on the expected behavior of the process method
+    void testProcess_withNullCableComponent_shouldNotProcess() {
+        // Given
+        clrComponent = null;
+
+        // When
+        cableProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+        // Then
+        verifyNoInteractions(abstractClrComponentProcessor);
     }
-    
-    // Add similar test methods for other scenarios like TRAIL, SEGEMENT, CIRCUIT_PATH_LINK, and CIRCUIT
-    
+
+    @Test
+    void testProcess_withNullCableComp_shouldNotProcess() {
+        // Given
+        clrComponent.setCableComp(null);
+
+        // When
+        cableProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+        // Then
+        verifyNoInteractions(abstractClrComponentProcessor);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"PORT", "CHANNEL"})
+    void testProcess_withPortOrChannelType_shouldProcessPortOrChannel(String type) {
+        // Given
+        clrComponentList.add(new ClrComponent());
+        PortRef portRef = new PortRef();
+        portRef.setPortID("portID");
+        EquipmentComp equipmentComp = new EquipmentComp();
+        equipmentComp.setPortRef(List.of(portRef));
+        clrComponentList.get(0).setEquipmentComp(List.of(equipmentComp));
+        clrComponentList.get(0).setType(type);
+        CableComp cableComp = new CableComp();
+        cableComp.setLocationA("locationA");
+        clrComponent.setCableComp(List.of(cableComp));
+        clrComponent.setType("CABLE");
+
+        // When
+        cableProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+        // Then
+        assertEquals("portID", cableProcessor.cable.getSource());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"TRAIL", "CIRCUIT_PATH_LINK", "CIRCUIT"})
+    void testProcess_withTrailOrCircuitPathLinkOrCircuitType_shouldProcessTrailOrCircuitPathLinkOrCircuit(String type) {
+        // Given
+        clrComponentList.add(new ClrComponent());
+        CircuitComp circuitComp = new CircuitComp();
+        clrComponentList.get(0).setCircuitComp(List.of(circuitComp));
+        clrComponentList.get(0).setType(type);
+        CableComp cableComp = new CableComp();
+        cableComp.setLocationA("locationA");
+        clrComponent.setCableComp(List.of(cableComp));
+        clrComponent.setType("CABLE");
+
+        // When
+        cableProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+        // Then
+        assertNotNull(cableProcessor.cable.getSource());
+    }
+
+    @Test
+    void testProcess_withSegmentType_shouldProcessSegment() {
+        // Given
+        clrComponentList.add(new ClrComponent());
+        EquipmentComp equipmentComp = new EquipmentComp();
+        clrComponentList.get(0).setEquipmentComp(List.of(equipmentComp));
+        clrComponentList.get(0).setType("TRAIL");
+        CableComp cableComp = new CableComp();
+        cableComp.setLocationA("locationA");
+        clrComponent.setCableComp(List.of(cableComp));
+        clrComponent.setType("CABLE");
+
+        // When
+        cableProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+        // Then
+        assertNotNull(cableProcessor.cable.getSource());
+    }
+
+    @Test
+    void testProcess_withPathType_shouldProcessPath() {
+        // Given
+        clrComponentList.add(new ClrComponent());
+        EquipmentComp equipmentComp = new EquipmentComp();
+        clrComponentList.get(0).setEquipmentComp(List.of(equipmentComp));
+        clrComponentList.get(0).setType("PATH");
+        CableComp cableComp = new CableComp();
+        cableComp.setLocationA("locationA");
+        clrComponent.setCableComp(List.of(cableComp));
+        clrComponent.setType("CABLE");
+
+        // When
+        cableProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+        // Then
+        assertNotNull(cableProcessor.cable.getSource());
+    }
+
 }

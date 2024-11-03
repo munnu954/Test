@@ -1,143 +1,141 @@
-To write JUnit 5 test cases for the specific conditional statements in the `PortProcessor` class where `Arrays.stream(neTypesArray).anyMatch(prevEqtObject.getNeType()::equals)` is evaluated, you should consider scenarios where this condition is both true and false. This will ensure that both branches are covered.
+To write JUnit 5 test cases for the `PortProcessor` class, covering all branches of the `process` method, we need to consider the different conditional paths within the method. We'll focus on ensuring each logical path is tested, including null checks, different `prevType` values, and how equipment and links are processed.
 
-Here's how you might write these test cases:
+Let's create a series of test cases that aim to cover these branches. I'll provide a simplified version here, focusing on the structure and reasoning:
 
 ```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-public class PortProcessorTest {
+class PortProcessorTest {
 
     private PortProcessor portProcessor;
     private List<Node> nodes;
     private List<Link> links;
-    private List<ClrComponent> clrComponentList;
     private Map<String, List<Node>> clliNodeMap;
     private AtomicInteger ukCount;
-    private String sourceSys;
-    private String[] neTypesArray = {"TypeA", "TypeB", "TypeC"};
 
     @BeforeEach
-    public void setUp() {
+    void setUp() {
         portProcessor = PortProcessor.getInstance();
         nodes = new ArrayList<>();
         links = new ArrayList<>();
-        clrComponentList = new ArrayList<>();
         clliNodeMap = new HashMap<>();
         ukCount = new AtomicInteger(0);
-        sourceSys = "TestSource";
-
-        // Mocking CommonWrapperConstants.NE_TYPES to return a specific string for testing
-        // Assuming there's a way to set this like a public static variable or method
-        CommonWrapperConstants.NE_TYPES = String.join(",", neTypesArray);
     }
 
     @Test
-    public void testNeTypeMatches() {
-        // Setup the ClrComponent and PortRefs
-        ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType("SomeType");
+    void testProcessWithDecommissionedEquipment() {
+        // Setup
+        ClrComponent clrComponent = createClrComponentWithDecommissionedEquipment();
+        List<ClrComponent> clrComponentList = Collections.singletonList(clrComponent);
 
-        EquipmentComp equipmentComp = new EquipmentComp();
-        PortRef eqtObject = new PortRef();
-        eqtObject.setPortID("PortID1");
-        eqtObject.setShelfID("ShelfID1");
-        equipmentComp.getPortRef().add(eqtObject);
-        clrComponent.getEquipmentComp().add(equipmentComp);
+        // Execute
+        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, "sourceSys");
 
-        ClrComponent prevClrComponent = new ClrComponent();
-        EquipmentComp prevEquipmentComp = new EquipmentComp();
-        PortRef prevEqtObject = new PortRef();
-        prevEqtObject.setPortID("PortID2");
-        prevEqtObject.setShelfID("ShelfID2");
-        prevEqtObject.setNeType("TypeA");  // Matches neTypesArray
-        prevEquipmentComp.getPortRef().add(prevEqtObject);
-        prevClrComponent.getEquipmentComp().add(prevEquipmentComp);
-
-        clrComponentList.add(prevClrComponent);
-        clrComponentList.add(clrComponent);
-
-        // Add a previous link to check linking with
-        Link prevLink = new Link();
-        prevLink.setTarget("ShelfID2");
-        links.add(prevLink);
-
-        // Setup node list
-        Node prevNode = new Node();
-        prevNode.setPortId("PortID2");
-        nodes.add(prevNode);
-
-        // Execute the process method
-        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, sourceSys);
-
-        // Verify the Link created
-        assertEquals(2, links.size());  // One existing, one new
-        Link cableLink = links.get(1);
-        assertEquals("SomeType", cableLink.getLinkType());
-        assertEquals("PortID2", cableLink.getSource());
-        assertEquals("PortID2", cableLink.getTarget());
+        // Verify
+        assertTrue(links.isEmpty(), "Links should be empty for decommissioned equipment.");
     }
 
     @Test
-    public void testNeTypeDoesNotMatch() {
-        // Setup the ClrComponent and PortRefs
+    void testProcessWithEmptyPreviousComponent() {
+        // Setup
+        ClrComponent clrComponent = createClrComponentWithValidEquipment();
+        ClrComponent prevClrComponent = createClrComponentWithEmptyEquipment();
+        List<ClrComponent> clrComponentList = Arrays.asList(prevClrComponent, clrComponent);
+
+        // Execute
+        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+        // Verify
+        assertEquals(1, links.size(), "One link should be created.");
+        assertEquals("undefined", links.get(0).getSource(), "Source should be 'undefined' for empty previous component.");
+    }
+
+    @Test
+    void testProcessWithConnectedPorts() {
+        // Setup
+        ClrComponent clrComponent = createClrComponentWithValidEquipment();
+        ClrComponent prevClrComponent = createClrComponentWithValidEquipment();
+        List<ClrComponent> clrComponentList = Arrays.asList(prevClrComponent, clrComponent);
+
+        // Execute
+        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+        // Verify
+        assertEquals(1, links.size(), "One link should be created.");
+        assertNotEquals("undefined", links.get(0).getSource(), "Source should not be 'undefined'.");
+    }
+
+    @Test
+    void testProcessWithCableComponent() {
+        // Setup
+        ClrComponent clrComponent = createClrComponentWithValidEquipment();
+        ClrComponent prevClrComponent = createClrComponentWithCable();
+        List<ClrComponent> clrComponentList = Arrays.asList(prevClrComponent, clrComponent);
+
+        // Execute
+        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+        // Verify
+        assertEquals(1, links.size(), "One link should be created.");
+        assertEquals(clrComponent.getEquipmentComp().get(0).getPortRef().get(0).getPortID(), links.get(0).getTarget(), "Target should match equipment port ID.");
+    }
+
+    private ClrComponent createClrComponentWithDecommissionedEquipment() {
         ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType("SomeType");
-
+        clrComponent.setType(CommonWrapperConstants.PORT);
         EquipmentComp equipmentComp = new EquipmentComp();
-        PortRef eqtObject = new PortRef();
-        eqtObject.setPortID("PortID1");
-        eqtObject.setShelfID("ShelfID1");
-        equipmentComp.getPortRef().add(eqtObject);
+        PortRef portRef = new PortRef();
+        portRef.setNeStatus(CommonWrapperConstants.DECOMMISSIONED);
+        equipmentComp.getPortRef().add(portRef);
         clrComponent.getEquipmentComp().add(equipmentComp);
+        return clrComponent;
+    }
 
-        ClrComponent prevClrComponent = new ClrComponent();
-        EquipmentComp prevEquipmentComp = new EquipmentComp();
-        PortRef prevEqtObject = new PortRef();
-        prevEqtObject.setPortID("PortID2");
-        prevEqtObject.setShelfID("ShelfID2");
-        prevEqtObject.setNeType("TypeX");  // Does not match neTypesArray
-        prevEquipmentComp.getPortRef().add(prevEqtObject);
-        prevClrComponent.getEquipmentComp().add(prevEquipmentComp);
+    private ClrComponent createClrComponentWithValidEquipment() {
+        ClrComponent clrComponent = new ClrComponent();
+        clrComponent.setType(CommonWrapperConstants.PORT);
+        EquipmentComp equipmentComp = new EquipmentComp();
+        PortRef portRef = new PortRef();
+        portRef.setPortID("PortID1");
+        portRef.setNeName("NE1");
+        equipmentComp.getPortRef().add(portRef);
+        clrComponent.getEquipmentComp().add(equipmentComp);
+        return clrComponent;
+    }
 
-        clrComponentList.add(prevClrComponent);
-        clrComponentList.add(clrComponent);
+    private ClrComponent createClrComponentWithEmptyEquipment() {
+        ClrComponent clrComponent = new ClrComponent();
+        clrComponent.setType(CommonWrapperConstants.PORT);
+        clrComponent.getEquipmentComp().add(new EquipmentComp());
+        return clrComponent;
+    }
 
-        // Add a previous link to check linking with
-        Link prevLink = new Link();
-        prevLink.setTarget("ShelfID2");
-        links.add(prevLink);
-
-        // Setup node list
-        Node prevNode = new Node();
-        prevNode.setPortId("PortID2");
-        nodes.add(prevNode);
-
-        // Execute the process method
-        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, sourceSys);
-
-        // Verify the Link created
-        assertEquals(2, links.size());  // One existing, one new
-        Link cableLink = links.get(1);
-        assertEquals("SomeType", cableLink.getLinkType());
-        assertEquals("PortID2", cableLink.getSource());
-        assertEquals("PortID2", cableLink.getTarget());
+    private ClrComponent createClrComponentWithCable() {
+        ClrComponent clrComponent = new ClrComponent();
+        clrComponent.setType(CommonWrapperConstants.CABLE);
+        CableComp cableComp = new CableComp();
+        cableComp.setLocationA("LocationA");
+        cableComp.setLocationZ("LocationZ");
+        clrComponent.getCableComp().add(cableComp);
+        return clrComponent;
     }
 }
 ```
 
 ### Explanation:
-
-- **Test Setup**: The setup method initializes the `PortProcessor` and other necessary collections. It also sets up a mock or hardcoded value for `CommonWrapperConstants.NE_TYPES` to ensure the tests are isolated and do not depend on external configurations.
-
-- **Test Cases**:
-  1. **Matching NE Type**: This test case verifies the logic when `prevEqtObject.getNeType()` matches one of the types in `neTypesArray`. It checks that the `Link` is created with the source and target as expected.
-  2. **Non-Matching NE Type**: This test case verifies the logic when `prevEqtObject.getNeType()` does not match any type in `neTypesArray`. It checks that the `Link` is created with different logic, ensuring both branches are covered.
-
-These test cases help ensure that both branches of the conditional logic are exercised, leading to comprehensive code coverage. Adjust the mock or test data according to your specific application requirements and testing environment.
+- **Setup and Initialization**: We initialize necessary objects and states before each test case using the `@BeforeEach` annotation.
+- **Test Methods**: Each `@Test` method focuses on a specific path or condition within the `process` method:
+  - `testProcessWithDecommissionedEquipment`: Tests the case where equipment is decommissioned and no links should be made.
+  - `testProcessWithEmptyPreviousComponent`: Tests handling when previous components are empty.
+  - `testProcessWithConnectedPorts`: Tests linking between connected ports.
+  - `testProcessWithCableComponent`: Tests how cable components affect port processing.
+  
+Each test case manipulates the `nodes`, `links`, and `clrComponentList` to simulate different scenarios and asserts the expected outcomes, ensuring that all branches and conditions in the `process` method are thoroughly tested.

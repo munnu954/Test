@@ -1,141 +1,210 @@
-To write JUnit 5 test cases for the `PortProcessor` class, covering all branches of the `process` method, we need to consider the different conditional paths within the method. We'll focus on ensuring each logical path is tested, including null checks, different `prevType` values, and how equipment and links are processed.
-
-Let's create a series of test cases that aim to cover these branches. I'll provide a simplified version here, focusing on the structure and reasoning:
-
-```java
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
+@ExtendWith(MockitoExtension.class)
 class PortProcessorTest {
 
-    private PortProcessor portProcessor;
-    private List<Node> nodes;
-    private List<Link> links;
+    @Mock
+    private ClrComponent clrComponent;
+
+    @Mock
+    private List<ClrComponent> clrComponentList;
+
+    @Mock
     private Map<String, List<Node>> clliNodeMap;
-    private AtomicInteger ukCount;
+
+    private PortProcessor portProcessor;
 
     @BeforeEach
     void setUp() {
         portProcessor = PortProcessor.getInstance();
-        nodes = new ArrayList<>();
-        links = new ArrayList<>();
-        clliNodeMap = new HashMap<>();
-        ukCount = new AtomicInteger(0);
     }
 
     @Test
-    void testProcessWithDecommissionedEquipment() {
-        // Setup
-        ClrComponent clrComponent = createClrComponentWithDecommissionedEquipment();
-        List<ClrComponent> clrComponentList = Collections.singletonList(clrComponent);
-
-        // Execute
-        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, "sourceSys");
-
-        // Verify
-        assertTrue(links.isEmpty(), "Links should be empty for decommissioned equipment.");
-    }
-
-    @Test
-    void testProcessWithEmptyPreviousComponent() {
-        // Setup
-        ClrComponent clrComponent = createClrComponentWithValidEquipment();
-        ClrComponent prevClrComponent = createClrComponentWithEmptyEquipment();
-        List<ClrComponent> clrComponentList = Arrays.asList(prevClrComponent, clrComponent);
-
-        // Execute
-        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
-
-        // Verify
-        assertEquals(1, links.size(), "One link should be created.");
-        assertEquals("undefined", links.get(0).getSource(), "Source should be 'undefined' for empty previous component.");
-    }
-
-    @Test
-    void testProcessWithConnectedPorts() {
-        // Setup
-        ClrComponent clrComponent = createClrComponentWithValidEquipment();
-        ClrComponent prevClrComponent = createClrComponentWithValidEquipment();
-        List<ClrComponent> clrComponentList = Arrays.asList(prevClrComponent, clrComponent);
-
-        // Execute
-        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
-
-        // Verify
-        assertEquals(1, links.size(), "One link should be created.");
-        assertNotEquals("undefined", links.get(0).getSource(), "Source should not be 'undefined'.");
-    }
-
-    @Test
-    void testProcessWithCableComponent() {
-        // Setup
-        ClrComponent clrComponent = createClrComponentWithValidEquipment();
-        ClrComponent prevClrComponent = createClrComponentWithCable();
-        List<ClrComponent> clrComponentList = Arrays.asList(prevClrComponent, clrComponent);
-
-        // Execute
-        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
-
-        // Verify
-        assertEquals(1, links.size(), "One link should be created.");
-        assertEquals(clrComponent.getEquipmentComp().get(0).getPortRef().get(0).getPortID(), links.get(0).getTarget(), "Target should match equipment port ID.");
-    }
-
-    private ClrComponent createClrComponentWithDecommissionedEquipment() {
-        ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType(CommonWrapperConstants.PORT);
+    void testProcessPreviousPortOrChannel() {
+        List<Node> nodes = new ArrayList<>();
+        List<Link> links = new ArrayList<>();
+        ClrComponent prevClrComponent = new ClrComponent();
+        prevClrComponent.setType(CommonWrapperConstants.PORT);
         EquipmentComp equipmentComp = new EquipmentComp();
-        PortRef portRef = new PortRef();
-        portRef.setNeStatus(CommonWrapperConstants.DECOMMISSIONED);
-        equipmentComp.getPortRef().add(portRef);
-        clrComponent.getEquipmentComp().add(equipmentComp);
-        return clrComponent;
+        PortRef prevEqtObject = new PortRef();
+        prevEqtObject.setPortID("prevPortID");
+        prevEqtObject.setClliCode("prevClliCode");
+        equipmentComp.setPortRef(List.of(prevEqtObject));
+        prevClrComponent.setEquipmentComp(List.of(equipmentComp));
+        clrComponentList.add(prevClrComponent);
+        clrComponentList.add(clrComponent);
+
+        PortRef eqtObject = new PortRef();
+        eqtObject.setPortID("portID");
+        eqtObject.setClliCode("clliCode");
+        eqtObject.setNeType("neType");
+        EquipmentComp equipmentComp2 = new EquipmentComp();
+        equipmentComp2.setPortRef(List.of(eqtObject));
+        clrComponent.setEquipmentComp(List.of(equipmentComp2));
+
+        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, new AtomicInteger(), "sourceSys");
+
+        Assertions.assertEquals(1, links.size());
+        Assertions.assertEquals("prevPortID", links.get(0).getSource());
+        Assertions.assertEquals("portID", links.get(0).getTarget());
     }
 
-    private ClrComponent createClrComponentWithValidEquipment() {
-        ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType(CommonWrapperConstants.PORT);
+    @Test
+    void testProcessDifferentPortIDs() {
+        List<Node> nodes = new ArrayList<>();
+        List<Link> links = new ArrayList<>();
+        ClrComponent prevClrComponent = new ClrComponent();
+        prevClrComponent.setType(CommonWrapperConstants.PORT);
         EquipmentComp equipmentComp = new EquipmentComp();
-        PortRef portRef = new PortRef();
-        portRef.setPortID("PortID1");
-        portRef.setNeName("NE1");
-        equipmentComp.getPortRef().add(portRef);
-        clrComponent.getEquipmentComp().add(equipmentComp);
-        return clrComponent;
+        PortRef prevEqtObject = new PortRef();
+        prevEqtObject.setPortID("prevPortID");
+        equipmentComp.setPortRef(List.of(prevEqtObject));
+        prevClrComponent.setEquipmentComp(List.of(equipmentComp));
+        clrComponentList.add(prevClrComponent);
+        clrComponentList.add(clrComponent);
+
+        PortRef eqtObject = new PortRef();
+        eqtObject.setPortID("portID");
+        eqtObject.setShelfID("shelfID");
+        EquipmentComp equipmentComp2 = new EquipmentComp();
+        equipmentComp2.setPortRef(List.of(eqtObject));
+        clrComponent.setEquipmentComp(List.of(equipmentComp2));
+
+        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, new AtomicInteger(), "sourceSys");
+
+        Assertions.assertEquals(1, links.size());
+        Assertions.assertEquals("prevPortID", links.get(0).getSource());
+        Assertions.assertEquals("portID", links.get(0).getTarget());
     }
 
-    private ClrComponent createClrComponentWithEmptyEquipment() {
-        ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType(CommonWrapperConstants.PORT);
-        clrComponent.getEquipmentComp().add(new EquipmentComp());
-        return clrComponent;
+    @Test
+    void testProcessNoPreviousConnection() {
+        List<Node> nodes = new ArrayList<>();
+        List<Link> links = new ArrayList<>();
+        ClrComponent prevClrComponent = new ClrComponent();
+        prevClrComponent.setType(CommonWrapperConstants.PORT);
+        EquipmentComp equipmentComp = new EquipmentComp();
+        PortRef prevEqtObject = new PortRef();
+        prevEqtObject.setPortID("prevPortID");
+        equipmentComp.setPortRef(List.of(prevEqtObject));
+        prevClrComponent.setEquipmentComp(List.of(equipmentComp));
+        clrComponentList.add(prevClrComponent);
+        clrComponentList.add(clrComponent);
+
+        PortRef eqtObject = new PortRef();
+        eqtObject.setPortID("portID");
+        EquipmentComp equipmentComp2 = new EquipmentComp();
+        equipmentComp2.setPortRef(List.of(eqtObject));
+        clrComponent.setEquipmentComp(List.of(equipmentComp2));
+
+        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, new AtomicInteger(), "sourceSys");
+
+        Assertions.assertEquals(1, links.size());
+        Assertions.assertEquals("undefined", links.get(0).getSource());
+        Assertions.assertEquals("portID", links.get(0).getTarget());
     }
 
-    private ClrComponent createClrComponentWithCable() {
-        ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType(CommonWrapperConstants.CABLE);
-        CableComp cableComp = new CableComp();
-        cableComp.setLocationA("LocationA");
-        cableComp.setLocationZ("LocationZ");
-        clrComponent.getCableComp().add(cableComp);
-        return clrComponent;
+    @Test
+    void testProcessPreviousCableOrCablePairOrCablePairGroup() {
+        List<Node> nodes = new ArrayList<>();
+        List<Link> links = new ArrayList<>();
+        ClrComponent prevClrComponent = new ClrComponent();
+        prevClrComponent.setType(CommonWrapperConstants.CABLE);
+        CableComp prevCabObject = new CableComp();
+        prevCabObject.setLocationA("siteCode");
+        prevClrComponent.setCableComp(List.of(prevCabObject));
+        clrComponentList.add(prevClrComponent);
+        clrComponentList.add(clrComponent);
+
+        PortRef eqtObject = new PortRef();
+        eqtObject.setSiteCode("siteCode");
+        EquipmentComp equipmentComp2 = new EquipmentComp();
+        equipmentComp2.setPortRef(List.of(eqtObject));
+        clrComponent.setEquipmentComp(List.of(equipmentComp2));
+
+        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, new AtomicInteger(), "sourceSys");
+
+        Assertions.assertEquals(2, links.size());
+        Assertions.assertEquals("prevNode.getPortId()", links.get(1).getSource());
+        Assertions.assertEquals("eqtObject.getPortID()", links.get(1).getTarget());
+    }
+
+    @Test
+    void testProcessPreviousPath() {
+        List<Node> nodes = new ArrayList<>();
+        List<Link> links = new ArrayList<>();
+        ClrComponent prevClrComponent = new ClrComponent();
+        prevClrComponent.setType(CommonWrapperConstants.PATH);
+        Link circuit = new Link();
+        links.add(circuit);
+        clrComponentList.add(prevClrComponent);
+        clrComponentList.add(clrComponent);
+
+        PortRef eqtObject = new PortRef();
+        eqtObject.setPortID("portID");
+        eqtObject.setShelfTID("shelfTID");
+        EquipmentComp equipmentComp2 = new EquipmentComp();
+        equipmentComp2.setPortRef(List.of(eqtObject));
+        clrComponent.setEquipmentComp(List.of(equipmentComp2));
+
+        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, new AtomicInteger(), "sourceSys");
+
+        Assertions.assertEquals("portID", circuit.getTarget());
+        Assertions.assertEquals("shelfTID", circuit.getTarget());
+    }
+
+    @Test
+    void testProcessDecommissionedNetworkEquipment() {
+        List<Node> nodes = new ArrayList<>();
+        List<Link> links = new ArrayList<>();
+        clrComponentList.add(clrComponent);
+
+        PortRef eqtObject = new PortRef();
+        eqtObject.setNeStatus(CommonWrapperConstants.DECOMMISSIONED);
+        eqtObject.setNeName("neName");
+        EquipmentComp equipmentComp2 = new EquipmentComp();
+        equipmentComp2.setPortRef(List.of(eqtObject));
+        clrComponent.setEquipmentComp(List.of(equipmentComp2));
+
+        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, new AtomicInteger(), "sourceSys");
+
+        Assertions.assertEquals(0, links.size());
+    }
+
+    @Test
+    void testProcessUnknownNetworkEquipment() {
+        List<Node> nodes = new ArrayList<>();
+        List<Link> links = new ArrayList<>();
+        ClrComponent prevClrComponent = new ClrComponent();
+        prevClrComponent.setType(CommonWrapperConstants.PORT);
+        EquipmentComp equipmentComp = new EquipmentComp();
+        PortRef prevEqtObject = new PortRef();
+        prevEqtObject.setPortID("prevPortID");
+        equipmentComp.setPortRef(List.of(prevEqtObject));
+        prevClrComponent.setEquipmentComp(List.of(equipmentComp));
+        clrComponentList.add(prevClrComponent);
+        clrComponentList.add(clrComponent);
+
+        PortRef eqtObject = null;
+        EquipmentComp equipmentComp2 = new EquipmentComp();
+        equipmentComp2.setPortRef(List.of(eqtObject));
+        clrComponent.setEquipmentComp(List.of(equipmentComp2));
+
+        portProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 1, new AtomicInteger(), "sourceSys");
+
+        Assertions.assertEquals(1, links.size());
+        Assertions.assertEquals("prevNode.getPortId()", links.get(0).getSource());
+        Assertions.assertEquals("eqtObject.getPortID()", links.get(0).getTarget());
     }
 }
-```
-
-### Explanation:
-- **Setup and Initialization**: We initialize necessary objects and states before each test case using the `@BeforeEach` annotation.
-- **Test Methods**: Each `@Test` method focuses on a specific path or condition within the `process` method:
-  - `testProcessWithDecommissionedEquipment`: Tests the case where equipment is decommissioned and no links should be made.
-  - `testProcessWithEmptyPreviousComponent`: Tests handling when previous components are empty.
-  - `testProcessWithConnectedPorts`: Tests linking between connected ports.
-  - `testProcessWithCableComponent`: Tests how cable components affect port processing.
-  
-Each test case manipulates the `nodes`, `links`, and `clrComponentList` to simulate different scenarios and asserts the expected outcomes, ensuring that all branches and conditions in the `process` method are thoroughly tested.

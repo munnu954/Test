@@ -1,25 +1,22 @@
-To write a JUnit test case that covers the scenario where the `deviceResponse` is null in the `getDeviceDetailsv3` method, you need to mock the `RestTemplate` to return null when the `exchange` method is called. Here's how you can achieve this using Mockito and JUnit:
+To ensure 100% coverage of the `if(null != deviceResponse)` branch, we need to write a test case where `deviceResponse` is null. This scenario will occur when an exception is thrown during the `restTemplate.exchange` call, and the `catch` block is executed.
+
+Here's how you can write a JUnit test case to cover this scenario:
 
 ```java
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+import static org.junit.Assert.*;
+import static org.mockito.Mockito.*;
+
+import java.util.*;
 
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.MockitoJUnitRunner;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.RestTemplate;
+import org.mockito.*;
+import org.springframework.http.*;
+import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.web.client.*;
 
-import java.util.HashMap;
-import java.util.Map;
-
-@RunWith(MockitoJUnitRunner.class)
+@RunWith(SpringRunner.class)
 public class IVAPPDeviceServiceTest {
 
     @InjectMocks
@@ -35,37 +32,57 @@ public class IVAPPDeviceServiceTest {
     private UTSEquipmentList utsEquipmentList;
 
     @Before
-    public void setUp() {
+    public void setUp() throws Exception {
+        MockitoAnnotations.initMocks(this);
+
+        // Directly set the private fields using reflection
+        setPrivateField(iVAPPDeviceService, "lookupServiceName", "http://mockService");
+        setPrivateField(iVAPPDeviceService, "lookupServicePath", "/mockPath");
+
+        // Set up request and utsEquipmentList with necessary initializations
         request = new HashMap<>();
         utsEquipmentList = new UTSEquipmentList();
-        
-        when(iVAPPDeviceUtil.findServiceByName(any(String.class))).thenReturn("http://dummy-url");
-        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
+        utsEquipmentList.setEquipmentLst(new EquipmentLst());
+    }
+
+    private void setPrivateField(Object targetObject, String fieldName, Object value) throws Exception {
+        java.lang.reflect.Field field = targetObject.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(targetObject, value);
     }
 
     @Test
-    public void testGetDeviceDetailsv3_NullDeviceResponse() throws NoDataFoundException {
-        // Mock RestTemplate to return null response
-        when(restTemplate.exchange(any(String.class), any(HttpMethod.class), any(HttpEntity.class), any(Class.class)))
-                .thenReturn(null);
+    public void testGetDeviceDetailsv3_nullDeviceResponse() throws Exception {
+        // Setup mock responses
+        String serviceUrl = "http://mockService/mockPath";
+        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
+        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
 
-        // Call the method
+        // Simulate an exception leading to a null deviceResponse
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
+            .thenThrow(new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        // Execute the method
         UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
 
-        // Verify the result is the same as the input utsEquipmentList (since deviceResponse is null)
-        assert result == utsEquipmentList;
+        // Verify that the response is null due to exception
+        assertNotNull(result);
+        assertNull(result.getEquipmentLst().getEquipmentContainer());
+
+        // Verify covertV3Format is not called since deviceResponse is null
+        verify(iVAPPDeviceUtil, never()).covertV3Format(any(UTSEquipmentList.class));
     }
 }
 ```
 
 ### Explanation:
-1. **Setup**:
-   - Use `MockitoJUnitRunner` to automatically initialize mocks.
-   - Mock `IVAPPDeviceUtil` and `RestTemplate`.
-   - Set up the mocks to return specific values.
+- **Setup**: We mock the behavior of `iVAPPDeviceUtil` and `restTemplate` to simulate the conditions that lead to `deviceResponse` being null.
+  
+- **Simulate Exception**: We simulate an `HttpServerErrorException` during the `restTemplate.exchange` call. This will cause the `deviceResponse` to remain null, as the exception is caught, and the logging statement is executed.
 
-2. **Test for Null `deviceResponse`**:
-   - Use `when` to mock `RestTemplate`'s `exchange` method to return null.
-   - Call `getDeviceDetailsv3` and ensure that the returned `UTSEquipmentList` is the same as the input `utsEquipmentList` since `deviceResponse` is null and the conversion logic is bypassed.
+- **Assertions**:
+  - We assert that the `result` is not null, meaning the method returns the initial `utsEquipmentList`.
+  - We assert that `result.getEquipmentLst().getEquipmentContainer()` is null, indicating no conversion was made.
+  - We verify that `covertV3Format` is never called because `deviceResponse` is null, covering the else branch of the `if(null != deviceResponse)` condition.
 
-This test ensures that the branch where `deviceResponse` is null is executed and confirms that the method handles this scenario correctly by returning the input `UTSEquipmentList` unchanged.
+By adding this test case, you ensure that all branches of the `if(null != deviceResponse)` statement are covered, achieving 100% code coverage for that section.

@@ -1,88 +1,69 @@
-To ensure 100% coverage of the `if(null != deviceResponse)` branch, we need to write a test case where `deviceResponse` is null. This scenario will occur when an exception is thrown during the `restTemplate.exchange` call, and the `catch` block is executed.
+The `NullPointerException` at the line `LOGGER.info("Response from the lookupService: " + deviceResponse.toString());` occurs because `deviceResponse` is `null` when an exception is thrown during the `restTemplate.exchange` call. To avoid this, you should first check if `deviceResponse` is not null before trying to call `toString()` on it.
 
-Here's how you can write a JUnit test case to cover this scenario:
+Here's how you can modify the `getDeviceDetailsv3` method to handle this situation safely:
+
+### Updated Method in `IVAPPDeviceService`
 
 ```java
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.*;
+public UTSEquipmentList getDeviceDetailsv3(Map<String, Object> request, UTSEquipmentList utsEquipmentList) throws NoDataFoundException {
 
-import java.util.*;
+    String dataServiceUrl = iVAPPDeviceUtil.findServiceByName(lookupServiceName).concat(lookupServicePath);
 
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.*;
-import org.springframework.http.*;
-import org.springframework.test.context.junit4.SpringRunner;
-import org.springframework.web.client.*;
+    UriComponentsBuilder uribuilder = UriComponentsBuilder.fromHttpUrl(dataServiceUrl);
 
-@RunWith(SpringRunner.class)
-public class IVAPPDeviceServiceTest {
+    HttpHeaders headers = new HttpHeaders();
 
-    @InjectMocks
-    private IVAPPDeviceService iVAPPDeviceService;
+    HttpEntity<String> httpEntity = new HttpEntity<>(gson.toJson(request), iVAPPDeviceUtil.getHttpHeaders());
+    ResponseEntity<UTSEquipmentList> deviceResponse = null;
 
-    @Mock
-    private IVAPPDeviceUtil iVAPPDeviceUtil;
-
-    @Mock
-    private RestTemplate restTemplate;
-
-    private Map<String, Object> request;
-    private UTSEquipmentList utsEquipmentList;
-
-    @Before
-    public void setUp() throws Exception {
-        MockitoAnnotations.initMocks(this);
-
-        // Directly set the private fields using reflection
-        setPrivateField(iVAPPDeviceService, "lookupServiceName", "http://mockService");
-        setPrivateField(iVAPPDeviceService, "lookupServicePath", "/mockPath");
-
-        // Set up request and utsEquipmentList with necessary initializations
-        request = new HashMap<>();
-        utsEquipmentList = new UTSEquipmentList();
-        utsEquipmentList.setEquipmentLst(new EquipmentLst());
+    try {
+        deviceResponse = restTemplate.exchange(uribuilder.build().toUriString(), HttpMethod.POST, httpEntity, UTSEquipmentList.class);
+    } catch (HttpServerErrorException e) {
+        LOGGER.info("Internal Server Exception happened: " + e.getMessage());
+    } catch (Exception e) {
+        LOGGER.info("Exception happened: " + e.getMessage());
     }
 
-    private void setPrivateField(Object targetObject, String fieldName, Object value) throws Exception {
-        java.lang.reflect.Field field = targetObject.getClass().getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(targetObject, value);
+    if (deviceResponse != null) {
+        LOGGER.info("Response from the lookupService: " + deviceResponse.toString());
+        utsEquipmentList = iVAPPDeviceUtil.covertV3Format(deviceResponse.getBody());
+    } else {
+        LOGGER.info("No response from the lookupService.");
     }
 
-    @Test
-    public void testGetDeviceDetailsv3_nullDeviceResponse() throws Exception {
-        // Setup mock responses
-        String serviceUrl = "http://mockService/mockPath";
-        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
-        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
-
-        // Simulate an exception leading to a null deviceResponse
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
-            .thenThrow(new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR));
-
-        // Execute the method
-        UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-
-        // Verify that the response is null due to exception
-        assertNotNull(result);
-        assertNull(result.getEquipmentLst().getEquipmentContainer());
-
-        // Verify covertV3Format is not called since deviceResponse is null
-        verify(iVAPPDeviceUtil, never()).covertV3Format(any(UTSEquipmentList.class));
-    }
+    return utsEquipmentList;
 }
 ```
 
-### Explanation:
-- **Setup**: We mock the behavior of `iVAPPDeviceUtil` and `restTemplate` to simulate the conditions that lead to `deviceResponse` being null.
-  
-- **Simulate Exception**: We simulate an `HttpServerErrorException` during the `restTemplate.exchange` call. This will cause the `deviceResponse` to remain null, as the exception is caught, and the logging statement is executed.
+### Explanation of Changes:
+- **Null Check Before Logging**: Before calling `.toString()` on `deviceResponse`, check if it is not null. If it is null, log an appropriate message indicating no response was received.
 
-- **Assertions**:
-  - We assert that the `result` is not null, meaning the method returns the initial `utsEquipmentList`.
-  - We assert that `result.getEquipmentLst().getEquipmentContainer()` is null, indicating no conversion was made.
-  - We verify that `covertV3Format` is never called because `deviceResponse` is null, covering the else branch of the `if(null != deviceResponse)` condition.
+### Updated Test Case
 
-By adding this test case, you ensure that all branches of the `if(null != deviceResponse)` statement are covered, achieving 100% code coverage for that section.
+With the above method updated, your test case should now run without encountering a `NullPointerException`. Here is the test case again for context:
+
+```java
+@Test
+public void testGetDeviceDetailsv3_nullDeviceResponse() throws Exception {
+    // Setup mock responses
+    String serviceUrl = "http://mockService/mockPath";
+    when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
+    when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
+
+    // Simulate an exception leading to a null deviceResponse
+    when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
+        .thenThrow(new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR));
+
+    // Execute the method
+    UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
+
+    // Verify that the response is null due to the exception
+    assertNotNull(result);
+    assertNull(result.getEquipmentLst().getEquipmentContainer());
+
+    // Verify covertV3Format is not called since deviceResponse is null
+    verify(iVAPPDeviceUtil, never()).covertV3Format(any(UTSEquipmentList.class));
+}
+```
+
+This adjustment ensures that your method handles the potential for a null `deviceResponse` gracefully and should resolve the `NullPointerException` issue you're facing in the logs.

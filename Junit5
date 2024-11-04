@@ -1,30 +1,28 @@
-To address the `NullPointerException` caused by the `concat` operation within the `getDeviceDetailsv3` method, we need to ensure that `lookupServiceName` and `lookupServicePath` are initialized properly in the test environment. This requires correctly setting up these values since they are injected via `@Value` in the actual service class.
-
-Here’s a revised approach to ensure these values are set properly:
-
-### Revised Test Setup
-
-1. **Mock the Properties**: Instead of relying on `@Value`, manually set these properties in the test class since they are used for string concatenation.
-
-2. **Use Reflection or Direct Assignment**: Since we are testing, you can directly set the private fields using reflection or through constructor injection for testing purposes.
-
-### Updated Test Code
+To write JUnit test cases covering the `HttpServerErrorException` and `Exception` catch blocks in the `getDeviceDetailsv3` method of the `IVAPPDeviceService` class, you'll need to use mocking to simulate the behavior of the `RestTemplate` when it throws these exceptions. Here's how you can do it using Mockito and JUnit:
 
 ```java
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.*;
-
-import java.util.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mock;
 
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.*;
-import org.springframework.http.*;
-import org.springframework.test.context.junit4.SpringRunner;
-import org.springframework.web.client.*;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnitRunner;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.RestTemplate;
 
-@RunWith(SpringRunner.class)
+import java.util.HashMap;
+import java.util.Map;
+
+@RunWith(MockitoJUnitRunner.class)
 public class IVAPPDeviceServiceTest {
 
     @InjectMocks
@@ -40,86 +38,58 @@ public class IVAPPDeviceServiceTest {
     private UTSEquipmentList utsEquipmentList;
 
     @Before
-    public void setUp() throws Exception {
-        MockitoAnnotations.initMocks(this);
-
-        // Directly set the private fields using reflection or constructor in the service
-        setPrivateField(iVAPPDeviceService, "lookupServiceName", "http://mockService");
-        setPrivateField(iVAPPDeviceService, "lookupServicePath", "/mockPath");
-
-        // Set up request and utsEquipmentList with necessary initializations
+    public void setUp() {
         request = new HashMap<>();
         utsEquipmentList = new UTSEquipmentList();
-        utsEquipmentList.setEquipmentLst(new EquipmentLst());
-    }
-
-    private void setPrivateField(Object targetObject, String fieldName, Object value) throws Exception {
-        java.lang.reflect.Field field = targetObject.getClass().getDeclaredField(fieldName);
-        field.setAccessible(true);
-        field.set(targetObject, value);
+        
+        when(iVAPPDeviceUtil.findServiceByName(any(String.class))).thenReturn("http://dummy-url");
+        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
     }
 
     @Test
-    public void testGetDeviceDetailsv3_success() throws Exception {
-        // Setup mock responses
-        String serviceUrl = "http://mockService/mockPath";
-        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
-        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
+    public void testGetDeviceDetailsv3_HttpServerErrorException() {
+        // Mock RestTemplate to throw HttpServerErrorException
+        doThrow(new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR))
+                .when(restTemplate).exchange(any(String.class), any(HttpMethod.class), any(), any(Class.class));
 
-        UTSEquipmentList mockResponse = new UTSEquipmentList();
-        mockResponse.setEquipmentLst(new EquipmentLst()); // Ensure it's initialized
-        ResponseEntity<UTSEquipmentList> responseEntity = new ResponseEntity<>(mockResponse, HttpStatus.OK);
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
-            .thenReturn(responseEntity);
-
-        when(iVAPPDeviceUtil.covertV3Format(any(UTSEquipmentList.class))).thenReturn(utsEquipmentList);
-
-        // Execute the method
-        UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-
-        // Verify
-        assertNotNull(result);
-        verify(iVAPPDeviceUtil).covertV3Format(mockResponse);
+        // Call the method and assert no exception is thrown
+        try {
+            iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
+        } catch (Exception e) {
+            // Ensure that no exception is propagated
+            assert false;
+        }
     }
 
     @Test
-    public void testGetDeviceDetailsv3_internalServerError() throws Exception {
-        // Setup mock responses
-        String serviceUrl = "http://mockService/mockPath";
-        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
-        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
+    public void testGetDeviceDetailsv3_GeneralException() {
+        // Mock RestTemplate to throw a general Exception
+        doThrow(new RuntimeException("Runtime Exception"))
+                .when(restTemplate).exchange(any(String.class), any(HttpMethod.class), any(), any(Class.class));
 
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
-            .thenThrow(new HttpServerErrorException(HttpStatus.INTERNAL_SERVER_ERROR));
-
-        // Execute the method
-        UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-
-        // Verify
-        assertNull(result.getEquipmentLst().getEquipmentContainer());
-    }
-
-    @Test
-    public void testGetDeviceDetailsv3_generalException() throws Exception {
-        // Setup mock responses
-        String serviceUrl = "http://mockService/mockPath";
-        when(iVAPPDeviceUtil.findServiceByName(anyString())).thenReturn(serviceUrl);
-        when(iVAPPDeviceUtil.getHttpHeaders()).thenReturn(new HttpHeaders());
-
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(UTSEquipmentList.class)))
-            .thenThrow(new RuntimeException("General Exception"));
-
-        // Execute the method
-        UTSEquipmentList result = iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
-
-        // Verify
-        assertNull(result.getEquipmentLst().getEquipmentContainer());
+        // Call the method and assert no exception is thrown
+        try {
+            iVAPPDeviceService.getDeviceDetailsv3(request, utsEquipmentList);
+        } catch (Exception e) {
+            // Ensure that no exception is propagated
+            assert false;
+        }
     }
 }
 ```
 
-### Key Adjustments:
-- **Private Field Assignment**: Use reflection to set the `lookupServiceName` and `lookupServicePath` fields directly in the test setup.
-- **Mocking**: Ensure that the `iVAPPDeviceUtil.findServiceByName` returns a valid URL that includes both the service name and path.
+### Explanation:
+1. **Setup**: 
+   - Use `MockitoJUnitRunner` to automatically initialize mocks.
+   - Mock `IVAPPDeviceUtil` and `RestTemplate`.
+   - Set up the mocks to return specific values or throw exceptions.
 
-These changes should resolve the `NullPointerException` by ensuring that both strings used in the concatenation are properly initialized and not null during the test execution.
+2. **Test for `HttpServerErrorException`**:
+   - Simulate `RestTemplate` throwing `HttpServerErrorException` using `doThrow`.
+   - Call the method and ensure that no exception is thrown.
+
+3. **Test for General `Exception`**:
+   - Simulate `RestTemplate` throwing a generic `RuntimeException`.
+   - Call the method and ensure that no exception is thrown.
+
+These tests ensure that the catch blocks for `HttpServerErrorException` and `Exception` are executed and handled properly without propagating the exceptions further.

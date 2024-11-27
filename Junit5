@@ -1,154 +1,124 @@
-The `IndexOutOfBoundsException` indicates that the code is attempting to access an index in a list that doesn't exist. This often happens when a list is expected to have elements, but it doesn't, leading to access at an invalid index.
-
-To address this, we need to carefully manage the setup of our test cases to ensure that lists like `links` are populated correctly before being accessed. Below, I'll provide a revised set of test cases with additional checks to prevent this error. We'll ensure that any list access is contingent upon having a sufficient number of elements.
-
-Here's the updated test code:
+To write JUnit 5 test cases for the `TrunkProcessor` class's `process` method, we need to cover all possible branches and ensure that the test cases are comprehensive. Here's a sample JUnit 5 test class that aims to achieve 100% code coverage:
 
 ```java
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import static org.junit.jupiter.api.Assertions.*;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.jupiter.api.Assertions.*;
-
-class TrunkProcessorTest {
+public class TrunkProcessorTest {
 
     private TrunkProcessor trunkProcessor;
     private List<Node> nodes;
     private List<Link> links;
-    private Map<String, List<Node>> clliNodeMap;
     private AtomicInteger ukCount;
-    private String sourceSys;
+    private Map<String, List<Node>> clliNodeMap;
+    private ClrComponent clrComponent;
+    private List<ClrComponent> clrComponentList;
 
     @BeforeEach
-    void setUp() {
+    public void setUp() {
         trunkProcessor = TrunkProcessor.getInstance();
         nodes = new ArrayList<>();
         links = new ArrayList<>();
-        clliNodeMap = new HashMap<>();
         ukCount = new AtomicInteger(0);
-        sourceSys = "TestSourceSys";
+        clliNodeMap = new HashMap<>();
+        clrComponent = new ClrComponent();
+        clrComponentList = new ArrayList<>();
     }
 
-    private ClrComponent createClrComponent(String type, boolean withCircuitInfo) {
-        ClrComponent clrComponent = new ClrComponent();
-        clrComponent.setType(type);
+    @Test
+    public void testProcessWithEmptyTrunkGroupComp() {
+        clrComponent.setTrunkGroupComp(new ArrayList<>());
+        clrComponentList.add(clrComponent);
 
+        trunkProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, "sourceSys");
+
+        assertTrue(links.isEmpty(), "Links should be empty when TrunkGroupComp is empty.");
+    }
+
+    @Test
+    public void testProcessWithNonNullCircuitInfo() {
+        ClrComponent prevClrComponent = new ClrComponent();
+        prevClrComponent.setType("PORT");
+        EquipmentComp equipmentComp = new EquipmentComp();
+        PortRef portRef = new PortRef();
+        portRef.setPortID("PORT_ID_1");
+        equipmentComp.setPortRef(Collections.singletonList(portRef));
+        prevClrComponent.setEquipmentComp(Collections.singletonList(equipmentComp));
+        clrComponentList.add(prevClrComponent);
+
+        ClrComponent currentClrComponent = new ClrComponent();
+        currentClrComponent.setTrunkGroupComp(Collections.singletonList(createTrunkGroupCompWithCircuitInfo()));
+        clrComponentList.add(currentClrComponent);
+
+        trunkProcessor.process(nodes, links, currentClrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+        assertEquals(1, links.size(), "There should be one link created.");
+    }
+
+    @Test
+    public void testProcessWithDifferentPrevComponentTypes() {
+        // Setup for each previous component type to test different branches
+        String[] prevTypes = {"TRAIL", "CABLE", "PATH", "TRUNK"};
+
+        for (String prevType : prevTypes) {
+            ClrComponent prevClrComponent = new ClrComponent();
+            prevClrComponent.setType(prevType);
+            links.clear();
+            links.add(new Link());
+
+            ClrComponent currentClrComponent = new ClrComponent();
+            currentClrComponent.setTrunkGroupComp(Collections.singletonList(createTrunkGroupCompWithCircuitInfo()));
+            clrComponentList.clear();
+            clrComponentList.add(prevClrComponent);
+            clrComponentList.add(currentClrComponent);
+
+            trunkProcessor.process(nodes, links, currentClrComponent, clrComponentList, clliNodeMap, 1, ukCount, "sourceSys");
+
+            assertEquals(2, links.size(), "Links should be updated properly for prevType: " + prevType);
+
+            // Reset for next iteration
+            ukCount.set(0);
+            nodes.clear();
+        }
+    }
+
+    @Test
+    public void testProcessWithLastComponent() {
+        ClrComponent clrComponent = new ClrComponent();
+        clrComponent.setTrunkGroupComp(Collections.singletonList(createTrunkGroupCompWithCircuitInfo()));
+        clrComponentList.add(clrComponent);
+
+        trunkProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, "sourceSys");
+
+        assertEquals(1, links.size(), "Link should be added for the last component.");
+        assertNotEquals("--", links.get(0).getTarget(), "Target of the link should not be unset.");
+    }
+
+    private TrunkGroupComp createTrunkGroupCompWithCircuitInfo() {
         TrunkGroupComp trunkGroupComp = new TrunkGroupComp();
         CktLst cktLst = new CktLst();
-
-        if (withCircuitInfo) {
-            CircuitInfo circuitInfo = new CircuitInfo();
-            circuitInfo.setCircuitName("TestCircuit");
-            circuitInfo.setType("TestType");
-            circuitInfo.setStatus("Active");
-            cktLst.getCircuitInfo().add(circuitInfo);
-        }
-
-        trunkGroupComp.getCktLst().add(cktLst);
-        clrComponent.getTrunkGroupComp().add(trunkGroupComp);
-
-        return clrComponent;
-    }
-
-    @Test
-    void testProcess_initialCase_emptyList() {
-        ClrComponent clrComponent = createClrComponent(CommonWrapperConstants.TRUNK, true);
-        List<ClrComponent> clrComponentList = new ArrayList<>();
-        clrComponentList.add(clrComponent);
-
-        trunkProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, sourceSys);
-
-        assertFalse(links.isEmpty(), "Links should not be empty after processing.");
-        assertFalse(nodes.isEmpty(), "Nodes should not be empty after processing.");
-    }
-
-    @Test
-    void testProcess_withPreviousPortTypeComponent() {
-        ClrComponent previousComponent = createClrComponent(CommonWrapperConstants.PORT, false);
-        ClrComponent currentComponent = createClrComponent(CommonWrapperConstants.TRUNK, true);
-
-        List<ClrComponent> clrComponentList = new ArrayList<>();
-        clrComponentList.add(previousComponent);
-        clrComponentList.add(currentComponent);
-
-        links.add(new Link()); // Ensure the links list is not empty
-
-        trunkProcessor.process(nodes, links, currentComponent, clrComponentList, clliNodeMap, 1, ukCount, sourceSys);
-
-        assertFalse(links.isEmpty(), "Links should not be empty after processing.");
-        assertTrue(links.get(0).getAttributes().stream().anyMatch(attr -> "circuitName".equals(attr.getName())), "Link should have circuitName attribute.");
-    }
-
-    @Test
-    void testProcess_withPreviousCircuitTypeComponent() {
-        ClrComponent previousComponent = createClrComponent(CommonWrapperConstants.CIRCUIT, false);
-        ClrComponent currentComponent = createClrComponent(CommonWrapperConstants.TRUNK, true);
-
-        List<ClrComponent> clrComponentList = new ArrayList<>();
-        clrComponentList.add(previousComponent);
-        clrComponentList.add(currentComponent);
-
-        links.add(new Link()); // Ensure the links list is not empty
-
-        trunkProcessor.process(nodes, links, currentComponent, clrComponentList, clliNodeMap, 1, ukCount, sourceSys);
-
-        assertFalse(links.isEmpty(), "Links should not be empty after processing.");
-        assertTrue(links.get(0).getAttributes().stream().anyMatch(attr -> "circuitName".equals(attr.getName())), "Link should have circuitName attribute.");
-    }
-
-    @Test
-    void testProcess_withPreviousTrailTypeComponent() {
-        ClrComponent previousComponent = createClrComponent(CommonWrapperConstants.TRAIL, false);
-        ClrComponent currentComponent = createClrComponent(CommonWrapperConstants.TRUNK, true);
-
-        List<ClrComponent> clrComponentList = new ArrayList<>();
-        clrComponentList.add(previousComponent);
-        clrComponentList.add(currentComponent);
-
-        links.add(new Link()); // Ensure the links list is not empty
-
-        trunkProcessor.process(nodes, links, currentComponent, clrComponentList, clliNodeMap, 1, ukCount, sourceSys);
-
-        assertFalse(links.isEmpty(), "Links should not be empty after processing.");
-        assertTrue(links.get(0).getAttributes().stream().anyMatch(attr -> "circuitName".equals(attr.getName())), "Link should have circuitName attribute.");
-    }
-
-    @Test
-    void testProcess_finalComponentInList() {
-        ClrComponent clrComponent = createClrComponent(CommonWrapperConstants.TRUNK, true);
-        List<ClrComponent> clrComponentList = new ArrayList<>();
-        clrComponentList.add(clrComponent);
-
-        trunkProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, sourceSys);
-
-        assertFalse(links.isEmpty(), "Links should not be empty after processing.");
-        assertNotEquals("--", links.get(0).getTarget(), "Link target should not be default '--' after processing.");
-    }
-
-    @Test
-    void testProcess_noCircuitInfo() {
-        ClrComponent clrComponent = createClrComponent(CommonWrapperConstants.TRUNK, false);
-        List<ClrComponent> clrComponentList = new ArrayList<>();
-        clrComponentList.add(clrComponent);
-
-        trunkProcessor.process(nodes, links, clrComponent, clrComponentList, clliNodeMap, 0, ukCount, sourceSys);
-
-        assertTrue(links.isEmpty(), "Links should be empty when there's no circuit information.");
+        CircuitInfo circuitInfo = new CircuitInfo();
+        circuitInfo.setCircuitName("TestCircuit");
+        circuitInfo.setType("TestType");
+        circuitInfo.setStatus("Active");
+        cktLst.setCircuitInfo(Collections.singletonList(circuitInfo));
+        trunkGroupComp.setCktLst(Collections.singletonList(cktLst));
+        return trunkGroupComp;
     }
 }
-
 ```
 
-### Key Changes:
+### Explanation:
 
-1. **Ensure Non-Empty Links List**: Before processing a component with `links.get()`, initiate `links` with a dummy `Link` object if necessary. This will prevent accessing an empty list.
+- **Setup Method**: Initializes the necessary objects and structures before each test case.
+- **Test Cases**: Cover scenarios such as:
+  - `TrunkGroupComp` being empty.
+  - Non-null `CircuitInfo`.
+  - Different `prevType` values, ensuring branches are covered.
+  - Processing when the current component is the last in the list.
+- **Helper Method**: `createTrunkGroupCompWithCircuitInfo` is used to create a `TrunkGroupComp` with a populated `CircuitInfo`, simplifying test setup.
 
-2. **Consistent Initialization**: Make sure all test cases initialize their lists and objects properly, preventing any unexpected empty states.
-
-If you still encounter the `IndexOutOfBoundsException`, it could be due to accessing `clrComponentList` or `links` elsewhere in the `process` method. Double-check that all list accesses in both the method and tests are safe and protected by size checks where necessary.
+This set of tests ensures comprehensive coverage of the `process` method by addressing various logical paths and potential edge cases. Adjust the tests based on the exact logic and requirements of your application.

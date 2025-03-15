@@ -1,71 +1,90 @@
-@Test
-    public void testValidateCircuits_Success() {
-        // Mock input data
+@ExtendWith(MockitoExtension.class)
+public class CircuitValidatorTest {
+
+    @InjectMocks
+    private CircuitValidator circuitValidator;
+
+    @Mock
+    private RestTemplate restTemplate;
+
+    private static final String URL = "http://example.com/api"; // Replace with your actual URL
+
+    @BeforeEach
+    public void setup() {
+        ReflectionTestUtils.setField(circuitValidator, "cndCirclleaderMSServicelUrl", URL);
+    }
+
+    @Test
+    public void testValidateCircuits_Success() throws NoDataFoundException, InternalServerErrorException {
+        // Arrange
         List<String> circuitNameList = Arrays.asList("Circuit1", "Circuit2");
-        List<String> toValidateCircuitNameList = new ArrayList<>(Arrays.asList("Circuit1", "Circuit3"));
+        List<String> toValidateCircuitNameList = new ArrayList<>(Arrays.asList("Circuit1", "Circuit2"));
 
-        // Mock response from the external service
-        CircuitDetailResponse mockResponse = new CircuitDetailResponse();
-        CircuitData mockCircuitData = new CircuitData();
-        CircuitList mockCircuitList = new CircuitList();
-        Circuit mockCircuit = new Circuit();
-        mockCircuit.setCircuitName("Circuit1");
+        CircuitDetailResponse response = new CircuitDetailResponse();
+        // Populate response object with valid data
+        response.setCircuitData(new CircuitData(
+            Arrays.asList(new CircuitList(Arrays.asList(new Circuit("Circuit1"), new Circuit("Circuit2"))))
+        ));
 
-        mockCircuitList.setCircuit(Arrays.asList(mockCircuit));
-        mockCircuitData.setCircuitList(Arrays.asList(mockCircuitList));
-        mockResponse.setCircuitData(mockCircuitData);
+        ResponseEntity<CircuitDetailResponse> responseEntity = new ResponseEntity<>(response, HttpStatus.OK);
 
-        ResponseEntity<CircuitDetailResponse> responseEntity =
-                new ResponseEntity<>(mockResponse, HttpStatus.OK);
+        Mockito.when(restTemplate.exchange(
+            Mockito.eq(URL),
+            Mockito.eq(HttpMethod.POST),
+            Mockito.any(HttpEntity.class),
+            Mockito.eq(CircuitDetailResponse.class)
+        )).thenReturn(responseEntity);
 
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(CircuitDetailResponse.class)))
-                .thenReturn(responseEntity);
+        // Act
+        List<String> result = circuitValidator.validateCircuits(circuitNameList, toValidateCircuitNameList);
 
-        // Call the method under test
-        List<String> result = circuitService.validateCircuits(circuitNameList, toValidateCircuitNameList);
-
-        // Assertions
-        assertNotNull(result);
-        assertEquals(1, result.size());
-        assertTrue(result.contains("Circuit1"));
-        assertFalse(toValidateCircuitNameList.contains("Circuit1"));
+        // Assert
+        Assertions.assertEquals(2, result.size());
+        Assertions.assertTrue(result.contains("Circuit1"));
+        Assertions.assertTrue(result.contains("Circuit2"));
+        Assertions.assertTrue(toValidateCircuitNameList.isEmpty());
     }
 
     @Test
     public void testValidateCircuits_NoDataFoundException() {
-        // Mock input data
-        List<String> circuitNameList = Arrays.asList("Circuit1");
-        List<String> toValidateCircuitNameList = Arrays.asList("Circuit1");
+        // Arrange
+        List<String> circuitNameList = Arrays.asList("Circuit1", "Circuit2");
+        List<String> toValidateCircuitNameList = new ArrayList<>(Arrays.asList("Circuit1", "Circuit2"));
 
-        // Mock empty response
-        CircuitDetailResponse mockResponse = new CircuitDetailResponse();
-        mockResponse.setCircuitData(new CircuitData()); // No circuit list
+        CircuitDetailResponse response = new CircuitDetailResponse();
+        response.setCircuitData(new CircuitData(new ArrayList<>())); // Empty data
 
-        ResponseEntity<CircuitDetailResponse> responseEntity =
-                new ResponseEntity<>(mockResponse, HttpStatus.OK);
+        ResponseEntity<CircuitDetailResponse> responseEntity = new ResponseEntity<>(response, HttpStatus.OK);
 
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(CircuitDetailResponse.class)))
-                .thenReturn(responseEntity);
+        Mockito.when(restTemplate.exchange(
+            Mockito.eq(URL),
+            Mockito.eq(HttpMethod.POST),
+            Mockito.any(HttpEntity.class),
+            Mockito.eq(CircuitDetailResponse.class)
+        )).thenReturn(responseEntity);
 
-        // Assertions for exception
-        assertThrows(NoDataFoundException.class, () -> {
-            circuitService.validateCircuits(circuitNameList, toValidateCircuitNameList);
+        // Act & Assert
+        Assertions.assertThrows(NoDataFoundException.class, () -> {
+            circuitValidator.validateCircuits(circuitNameList, toValidateCircuitNameList);
         });
     }
 
     @Test
     public void testValidateCircuits_InternalServerErrorException() {
-        // Mock input data
-        List<String> circuitNameList = Arrays.asList("Circuit1");
-        List<String> toValidateCircuitNameList = Arrays.asList("Circuit1");
+        // Arrange
+        List<String> circuitNameList = Arrays.asList("Circuit1", "Circuit2");
+        List<String> toValidateCircuitNameList = new ArrayList<>(Arrays.asList("Circuit1", "Circuit2"));
 
-        // Mock exception
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(CircuitDetailResponse.class)))
-                .thenThrow(new ResourceAccessException("Server error"));
+        Mockito.when(restTemplate.exchange(
+            Mockito.eq(URL),
+            Mockito.eq(HttpMethod.POST),
+            Mockito.any(HttpEntity.class),
+            Mockito.eq(CircuitDetailResponse.class)
+        )).thenThrow(new ResourceAccessException("Internal server error"));
 
-        // Assertions for exception
-        assertThrows(InternalServerErrorException.class, () -> {
-            circuitService.validateCircuits(circuitNameList, toValidateCircuitNameList);
+        // Act & Assert
+        Assertions.assertThrows(InternalServerErrorException.class, () -> {
+            circuitValidator.validateCircuits(circuitNameList, toValidateCircuitNameList);
         });
     }
 }

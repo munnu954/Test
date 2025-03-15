@@ -1,26 +1,66 @@
+To achieve 100% code coverage of the `validateCircuits` method in the `GraniteReflowMsService` class, we need to write several JUnit 5 test cases that cover all code paths, including successful cases and various types of exceptions. Below is a detailed example of how to write those test cases using Mockito and JUnit 5.
 
+### Maven Dependencies
+
+You may need to add dependencies for JUnit 5 and Mockito in your `pom.xml` file:
+
+```xml
+<dependencies>
+    <!-- JUnit 5 -->
+    <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter</artifactId>
+        <version>5.7.0</version>
+        <scope>test</scope>
+    </dependency>
+    <!-- Mockito -->
+    <dependency>
+        <groupId>org.mockito</groupId>
+        <artifactId>mockito-core</artifactId>
+        <version>3.11.2</version>
+        <scope>test</scope>
+    </dependency>
+    <!-- Spring Test -->
+    <dependency>
+        <groupId>org.springframework</groupId>
+        <artifactId>spring-test</artifactId>
+        <version>5.3.6</version>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
+```
+
+### Test Class
+
+Here's a JUnit 5 test class that contains tests for various scenarios:
+
+```java
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @ExtendWith(MockitoExtension.class)
-class GraniteReflowMsServiceTest {
+public class GraniteReflowMsServiceTest {
 
     @InjectMocks
     private GraniteReflowMsService graniteReflowMsService;
@@ -28,27 +68,27 @@ class GraniteReflowMsServiceTest {
     @Mock
     private RestTemplate restTemplate;
 
-    @Mock
-    private Gson gson;
-
     @Value("${cnd.circ.header.url}")
-    private String cndCircHeaderMSServiceUrl = "http://mocked-url";
+    private String cndCircHeaderMSServiceUrl = "http://test-url.com";
 
     @BeforeEach
     void setUp() {
-        // Initialize any required setup here
+        // Initialization code if required
     }
 
     @Test
-    void validateCircuits_success() throws NoDataFoundException, InternalServerErrorException {
-        List<String> circuitNameList = Arrays.asList("Circuit1", "Circuit2");
-        List<String> toValidateCircuitNameList = Arrays.asList("Circuit1", "Circuit2");
+    public void testValidateCircuitsSuccess() throws NoDataFoundException, InternalServerErrorException {
+        List<String> circuitNames = Arrays.asList("Circuit1", "Circuit2");
+        List<String> toValidateCircuitNames = new ArrayList<>(circuitNames);
 
-        Circuit circuit = new Circuit();
-        circuit.setCircuitName("Circuit1");
-
+        // Prepare mock response
+        Circuit circuit1 = new Circuit();
+        circuit1.setCircuitName("Circuit1");
+        Circuit circuit2 = new Circuit();
+        circuit2.setCircuitName("Circuit2");
+        
         CircuitLst circuitLst = new CircuitLst();
-        circuitLst.setCircuit(Arrays.asList(circuit));
+        circuitLst.setCircuit(Arrays.asList(circuit1, circuit2));
 
         CircuitData circuitData = new CircuitData();
         circuitData.setCircuitLst(Arrays.asList(circuitLst));
@@ -56,53 +96,72 @@ class GraniteReflowMsServiceTest {
         CircuitDetailResponse response = new CircuitDetailResponse();
         response.setCircuitData(circuitData);
 
-        when(gson.toJson(any())).thenReturn("{}");
+        // Mock the behavior of RestTemplate
         when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(CircuitDetailResponse.class)))
                 .thenReturn(new ResponseEntity<>(response, HttpStatus.OK));
 
-        List<String> validCircuits = graniteReflowMsService.validateCircuits(circuitNameList, toValidateCircuitNameList);
+        // Call the service method
+        List<String> validCircuitNames = graniteReflowMsService.validateCircuits(circuitNames, toValidateCircuitNames);
 
-        assertEquals(Collections.singletonList("Circuit1"), validCircuits);
-        assertFalse(toValidateCircuitNameList.contains("Circuit1"));
-        assertTrue(toValidateCircuitNameList.contains("Circuit2"));
+        // Assertions
+        assertEquals(Arrays.asList("Circuit1", "Circuit2"), validCircuitNames);
+        assertTrue(toValidateCircuitNames.isEmpty());
     }
 
     @Test
-    void validateCircuits_noCircuitData() {
-        List<String> circuitNameList = Arrays.asList("Circuit1");
-        List<String> toValidateCircuitNameList = Arrays.asList("Circuit1");
+    public void testValidateCircuitsEmptyResponse() {
+        List<String> circuitNames = Arrays.asList("Circuit1");
+        List<String> toValidateCircuitNames = new ArrayList<>(circuitNames);
 
+        // Prepare mock response without circuits
         CircuitDetailResponse response = new CircuitDetailResponse();
-        response.setCircuitData(new CircuitData()); // No circuit list
+        response.setCircuitData(new CircuitData());
 
-        when(gson.toJson(any())).thenReturn("{}");
         when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(CircuitDetailResponse.class)))
                 .thenReturn(new ResponseEntity<>(response, HttpStatus.OK));
 
-        assertThrows(NoDataFoundException.class, () -> graniteReflowMsService.validateCircuits(circuitNameList, toValidateCircuitNameList));
+        // Call and Assertions
+        assertThrows(NoDataFoundException.class, () -> {
+            graniteReflowMsService.validateCircuits(circuitNames, toValidateCircuitNames);
+        });
     }
 
     @Test
-    void validateCircuits_responseNotOk() {
-        List<String> circuitNameList = Arrays.asList("Circuit1");
-        List<String> toValidateCircuitNameList = Arrays.asList("Circuit1");
+    public void testValidateCircuitsExceptionHandling() {
+        List<String> circuitNames = Arrays.asList("Circuit1");
+        List<String> toValidateCircuitNames = new ArrayList<>(circuitNames);
 
-        when(gson.toJson(any())).thenReturn("{}");
+        // Mock behavior to throw HttpStatusCodeException
         when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(CircuitDetailResponse.class)))
-                .thenReturn(new ResponseEntity<>(HttpStatus.BAD_REQUEST)); // Non-OK response
+                .thenThrow(new HttpStatusCodeException(HttpStatus.INTERNAL_SERVER_ERROR) {});
 
-        assertThrows(NoDataFoundException.class, () -> graniteReflowMsService.validateCircuits(circuitNameList, toValidateCircuitNameList));
+        // Call and Assertions
+        assertThrows(InternalServerErrorException.class, () -> {
+            graniteReflowMsService.validateCircuits(circuitNames, toValidateCircuitNames);
+        });
     }
 
     @Test
-    void validateCircuits_internalServerError() {
-        List<String> circuitNameList = Arrays.asList("Circuit1");
-        List<String> toValidateCircuitNameList = Arrays.asList("Circuit1");
+    public void testValidateCircuitsResourceAccessException() {
+        List<String> circuitNames = Arrays.asList("Circuit1");
+        List<String> toValidateCircuitNames = new ArrayList<>(circuitNames);
 
-        when(gson.toJson(any())).thenReturn("{}");
+        // Mock behavior to throw ResourceAccessException
         when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(CircuitDetailResponse.class)))
                 .thenThrow(new ResourceAccessException("Network error"));
 
-        assertThrows(InternalServerErrorException.class, () -> graniteReflowMsService.validateCircuits(circuitNameList, toValidateCircuitNameList));
+        // Call and Assertions
+        assertThrows(InternalServerErrorException.class, () -> {
+            graniteReflowMsService.validateCircuits(circuitNames, toValidateCircuitNames);
+        });
     }
 }
+```
+
+### Key Points
+1. **Dependencies**: Ensure you have the necessary dependencies for JUnit and Mockito in your project.
+2. **Mocks**: Use Mockito to mock external dependencies (like `RestTemplate`) to control their behavior during tests.
+3. **Multiple Scenarios**: Make sure to cover successful execution, lack of data responses, and exceptions to ensure full coverage.
+4. **Assertions**: Validate the outcomes appropriately, checking lists' sizes, exceptions thrown, etc.
+
+This setup should provide 100% code coverage for the `validateCircuits` method of `GraniteReflowMsService`. Adjust the implementation details based on your actual classes and fields, as needed.

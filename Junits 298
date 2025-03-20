@@ -1,104 +1,169 @@
-Main.java class:-
+To fix the `JsonParseException` and handle nested JSON structures correctly, we need to adjust how the code checks for and processes nested JSON objects. The main issue was treating `Map` instances as strings by using `toString()`, leading to invalid JSON parsing. Here's the refactored code:
+
+**Changes Made:**
+
+1. **Removed `checkIfJsonValue` Method:**
+   - This method was unreliable for checking JSON structures. Instead, we now use `instanceof` checks for `Map` and `List`.
+
+2. **Direct Processing of Nested Maps:**
+   - If a value is a `Map`, it's processed recursively without converting to a string.
+
+3. **Handling JSON Strings:**
+   - If a value is a `String`, attempt to parse it as JSON. If successful, process recursively; otherwise, treat it as a regular string.
+
+4. **Fixed Initialization of `resultMsg`:**
+   - Properly initialize `resultMsg` in `removeNullValuesInJsonAttributes` to avoid `NullPointerException`.
+
+**Refactored Code:**
+
 ```java
-public static void main(String[] args) throws Exception {
-    String primaryKey;
-    UnifiedAuditMessage unifiedAuditMessage = new UnifiedAuditMessage();
-    unifiedAuditMessage.setProcessType(ProcessType.Transformer.toString());
-    ParameterTool parameters = ParameterTool.fromArgs(args);
-    String filePath = parameters.getRequired("filePath");
-    String delimeter = parameters.getRequired("primaryKey");
-    String fileType = parameters.getRequired("fileType");
+@Component
+public class DeduplicationUtils {
+    Logger logger = LogManager.getLogger(this.getClass());
 
-    // Extract the FILENAME from filePath
-    String[] pathArr = filePath.split("/");
-    String fileName = pathArr[pathArr.length - 1];
+    public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
+        HashMap<String, Object> resultMsg = new HashMap<>();
+        try {
+            for (Map.Entry<String, Object> entry : msg.entrySet()) {
+                String key = entry.getKey();
+                Object value = entry.getValue();
 
-    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-    filePath = parameters.getRequired("filePath");
-    unifiedAuditMessage.setInputFilePath(filePath);
-    unifiedAuditMessage.setFileType("XML_" + fileType);
-    DataStream<String> xmlDataStream = null;
-    DataStream<String> jsonStream = null;
-    switch (fileType) {
-        case "NETAСТ":
-            primaryKey = "measInfo";
-            break;
-        case "IMS-CCF":
-            primaryKey = "mi";
-            break;
-        case "ETAS":
-            primaryKey = "measInfo";
-            break;
-        default:
-            primaryKey = "";
-    }
-    xmlDataStream = env.fromElements(readXMLFile(filePath));
-    jsonStream = xmlDataStream.flatMap(new XmlToJsonConverter(primaryKey, filePath, fileName)).name("XmlToJsonFlatMap");
-    jsonStream.sinkTo(sink);
-    JobExecutionResult jobExecutionResult = env.execute("Xml to JSON Transformer: " + fileType);
-}
-```
-
-XmlToJsonConverter.java class:-
-```java
-public class XmlToJsonConverter extends RichFlatMapFunction<String, String> {
-    private List<String> outerList = new ArrayList<String>();
-    private List<JsonNode> primaryNodeList = new ArrayList<JsonNode>();
-    private List<String> primaryKeyList = new ArrayList<String>();
-    public String primaryKey;
-    public String filePath;
-    public String fileName; // Newly added
-    private int successCount = 0;
-    private int failureCount = 0;
-    public int getSuccessCount() {
-        return successCount;
-    }
-    public int getFailureCount() {
-        return failureCount;
-    }
-    private IntCounter successIntCounter = new IntCounter();
-    private IntCounter failureIntCounter = new IntCounter();
-    
-    public XmlToJsonConverter() {
-        super();
-    }
-
-    public XmlToJsonConverter(String primaryKey, String filePath, String fileName) {
-        super();
-        this.primaryKey = primaryKey;
-        this.filePath = filePath;
-        this.fileName = fileName;
-    }
-
-    @Override
-    public void flatMap(String value, Collector<String> out) throws Exception {
-        // Add FILENAME key in each JSON Response
-        ObjectNode rootNode = JsonNodeFactory.instance.objectNode();
-        rootNode.put("FILENAME", fileName);
-
-        XmlMapper xmlMapper = new XmlMapper();
-        JsonNode node = xmlMapper.readTree(value.getBytes());
-        KafkaProducerService kProducerService = new KafkaProducerService();
-        // Get all elements path
-        this.processJsonPointer("", node);
-        List<Object> removeList = new ArrayList<Object>();
-        
-        // Get the primary key elements
-        for (String obj : outerList) {
-            if (obj != null) {
-                // Add the primary key elements path
-                if (("/" + obj).endsWith(("/" + primaryKey))) {
-                    primaryKeyList.add(obj);
+                if (value == null || value.toString().isEmpty()) {
+                    continue; // Skip null or empty values
                 }
-                // Add the primary key child elements path into remove list
-                if (("/" + obj).contains(("/" + primaryKey + "/")) {
-                    removeList.add(obj);
+
+                if (value instanceof Map) {
+                    // Recursively process nested map
+                    Map<String, Object> nestedMap = (Map<String, Object>) value;
+                    HashMap<String, Object> processedMap = removeNullValuesInJsonAttributes(nestedMap);
+                    if (!processedMap.isEmpty()) {
+                        resultMsg.put(key, processedMap);
+                    }
+                } else if (value instanceof List) {
+                    // Process each element in the list
+                    List<?> list = (List<?>) value;
+                    List<Object> processedList = new ArrayList<>();
+                    for (Object item : list) {
+                        if (item instanceof Map) {
+                            HashMap<String, Object> processedItem = removeNullValuesInJsonAttributes((Map<String, Object>) item);
+                            if (!processedItem.isEmpty()) {
+                                processedList.add(processedItem);
+                            }
+                        } else if (item != null && !item.toString().isEmpty()) {
+                            processedList.add(item);
+                        }
+                    }
+                    if (!processedList.isEmpty()) {
+                        resultMsg.put(key, processedList);
+                    }
+                } else if (value instanceof String) {
+                    // Check if the string is a JSON object
+                    try {
+                        Map<String, Object> parsedMap = RulesConstants.getObjectMapper().readValue((String) value, HashMap.class);
+                        HashMap<String, Object> processedMap = removeNullValuesInJsonAttributes(parsedMap);
+                        if (!processedMap.isEmpty()) {
+                            resultMsg.put(key, processedMap);
+                        }
+                    } catch (JsonProcessingException e) {
+                        // Not a JSON string, add as regular value
+                        resultMsg.put(key, value);
+                    }
+                } else {
+                    // Primitive types
+                    resultMsg.put(key, value);
                 }
             }
+        } catch (Exception e) {
+            logger.error("Exception removing null/empty values: ", e);
         }
-        
-        // Continue with the rest of the logic for JSON conversion
-        // ...
+        return resultMsg;
+    }
+
+    public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
+        try {
+            for (Map.Entry<String, Object> entry : incomingMsg.entrySet()) {
+                String key = entry.getKey();
+                Object value = entry.getValue();
+
+                if (value == null || value.toString().isEmpty()) {
+                    continue;
+                }
+
+                if (!isLateAlarm) {
+                    if (value instanceof Map) {
+                        Map<String, Object> incomingNested = (Map<String, Object>) value;
+                        Object cachedValue = cachedMsg.get(key);
+                        if (cachedValue instanceof Map) {
+                            Map<String, Object> cachedNested = (Map<String, Object>) cachedValue;
+                            HashMap<String, Object> merged = mergeUpdateJsonValues(incomingNested, cachedNested, isLateAlarm);
+                            cachedMsg.put(key, merged);
+                        } else {
+                            HashMap<String, Object> processed = removeNullValuesInJsonAttributes(incomingNested);
+                            cachedMsg.put(key, processed);
+                        }
+                    } else if (value instanceof String) {
+                        try {
+                            Map<String, Object> parsedIncoming = RulesConstants.getObjectMapper().readValue((String) value, HashMap.class);
+                            Object cachedValue = cachedMsg.get(key);
+                            if (cachedValue instanceof Map) {
+                                Map<String, Object> parsedCached = (Map<String, Object>) cachedValue;
+                                HashMap<String, Object> merged = mergeUpdateJsonValues(parsedIncoming, parsedCached, isLateAlarm);
+                                cachedMsg.put(key, merged);
+                            } else {
+                                HashMap<String, Object> processed = removeNullValuesInJsonAttributes(parsedIncoming);
+                                cachedMsg.put(key, processed);
+                            }
+                        } catch (JsonProcessingException e) {
+                            cachedMsg.put(key, value);
+                        }
+                    } else {
+                        cachedMsg.put(key, value);
+                    }
+                } else {
+                    // Late alarm handling
+                    Object cachedValue = cachedMsg.get(key);
+                    if (cachedValue == null) {
+                        if (value instanceof Map) {
+                            HashMap<String, Object> processed = removeNullValuesInJsonAttributes((Map<String, Object>) value);
+                            cachedMsg.put(key, processed);
+                        } else if (value instanceof String) {
+                            try {
+                                Map<String, Object> parsed = RulesConstants.getObjectMapper().readValue((String) value, HashMap.class);
+                                HashMap<String, Object> processed = removeNullValuesInJsonAttributes(parsed);
+                                cachedMsg.put(key, processed);
+                            } catch (JsonProcessingException e) {
+                                cachedMsg.put(key, value);
+                            }
+                        } else {
+                            cachedMsg.put(key, value);
+                        }
+                    } else if (cachedValue instanceof Map && value instanceof Map) {
+                        HashMap<String, Object> merged = mergeUpdateJsonValues((Map<String, Object>) value, (Map<String, Object>) cachedValue, isLateAlarm);
+                        cachedMsg.put(key, merged);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Exception merging JSON values: ", e);
+        }
+        return (HashMap<String, Object>) cachedMsg;
     }
 }
 ```
+
+**Explanation of Changes:**
+
+1. **Type Checks Instead of `checkIfJsonValue`:**
+   - Used `instanceof Map` and `instanceof List` to identify nested structures directly.
+   - For `String` values, attempt JSON parsing and handle exceptions if they're not valid JSON.
+
+2. **Avoid `toString()` on Maps:**
+   - Directly cast and process nested `Map` objects without converting them to strings, preventing invalid JSON formats.
+
+3. **Handling Lists:**
+   - Added processing for `List` values to recursively handle nested lists (though simplified; may need expansion based on use case).
+
+4. **Late Alarm Handling:**
+   - Correctly merges existing and incoming values when `isLateAlarm` is true, ensuring proper nested updates.
+
+This refactoring ensures that nested JSON structures (whether as Maps or JSON-formatted Strings) are processed correctly, eliminating the `JsonParseException` caused by invalid parsing of Map `toString()` outputs.

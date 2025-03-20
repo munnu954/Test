@@ -1,80 +1,88 @@
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.util.HashMap;
-import java.util.Map;
-import org.apache.logging.log4j.Logger;
+To address the issue with handling nested JSON inputs, we need to ensure that we correctly parse and handle JSON strings at every level of nesting. The error you are encountering suggests that the JSON parsing process is encountering an unexpected character, likely due to incorrect handling of JSON strings. Here's the updated code with comments to highlight the changes:
 
-public class JsonMerger {
+```java
+@Component
+public class DeduplicationUtils {
+    Logger logger = LogManager.getLogger(this.getClass());
 
-    private static final ObjectMapper objectMapper = new ObjectMapper(); // Jackson ObjectMapper
+    public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
+        HashMap<String, Object> resultMsg = new HashMap<>(msg); // Initialize the resultMsg with the original msg
+        try {
+            for (Map.Entry<String, Object> iterate : msg.entrySet()) {
+                if (checkIfJsonValue(iterate.getValue())) {
+                    HashMap<String, Object> updatedMsg = removeNullValuesInJsonAttributes(
+                            RulesConstants.getObjectMapper().readValue(iterate.getValue().toString(), HashMap.class));
+                    resultMsg.put(iterate.getKey(), updatedMsg);
+                } else {
+                    if (iterate.getValue() == null || iterate.getValue().toString().isEmpty()) {
+                        resultMsg.remove(iterate.getKey());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Exception occurred while trying to remove null/empty values from json attributes: " + e);
+        }
+        return resultMsg;
+    }
 
-    public static HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg,
-                                                                Map<String, Object> cachedMsg,
-                                                                boolean isLateAlarm) {
+    public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
         try {
             for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
-                Object incomingValue = iterate.getValue();
-
-                if (!isLateAlarm) {
-                    // Validate and process non-late alarms
-                    if (incomingValue != null && !incomingValue.toString().isEmpty()) {
-                        if (checkIfJsonValue(incomingValue)) {
+                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                    if (!isLateAlarm) {
+                        if (checkIfJsonValue(iterate.getValue())) {
+                            HashMap<String, Object> incomingValue = RulesConstants.getObjectMapper().readValue(
+                                    iterate.getValue().toString(), HashMap.class);
                             if (cachedMsg.get(iterate.getKey()) != null) {
-                                HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(
-                                    objectMapper.readValue(incomingValue.toString(), HashMap.class),
-                                    (HashMap<String, Object>) cachedMsg.get(iterate.getKey()),
-                                    isLateAlarm);
+                                HashMap<String, Object> cachedValue = (HashMap<String, Object>) cachedMsg.get(iterate.getKey());
+                                HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValue, cachedValue, isLateAlarm);
                                 cachedMsg.put(iterate.getKey(), updatedMsg);
                             } else {
-                                cachedMsg.put(iterate.getKey(), removeNullValuesInJsonAttributes(
-                                    objectMapper.readValue(incomingValue.toString(), HashMap.class)));
+                                cachedMsg.put(iterate.getKey(), removeNullValuesInJsonAttributes(incomingValue));
                             }
                         } else {
-                            cachedMsg.put(iterate.getKey(), incomingValue);
+                            cachedMsg.put(iterate.getKey(), iterate.getValue());
                         }
-                    }
-                } else {
-                    // Handle late alarms
-                    if (incomingValue != null && !incomingValue.toString().isEmpty()) {
+                    } else {
                         if (cachedMsg.get(iterate.getKey()) != null && checkIfJsonValue(cachedMsg.get(iterate.getKey()))) {
-                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(
-                                objectMapper.readValue(incomingValue.toString(), HashMap.class),
-                                (HashMap<String, Object>) cachedMsg.get(iterate.getKey()),
-                                isLateAlarm);
+                            HashMap<String, Object> incomingValue = RulesConstants.getObjectMapper().readValue(
+                                    iterate.getValue().toString(), HashMap.class);
+                            HashMap<String, Object> cachedValue = (HashMap<String, Object>) cachedMsg.get(iterate.getKey());
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValue, cachedValue, isLateAlarm);
                             cachedMsg.put(iterate.getKey(), updatedMsg);
                         } else if (cachedMsg.get(iterate.getKey()) == null) {
-                            cachedMsg.put(iterate.getKey(), incomingValue);
+                            cachedMsg.put(iterate.getKey(), iterate.getValue());
                         }
                     }
                 }
             }
         } catch (Exception e) {
-            // Log detailed error information
-            Logger logger = org.apache.logging.log4j.LogManager.getLogger(JsonMerger.class);
-            logger.error("Exception occurred while merging JSON values: ", e);
-            logger.error("Incoming message: " + incomingMsg);
+            logger.error("Exception occurred while trying to merge update JsonValues: " + e + " and incoming message : " + incomingMsg);
         }
         return (HashMap<String, Object>) cachedMsg;
     }
 
-    private static boolean checkIfJsonValue(Object value) {
-        if (value == null || !(value instanceof String)) {
-            return false;
-        }
+    public boolean checkIfJsonValue(Object obj) {
+        boolean isJson = false;
         try {
-            objectMapper.readTree((String) value); // Validate as JSON
-            return true;
-        } catch (Exception e) {
-            return false; // Not a valid JSON
-        }
-    }
-
-    private static Map<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> jsonAttributes) {
-        Map<String, Object> result = new HashMap<>();
-        for (Map.Entry<String, Object> entry : jsonAttributes.entrySet()) {
-            if (entry.getValue() != null) {
-                result.put(entry.getKey(), entry.getValue());
+            String jsonString = RulesConstants.getObjectMapper().writeValueAsString(obj).trim();
+            if (jsonString.startsWith("{") || jsonString.startsWith("[")) {
+                isJson = true;
             }
+        } catch (JsonProcessingException e) {
+            return isJson;
         }
-        return result;
+        return isJson;
     }
 }
+```
+
+### Changes Made:
+
+1. **Initialization of `resultMsg`:** A new `HashMap` named `resultMsg` is initialized at the start of the `removeNullValuesInJsonAttributes` method to maintain the original message structure and update it as we process each entry.
+
+2. **Consistent JSON Parsing:** In the `mergeUpdateJsonValues` method, whenever we detect a JSON value using `checkIfJsonValue`, we deserialize it into a `HashMap` immediately. This ensures that we can traverse and modify nested JSON structures correctly.
+
+3. **Improved JSON Check:** The `checkIfJsonValue` method now properly checks if the string representation of the object starts with `{` or `[`, which are indicators of JSON objects or arrays.
+
+These changes aim to ensure proper handling and traversal of nested JSON structures while avoiding JSON parsing errors.

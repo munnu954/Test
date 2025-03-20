@@ -1,15 +1,70 @@
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-ObjectMapper objectMapper = new ObjectMapper();
-for (Map.Entry<String, Object> entry : hashMap.entrySet()) {
-    String key = entry.getKey();
-    String jsonString = entry.getValue().toString(); // Convert Object to String
+public class JsonUtils {
 
-    try {
-        // Parse JSON string into a Map or JsonNode
-        Map<String, Object> jsonMap = objectMapper.readValue(jsonString, Map.class);
-        System.out.println("Key: " + key + ", Parsed JSON: " + jsonMap);
-    } catch (Exception e) {
-        System.err.println("Error parsing JSON for key " + key + ": " + e.getMessage());
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
+    public static boolean checkIfJsonValue(Object value) {
+        // Check if the value is null or not a String
+        if (value == null || !(value instanceof String)) {
+            return false;
+        }
+
+        try {
+            // Attempt to parse the value as a JSON object or array
+            String jsonString = (String) value;
+            objectMapper.readTree(jsonString);
+            return true; // Parsed successfully, it's valid JSON
+        } catch (Exception e) {
+            return false; // Parsing failed, not valid JSON
+        }
     }
+}
+
+
+
+public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg,
+                                                     Map<String, Object> cachedMsg, boolean isLateAlarm) {
+    try {
+        for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
+            Object incomingValue = iterate.getValue();
+
+            if (!isLateAlarm) {
+                if (incomingValue != null && !incomingValue.toString().isEmpty()) {
+                    // Check if the value itself is a JSON
+                    if (checkIfJsonValue(incomingValue)) {
+                        if (cachedMsg.get(iterate.getKey()) != null) {
+                            // Recursively merge JSON values
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(
+                                    RulesConstants.getObjectMapper().readValue(incomingValue.toString(), HashMap.class),
+                                    (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                            cachedMsg.put(iterate.getKey(), updatedMsg);
+                        } else {
+                            // If key not present in cache, remove null values and update
+                            cachedMsg.put(iterate.getKey(), removeNullValuesInJsonAttributes(
+                                    RulesConstants.getObjectMapper().readValue(incomingValue.toString(), HashMap.class)));
+                        }
+                    } else {
+                        cachedMsg.put(iterate.getKey(), incomingValue);
+                    }
+                }
+            } else {
+                // Late alarm handling
+                if (incomingValue != null && !incomingValue.toString().isEmpty()) {
+                    if (cachedMsg.get(iterate.getKey()) != null && checkIfJsonValue(cachedMsg.get(iterate.getKey()))) {
+                        HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(
+                                RulesConstants.getObjectMapper().readValue(incomingValue.toString(), HashMap.class),
+                                (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                        cachedMsg.put(iterate.getKey(), updatedMsg);
+                    } else if (cachedMsg.get(iterate.getKey()) == null) {
+                        cachedMsg.put(iterate.getKey(), incomingValue);
+                    }
+                }
+            }
+        }
+    } catch (Exception e) {
+        logger.error("Exception occurred while trying to merge and update JSON values: " + e.getMessage() 
+                     + " and incoming message: " + incomingMsg, e);
+    }
+    return (HashMap<String, Object>) cachedMsg;
 }

@@ -1,79 +1,46 @@
-AI 🤖:
-Here is the modified Cucumber glue code steps:
-
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.PrintWriter;
-import java.util.ArrayList;
-import java.util.List;
-
-import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVParser;
-import org.apache.commons.csv.CSVRecord;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
-import com.example.CsvtoJsonConversion;
-
-public class CsvtoJsonMRFCnTransformerTest {
-
-    private static final String MRFC_FILE_PATH = "src/test/resources/MRFC.csv";
-
-    private List csvRecords;
-
-    @BeforeEach
-    public void setUp() throws IOException {
-        InputStream inputStream = getClass().getResourceAsStream(MRFC_FILE_PATH);
-        CSVParser csvParser = new CSVParser(inputStream, CSVFormat.DEFAULT);
-        csvRecords = csvParser.getRecords();
+public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
+    try {
+        ObjectMapper objectMapper = RulesConstants.getObjectMapper();
+        
+        for (Map.Entry<String, Object> entry : incomingMsg.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            
+            if (!isLateAlarm) {
+                if (value != null && !value.toString().isEmpty()) {
+                    if (checkIfJsonValue(value)) {
+                        if (cachedMsg.containsKey(key) && cachedMsg.get(key) instanceof Map) {
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(objectMapper.readValue(objectMapper.writeValueAsString(value), HashMap.class), (HashMap<String, Object>) cachedMsg.get(key), isLateAlarm);
+                            cachedMsg.put(key, updatedMsg);
+                        } else {
+                            cachedMsg.put(key, removeNullValuesInJsonAttributes(objectMapper.readValue(objectMapper.writeValueAsString(value), HashMap.class)));
+                        }
+                    } else {
+                        cachedMsg.put(key, value);
+                    }
+                }
+            } else {
+                if (value != null && !value.toString().isEmpty()) {
+                    if (cachedMsg.containsKey(key) && checkIfJsonValue(cachedMsg.get(key))) {
+                        HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(objectMapper.readValue(objectMapper.writeValueAsString(value), HashMap.class), (HashMap<String, Object>) cachedMsg.get(key), isLateAlarm);
+                        cachedMsg.put(key, updatedMsg);
+                    } else if (!cachedMsg.containsKey(key)) {
+                        cachedMsg.put(key, value);
+                    }
+                }
+            }
+        }
+    } catch (Exception e) {
+        logger.error("Exception occurred while trying to merge update JsonValues: " + e + " and incoming message : " + incomingMsg);
     }
-
-    @Test
-    public void testTransform() throws Exception {
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        final DataStream stream = env.fromElements(csvRecords);
-        final DataStream jsonStream = stream.flatMap(new CsvtoJsonConversion.CsvtoJsonMRFCnTransformer(MRFC_FILE_PATH));
-        jsonStream.print();
-        env.execute();
-    }
-
-    @Test
-    public void testTransformWithAssertions() throws Exception {
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        final DataStream stream = env.fromElements(csvRecords);
-        final DataStream jsonStream = stream.flatMap(new CsvtoJsonConversion.CsvtoJsonMRFCnTransformer(MRFC_FILE_PATH));
-        jsonStream.print();
-        env.execute();
-
-        List expectedJson = new ArrayList<>();
-        expectedJson.add("{" +
-                "  \"SystemId\": \"SOLKTXE1100.101\", " +
-                "  \"NodeIP\": \"2607:f160:8a03:a03a:c0:10f::\", " +
-                "  \"STARTTIMESTAMP\": \"2024-01-10T17:05:00\", " +
-                "  \"STOPTIMESTAMP\": \"2024-01-10T17:10:00\", " +
-                "  \"GATEWAYNUM\": \"7\", " +
-                "  \"SERVERID\": \"0\", " +
-                "  \"RGN\": \"7\", " +
-                "  \"NBROFSVRAUDIT\": \"10\", " +
-                "  \"NBROFSVRAUDITFAIL\": \"0\", " +
-                "  \"NBROFDNSQUERY\": \"10\", " +
-                "  \"NBROFONSQUERYFAIL\": \"0\", " +
-                "  \"NBROFENUMQUERY\": \"10\", " +
-                "  \"NBROFENUMQUERYFAIL\": \"0\", " +
-                "  \"NBROFDNSARECORDQUERY\": \"10\", " +
-                "  \"NBROFDNSARECORDQUERYFAIL\": \"0\", " +
-                "  \"NBROFDNSAAAARECORDQUERY\": \"10\", " +
-                "  \"NBROFDNSAAAAARECORDQUERYFAIL\": \"0\", " +
-                "  \"NBROFDNSSRVRECORDQUERY\": \"10\", " +
-                "  \"NBROFDNSSRVRECORDQUERYFAIL\": \"0\", " +
-                "  \"NBROFDNSSOARECORDQUERY\": \"10\", " +
-                "  \"NBROFDNSSOARECORDQUERYFAIL\": \"0" +
-                "}");
-
-        List actualJson = jsonStream.collect(Collectors.toList());
-
-        Assertions.assertEquals(expectedJson, actualJson);
-    }
+    
+    return (HashMap<String, Object>) cachedMsg;
 }
+``` 
+
+In the updated code:
+- Changed the object mapper instance creation to be inside the method to avoid any potential thread safety issues.
+- Used object mapper to serialize and deserialize the JSON objects.
+- Check for `key` existence in `cachedMsg` using `containsKey` method.
+- Added a check if the value corresponding to a key is an instance of Map while retrieving from `cachedMsg`.
+- Refactored variable names for better readability.

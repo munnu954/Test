@@ -1,69 +1,62 @@
-@Component
-public class DeduplicationUtils {
-    Logger logger = LogManager.getLogger(this.getClass());
-
-    public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
-        try {
-            // Validate input maps
-            if (incomingMsg == null || incomingMsg.isEmpty()) {
-                logger.warn("Incoming message is null or empty.");
-                return new HashMap<>(cachedMsg); // Return cachedMsg as-is if incomingMsg is invalid
-            }
-
-            if (cachedMsg == null) {
-                logger.warn("Cached message is null. Creating a new cache.");
-                cachedMsg = new HashMap<>(); // Initialize cachedMsg if null
-            }
-
-            ObjectMapper objectMapper = RulesConstants.getObjectMapper();
-
-            // Process each entry in incomingMsg
-            for (Map.Entry<String, Object> entry : incomingMsg.entrySet()) {
-                String key = entry.getKey();
-                Object incomingValue = entry.getValue();
-
-                if (incomingValue != null && !incomingValue.toString().isEmpty()) {
-                    if (checkIfJsonValue(incomingValue)) {
-                        HashMap<String, Object> incomingJson = null;
-
-                        try {
-                            // Serialize and deserialize to ensure proper JSON format
-                            incomingJson = objectMapper.readValue(
-                                objectMapper.writeValueAsString(incomingValue), HashMap.class
-                            );
-                        } catch (Exception e) {
-                            logger.error("Failed to parse incoming JSON for key: " + key, e);
-                            continue; // Skip invalid JSON
-                        }
-
-                        if (cachedMsg.containsKey(key) && checkIfJsonValue(cachedMsg.get(key))) {
-                            // Handle nested merge calls
-                            HashMap<String, Object> cachedJson = null;
-
-                            try {
-                                cachedJson = (HashMap<String, Object>) cachedMsg.get(key);
-                                HashMap<String, Object> updatedJson = mergeUpdateJsonValues(incomingJson, cachedJson, isLateAlarm);
-                                cachedMsg.put(key, updatedJson);
-                            } catch (ClassCastException e) {
-                                logger.error("Failed to cast cached value to HashMap for key: " + key, e);
-                                continue;
-                            }
-                        } else {
-                            // Add cleaned incoming JSON to cache if key doesn't exist or isn't JSON
-                            cachedMsg.put(key, removeNullValuesInJsonAttributes(incomingJson));
-                        }
-                    } else {
-                        // Handle non-JSON values
-                        cachedMsg.put(key, incomingValue);
-                    }
-                } else {
-                    // Handle empty or null values (skip or log)
-                    logger.warn("Skipping null/empty incoming value for key: " + key);
-                }
-            }
-        } catch (Exception e) {
-            logger.error("Exception occurred while merging JSON values.", e);
+public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
+    try {
+        // Validate input maps to handle null and empty cases
+        if (incomingMsg == null || incomingMsg.isEmpty()) {
+            logger.warn("Incoming message is null or empty.");
+            return new HashMap<>(cachedMsg); // Return cachedMsg as-is if incomingMsg is invalid
+        }
+        
+        if (cachedMsg == null) {
+            logger.warn("Cached message is null. Initializing a new cache.");
+            cachedMsg = new HashMap<>();
         }
 
-        return (HashMap<String, Object>) cachedMsg;
+        ObjectMapper objectMapper = RulesConstants.getObjectMapper();
+
+        for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
+            String key = iterate.getKey();
+            Object incomingValue = iterate.getValue();
+
+            if (incomingValue != null && !incomingValue.toString().isEmpty()) {
+                // Check if incoming value is JSON
+                if (checkIfJsonValue(incomingValue)) {
+                    HashMap<String, Object> incomingJson;
+                    
+                    try {
+                        // Serialize then deserialize to handle JSON properly
+                        incomingJson = objectMapper.readValue(
+                            objectMapper.writeValueAsString(incomingValue), HashMap.class
+                        );
+                    } catch (Exception e) {
+                        logger.error("Failed to parse incoming JSON for key: " + key, e);
+                        continue; // Skip invalid JSON value
+                    }
+
+                    if (cachedMsg.get(key) != null && checkIfJsonValue(cachedMsg.get(key))) {
+                        try {
+                            // Recursive merge for nested JSON values
+                            HashMap<String, Object> cachedJson = (HashMap<String, Object>) cachedMsg.get(key);
+                            HashMap<String, Object> updatedJson = mergeUpdateJsonValues(incomingJson, cachedJson, isLateAlarm);
+                            cachedMsg.put(key, updatedJson);
+                        } catch (ClassCastException e) {
+                            logger.error("Failed to cast cached value to HashMap for key: " + key, e);
+                            continue;
+                        }
+                    } else {
+                        // Add cleaned incoming JSON to cache
+                        cachedMsg.put(key, removeNullValuesInJsonAttributes(incomingJson));
+                    }
+                } else {
+                    // Non-JSON values are directly added to cache
+                    cachedMsg.put(key, incomingValue);
+                }
+            } else {
+                // Handle null or empty incoming values gracefully
+                logger.warn("Skipping null/empty incoming value for key: " + key);
+            }
+        }
+    } catch (Exception e) {
+        logger.error("Exception occurred while merging JSON values.", e);
     }
+    return (HashMap<String, Object>) cachedMsg;
+}

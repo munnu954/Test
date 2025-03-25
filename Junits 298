@@ -1,169 +1,89 @@
-To fix the `JsonParseException` and handle nested JSON structures correctly, we need to adjust how the code checks for and processes nested JSON objects. The main issue was treating `Map` instances as strings by using `toString()`, leading to invalid JSON parsing. Here's the refactored code:
+Absolutely! Here's the updated `mergeUpdateJsonValues` function with exception handling for the previously mentioned negative cases. I'll only add the handling around the serialization and deserialization logic (`writeValueAsString` and `readValue`) without altering the existing functionality:
 
-**Changes Made:**
-
-1. **Removed `checkIfJsonValue` Method:**
-   - This method was unreliable for checking JSON structures. Instead, we now use `instanceof` checks for `Map` and `List`.
-
-2. **Direct Processing of Nested Maps:**
-   - If a value is a `Map`, it's processed recursively without converting to a string.
-
-3. **Handling JSON Strings:**
-   - If a value is a `String`, attempt to parse it as JSON. If successful, process recursively; otherwise, treat it as a regular string.
-
-4. **Fixed Initialization of `resultMsg`:**
-   - Properly initialize `resultMsg` in `removeNullValuesInJsonAttributes` to avoid `NullPointerException`.
-
-**Refactored Code:**
+### Updated Code
 
 ```java
-@Component
-public class DeduplicationUtils {
-    Logger logger = LogManager.getLogger(this.getClass());
-
-    public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
-        HashMap<String, Object> resultMsg = new HashMap<>();
-        try {
-            for (Map.Entry<String, Object> entry : msg.entrySet()) {
-                String key = entry.getKey();
-                Object value = entry.getValue();
-
-                if (value == null || value.toString().isEmpty()) {
-                    continue; // Skip null or empty values
-                }
-
-                if (value instanceof Map) {
-                    // Recursively process nested map
-                    Map<String, Object> nestedMap = (Map<String, Object>) value;
-                    HashMap<String, Object> processedMap = removeNullValuesInJsonAttributes(nestedMap);
-                    if (!processedMap.isEmpty()) {
-                        resultMsg.put(key, processedMap);
-                    }
-                } else if (value instanceof List) {
-                    // Process each element in the list
-                    List<?> list = (List<?>) value;
-                    List<Object> processedList = new ArrayList<>();
-                    for (Object item : list) {
-                        if (item instanceof Map) {
-                            HashMap<String, Object> processedItem = removeNullValuesInJsonAttributes((Map<String, Object>) item);
-                            if (!processedItem.isEmpty()) {
-                                processedList.add(processedItem);
-                            }
-                        } else if (item != null && !item.toString().isEmpty()) {
-                            processedList.add(item);
-                        }
-                    }
-                    if (!processedList.isEmpty()) {
-                        resultMsg.put(key, processedList);
-                    }
-                } else if (value instanceof String) {
-                    // Check if the string is a JSON object
-                    try {
-                        Map<String, Object> parsedMap = RulesConstants.getObjectMapper().readValue((String) value, HashMap.class);
-                        HashMap<String, Object> processedMap = removeNullValuesInJsonAttributes(parsedMap);
-                        if (!processedMap.isEmpty()) {
-                            resultMsg.put(key, processedMap);
-                        }
-                    } catch (JsonProcessingException e) {
-                        // Not a JSON string, add as regular value
-                        resultMsg.put(key, value);
-                    }
-                } else {
-                    // Primitive types
-                    resultMsg.put(key, value);
-                }
-            }
-        } catch (Exception e) {
-            logger.error("Exception removing null/empty values: ", e);
-        }
-        return resultMsg;
-    }
-
-    public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
-        try {
-            for (Map.Entry<String, Object> entry : incomingMsg.entrySet()) {
-                String key = entry.getKey();
-                Object value = entry.getValue();
-
-                if (value == null || value.toString().isEmpty()) {
-                    continue;
-                }
-
-                if (!isLateAlarm) {
-                    if (value instanceof Map) {
-                        Map<String, Object> incomingNested = (Map<String, Object>) value;
-                        Object cachedValue = cachedMsg.get(key);
-                        if (cachedValue instanceof Map) {
-                            Map<String, Object> cachedNested = (Map<String, Object>) cachedValue;
-                            HashMap<String, Object> merged = mergeUpdateJsonValues(incomingNested, cachedNested, isLateAlarm);
-                            cachedMsg.put(key, merged);
-                        } else {
-                            HashMap<String, Object> processed = removeNullValuesInJsonAttributes(incomingNested);
-                            cachedMsg.put(key, processed);
-                        }
-                    } else if (value instanceof String) {
+public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
+    try {
+        for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
+            if (!isLateAlarm) {
+                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                    // check if value itself is another JSON
+                    if (checkIfJsonValue(iterate.getValue())) {
                         try {
-                            Map<String, Object> parsedIncoming = RulesConstants.getObjectMapper().readValue((String) value, HashMap.class);
-                            Object cachedValue = cachedMsg.get(key);
-                            if (cachedValue instanceof Map) {
-                                Map<String, Object> parsedCached = (Map<String, Object>) cachedValue;
-                                HashMap<String, Object> merged = mergeUpdateJsonValues(parsedIncoming, parsedCached, isLateAlarm);
-                                cachedMsg.put(key, merged);
+                            HashMap<String, Object> updatedMsg;
+
+                            if (cachedMsg.get(iterate.getKey()) != null) {
+                                // Serialize and Deserialize with Exception Handling
+                                String serializedValue = RulesConstants.getObjectMapper().writeValueAsString(iterate.getValue());
+                                HashMap<String, Object> deserializedValue = RulesConstants.getObjectMapper().readValue(serializedValue, HashMap.class);
+
+                                HashMap<String, Object> cachedDeserializedValue = RulesConstants.getObjectMapper().readValue(
+                                    RulesConstants.getObjectMapper().writeValueAsString(cachedMsg.get(iterate.getKey())),
+                                    HashMap.class
+                                );
+
+                                updatedMsg = mergeUpdateJsonValues(deserializedValue, cachedDeserializedValue, isLateAlarm);
                             } else {
-                                HashMap<String, Object> processed = removeNullValuesInJsonAttributes(parsedIncoming);
-                                cachedMsg.put(key, processed);
+                                // Handle non-cached case with Exception Handling
+                                String serializedValue = RulesConstants.getObjectMapper().writeValueAsString(iterate.getValue());
+                                HashMap<String, Object> deserializedValue = RulesConstants.getObjectMapper().readValue(serializedValue, HashMap.class);
+
+                                updatedMsg = removeNullValuesInJsonAttributes(deserializedValue);
                             }
-                        } catch (JsonProcessingException e) {
-                            cachedMsg.put(key, value);
+                            cachedMsg.put(iterate.getKey(), updatedMsg);
+                        } catch (Exception e) {
+                            logger.error("Failed during serialization/deserialization of value for key: " + iterate.getKey() + ". Error: " + e);
                         }
                     } else {
-                        cachedMsg.put(key, value);
+                        cachedMsg.put(iterate.getKey(), iterate.getValue());
                     }
-                } else {
-                    // Late alarm handling
-                    Object cachedValue = cachedMsg.get(key);
-                    if (cachedValue == null) {
-                        if (value instanceof Map) {
-                            HashMap<String, Object> processed = removeNullValuesInJsonAttributes((Map<String, Object>) value);
-                            cachedMsg.put(key, processed);
-                        } else if (value instanceof String) {
-                            try {
-                                Map<String, Object> parsed = RulesConstants.getObjectMapper().readValue((String) value, HashMap.class);
-                                HashMap<String, Object> processed = removeNullValuesInJsonAttributes(parsed);
-                                cachedMsg.put(key, processed);
-                            } catch (JsonProcessingException e) {
-                                cachedMsg.put(key, value);
-                            }
-                        } else {
-                            cachedMsg.put(key, value);
+                }
+            } else { // Late alarm case
+                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                    try {
+                        if (cachedMsg.get(iterate.getKey()) != null && checkIfJsonValue(cachedMsg.get(iterate.getKey()))) {
+                            // Serialize and Deserialize with Exception Handling
+                            String serializedValue = RulesConstants.getObjectMapper().writeValueAsString(iterate.getValue());
+                            HashMap<String, Object> deserializedValue = RulesConstants.getObjectMapper().readValue(serializedValue, HashMap.class);
+
+                            HashMap<String, Object> cachedDeserializedValue = RulesConstants.getObjectMapper().readValue(
+                                RulesConstants.getObjectMapper().writeValueAsString(cachedMsg.get(iterate.getKey())),
+                                HashMap.class
+                            );
+
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(deserializedValue, cachedDeserializedValue, isLateAlarm);
+                            cachedMsg.put(iterate.getKey(), updatedMsg);
+                        } else if (cachedMsg.get(iterate.getKey()) == null) {
+                            cachedMsg.put(iterate.getKey(), iterate.getValue());
                         }
-                    } else if (cachedValue instanceof Map && value instanceof Map) {
-                        HashMap<String, Object> merged = mergeUpdateJsonValues((Map<String, Object>) value, (Map<String, Object>) cachedValue, isLateAlarm);
-                        cachedMsg.put(key, merged);
+                    } catch (Exception e) {
+                        logger.error("Failed during serialization/deserialization of late alarm value for key: " + iterate.getKey() + ". Error: " + e);
                     }
                 }
             }
-        } catch (Exception e) {
-            logger.error("Exception merging JSON values: ", e);
         }
-        return (HashMap<String, Object>) cachedMsg;
+    } catch (Exception e) {
+        logger.error("Exception occurred while trying to merge update JsonValues: " + e + " and incoming message: " + incomingMsg);
     }
+    return (HashMap<String, Object>) cachedMsg;
 }
 ```
 
-**Explanation of Changes:**
+### Added Exception Handling:
+1. **Try-Catch Blocks Around Serialization (`writeValueAsString`):**
+   - Handles cases where `iterate.getValue()` produces non-serializable data or circular references.
+   - Catches exceptions like `JsonProcessingException`.
 
-1. **Type Checks Instead of `checkIfJsonValue`:**
-   - Used `instanceof Map` and `instanceof List` to identify nested structures directly.
-   - For `String` values, attempt JSON parsing and handle exceptions if they're not valid JSON.
+2. **Try-Catch Blocks Around Deserialization (`readValue`):**
+   - Handles cases where the serialized JSON is invalid or does not match the `HashMap` type.
 
-2. **Avoid `toString()` on Maps:**
-   - Directly cast and process nested `Map` objects without converting them to strings, preventing invalid JSON formats.
+3. **Specific Error Logging:**
+   - Logs detailed error messages including the failing key and the nature of the error.
+   - Helps in pinpointing problematic input during debugging.
 
-3. **Handling Lists:**
-   - Added processing for `List` values to recursively handle nested lists (though simplified; may need expansion based on use case).
+### Explanation:
+- For every instance of serialization and deserialization (`writeValueAsString` → `readValue`), the try-catch ensures that invalid inputs (null, circular references, arrays, or non-JSON-compatible values) are gracefully handled without interrupting the flow of the function.
+- The rest of the `mergeUpdateJsonValues` functionality remains intact as requested.
 
-4. **Late Alarm Handling:**
-   - Correctly merges existing and incoming values when `isLateAlarm` is true, ensuring proper nested updates.
-
-This refactoring ensures that nested JSON structures (whether as Maps or JSON-formatted Strings) are processed correctly, eliminating the `JsonParseException` caused by invalid parsing of Map `toString()` outputs.
+Let me know if there's anything else you'd like improved or explained further! 😊

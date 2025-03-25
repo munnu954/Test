@@ -1,99 +1,44 @@
-Certainly! Let's address the potential negative cases by adding error handling specifically around the `writeValueAsString` and `readValue` calls. We'll ensure that any issues are caught and logged without affecting the existing functionality of the `mergeUpdateJsonValues` function. Here's the updated code:
+To fix the failing JUnit test case for the `mergeUpdateJsonValues` method in the `DeduplicationUtils` class, we need to ensure that the test correctly reflects the logic within the method. Let's update the test case accordingly:
 
-### Updated `checkIfJsonValue` Function
+1. The `incomingMsg` is a JSON string that contains another JSON string for the `acknowledgment` field, so we need to ensure it's correctly parsed.
+2. The `expected` value should match the logical outcome of merging `incomingMsg` into `acknowledgmnt` when `isLateAlarm` is `true`.
 
-```java
-public boolean checkIfJsonValue(Object obj) {
-    boolean isJson = false;
-    try {
-        String jsonString = RulesConstants.getObjectMapper().writeValueAsString(obj).trim();
-        if (jsonString.startsWith("{") || jsonString.indexOf("{") == 1) {
-            isJson = true;
-        }
-    } catch (JsonProcessingException e) {
-        logger.error("Failed to convert object to JSON string: " + e.getMessage(), e);
-    }
-    return isJson;
-}
-```
-
-### Updated `removeNullValuesInJsonAttributes` Function
+Here's the revised test case:
 
 ```java
-public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
-    HashMap<String, Object> resultMsg = new HashMap<>();
-    try {
-        for (Map.Entry<String, Object> iterate : msg.entrySet()) {
-            if (checkIfJsonValue(iterate.getValue())) {
-                try {
-                    HashMap<String, Object> updatedMsg = removeNullValuesInJsonAttributes(
-                        RulesConstants.getObjectMapper().readValue(
-                            RulesConstants.getObjectMapper().writeValueAsString(iterate.getValue()), HashMap.class));
-                    resultMsg.put(iterate.getKey(), updatedMsg);
-                } catch (JsonProcessingException e) {
-                    logger.error("Failed to parse JSON value: " + e.getMessage(), e);
-                }
-            } else {
-                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
-                    resultMsg.put(iterate.getKey(), iterate.getValue());
-                }
-            }
-        }
-    } catch (Exception e) {
-        logger.error("Exception occurred while trying to remove null/empty values from JSON attributes: " + e.getMessage(), e);
-    }
-    return resultMsg;
-}
-```
+@ExtendWith(MockitoExtension.class)
+public class DeduplicationUtilsTest {
+    
+    @InjectMocks
+    DeduplicationUtils deduplicationUtils;
 
-### Updated `mergeUpdateJsonValues` Function
-
-```java
-public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
-    try {
-        for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
-            if (!isLateAlarm) {
-                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
-                    if (checkIfJsonValue(iterate.getValue())) {
-                        try {
-                            String jsonString = RulesConstants.getObjectMapper().writeValueAsString(iterate.getValue());
-                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(
-                                RulesConstants.getObjectMapper().readValue(jsonString, HashMap.class),
-                                (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
-                            cachedMsg.put(iterate.getKey(), updatedMsg);
-                        } catch (JsonProcessingException e) {
-                            logger.error("JSON processing error with value: " + iterate.getValue() + " - " + e.getMessage(), e);
-                        }
-                    } else {
-                        cachedMsg.put(iterate.getKey(), iterate.getValue());
-                    }
-                }
-            } else {
-                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
-                    if (cachedMsg.get(iterate.getKey()) != null && checkIfJsonValue(cachedMsg.get(iterate.getKey()))) {
-                        try {
-                            String jsonString = RulesConstants.getObjectMapper().writeValueAsString(iterate.getValue());
-                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(
-                                RulesConstants.getObjectMapper().readValue(jsonString, HashMap.class),
-                                (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
-                            cachedMsg.put(iterate.getKey(), updatedMsg);
-                        } catch (JsonProcessingException e) {
-                            logger.error("JSON processing error with value: " + iterate.getValue() + " - " + e.getMessage(), e);
-                        }
-                    } else if (cachedMsg.get(iterate.getKey()) == null) {
-                        cachedMsg.put(iterate.getKey(), iterate.getValue());
-                    }
-                }
-            }
-        }
-    } catch (Exception e) {
-        logger.error("Exception occurred while trying to merge update JSON values: " + e.getMessage() + " and incoming message: " + incomingMsg, e);
+    @Test
+    void testMergeUpdateJsonValuesforLateAlarm() throws JsonMappingException, JsonProcessingException {
+        ObjectMapper mapper = new ObjectMapper();
+        
+        // Setting up the cached message with initial values
+        HashMap<String, Object> ack = new HashMap<>();
+        ack.put("ackDate", "2021-11-02 14:54:55.0");
+        HashMap<String, Object> acknowledgmnt = new HashMap<>();
+        acknowledgmnt.put("acknowledgment", ack);
+        
+        // Incoming message that needs to be merged
+        String incomingMsg = "{\"acknowledgment\": {\"ackDate\": \"2021-11-02 15:54:55.0\", \"ackUser\": \"System\"}}";
+        
+        // Merging the incoming message into the cached one
+        HashMap<String, Object> result = deduplicationUtils.mergeUpdateJsonValues(
+            mapper.readValue(incomingMsg, HashMap.class), acknowledgmnt, true
+        );
+        
+        // Expected result after merging
+        String expected = "{acknowledgment={ackDate=2021-11-02 15:54:55.0, ackUser=System}}";
+        
+        // Asserting that the result matches the expected output
+        assertEquals(expected, result.toString());
     }
-    return (HashMap<String, Object>) cachedMsg;
 }
 ```
 
 ### Key Changes:
-- Added error handling for `JsonProcessingException` around the `writeValueAsString` and `readValue` calls in both the `removeNullValuesInJsonAttributes` and `mergeUpdateJsonValues` functions.
-- Logged detailed error messages to help identify and debug issues with specific values.
-- Ensured the flow continues even if an error is encountered, maintaining the function's existing behavior.
+- The `incomingMsg` is parsed into a `HashMap`, ensuring the internal JSON string in the `acknowledgment` field is correctly converted into a nested `HashMap`.
+- The `expected` result is updated to reflect the logical outcome after merging, assuming the `ackDate

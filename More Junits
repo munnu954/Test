@@ -1,46 +1,80 @@
-public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
-    try {
-        ObjectMapper objectMapper = RulesConstants.getObjectMapper();
-        
-        for (Map.Entry<String, Object> entry : incomingMsg.entrySet()) {
-            String key = entry.getKey();
-            Object value = entry.getValue();
-            
-            if (!isLateAlarm) {
-                if (value != null && !value.toString().isEmpty()) {
-                    if (checkIfJsonValue(value)) {
-                        if (cachedMsg.containsKey(key) && cachedMsg.get(key) instanceof Map) {
-                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(objectMapper.readValue(objectMapper.writeValueAsString(value), HashMap.class), (HashMap<String, Object>) cachedMsg.get(key), isLateAlarm);
-                            cachedMsg.put(key, updatedMsg);
-                        } else {
-                            cachedMsg.put(key, removeNullValuesInJsonAttributes(objectMapper.readValue(objectMapper.writeValueAsString(value), HashMap.class)));
-                        }
-                    } else {
-                        cachedMsg.put(key, value);
-                    }
-                }
-            } else {
-                if (value != null && !value.toString().isEmpty()) {
-                    if (cachedMsg.containsKey(key) && checkIfJsonValue(cachedMsg.get(key))) {
-                        HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(objectMapper.readValue(objectMapper.writeValueAsString(value), HashMap.class), (HashMap<String, Object>) cachedMsg.get(key), isLateAlarm);
-                        cachedMsg.put(key, updatedMsg);
-                    } else if (!cachedMsg.containsKey(key)) {
-                        cachedMsg.put(key, value);
-                    }
-                }
-            }
-        }
-    } catch (Exception e) {
-        logger.error("Exception occurred while trying to merge update JsonValues: " + e + " and incoming message : " + incomingMsg);
-    }
-    
-    return (HashMap<String, Object>) cachedMsg;
-}
-``` 
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.web.client.RestTemplate;
 
-In the updated code:
-- Changed the object mapper instance creation to be inside the method to avoid any potential thread safety issues.
-- Used object mapper to serialize and deserialize the JSON objects.
-- Check for `key` existence in `cachedMsg` using `containsKey` method.
-- Added a check if the value corresponding to a key is an instance of Map while retrieving from `cachedMsg`.
-- Refactored variable names for better readability.
+import java.util.*;
+
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class InmsProcessorServiceTest {
+
+    @Mock
+    private CircuitStitchService circuitStitchService;
+
+    @Mock
+    private RestTemplate template;
+
+    @InjectMocks
+    private InmsProcessorService inmsProcessorService;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    void testGetTrailNamesFromTrailIds_successfulResponse() {
+        Set<String> trailIdList = new HashSet<>(Arrays.asList("T1", "T2"));
+
+        String dbServiceUrl = "http://test-url";
+        DBServiceRequest mockedRequest = new DBServiceRequest();
+        mockedRequest.setRequestQuery(SQLConstants.getTrailNameFromTrailId);
+
+        // Mocking the service URL and response
+        when(circuitStitchService.getServiceUrl(anyString())).thenReturn("http://test-url/");
+        when(template.postForObject(anyString(), any(), eq(DBServiceResponse.class)))
+                .thenReturn(mockDbServiceResponse());
+
+        Map<String, String> result = inmsProcessorService.getTrailNamesFromTrailIds(trailIdList);
+
+        assertNotNull(result);
+        assertEquals(2, result.size());
+        assertEquals("TrailName1", result.get("T1"));
+        assertEquals("TrailName2", result.get("T2"));
+
+        verify(circuitStitchService, times(1)).getServiceUrl(anyString());
+        verify(template, times(1)).postForObject(anyString(), any(), eq(DBServiceResponse.class));
+    }
+
+    @Test
+    void testGetTrailNamesFromTrailIds_emptyResponse() {
+        Set<String> trailIdList = new HashSet<>(Arrays.asList("T1", "T2"));
+
+        when(circuitStitchService.getServiceUrl(anyString())).thenReturn("http://test-url/");
+        when(template.postForObject(anyString(), any(), eq(DBServiceResponse.class))).thenReturn(null);
+
+        Map<String, String> result = inmsProcessorService.getTrailNamesFromTrailIds(trailIdList);
+
+        assertTrue(result.isEmpty());
+    }
+
+    private DBServiceResponse mockDbServiceResponse() {
+        DBServiceResponse response = new DBServiceResponse();
+        response.setStatus("SUCCESS");
+        List<Map<String, Object>> queryResults = new ArrayList<>();
+        Map<String, Object> result1 = new HashMap<>();
+        result1.put("TRAIL_ID", "T1");
+        result1.put("TRAIL_NAME", "TrailName1");
+        Map<String, Object> result2 = new HashMap<>();
+        result2.put("TRAIL_ID", "T2");
+        result2.put("TRAIL_NAME", "TrailName2");
+        queryResults.add(result1);
+        queryResults.add(result2);
+        response.setQueryResults(queryResults);
+        return response;
+    }
+}

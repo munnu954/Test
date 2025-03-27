@@ -1,43 +1,100 @@
-The error you're encountering is due to the fact that the `removeNullValuesInJsonAttributes` function is trying to parse a non-JSON string as a JSON object. In this case, the string "tag={WLS}" is not a valid JSON object.
+The error you're encountering suggests that the JSON parser is expecting a double-quote to start a field name, which generally implies that the input JSON string might not be properly formatted or quoted. Here's a revised version of your code with comments indicating where changes have been made:
 
-To fix this, we need to modify the `removeNullValuesInJsonAttributes` function to handle cases where the input string is not a valid JSON object.
+```java
+@Component
+public class DeduplicationUtils {
+    Logger logger = LogManager.getLogger(this.getClass());
 
-Here's the updated `removeNullValuesInJsonAttributes` function:
-
-```
-public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
-    try {
-        HashMap<String, Object> resultMsg = new HashMap<>();
-        for (Map.Entry<String, Object> iterate : msg.entrySet()) {
-            // if the value itself is a json string, recursively call and process
-            if (checkIfJsonValue(iterate.getValue())) {
-                try {
+    public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
+        HashMap<String, Object> resultMsg = new HashMap<>(msg); // Initialize resultMsg with msg
+        try {
+            for (Map.Entry<String, Object> iterate : msg.entrySet()) {
+                // if the value itself is a json string, recursively call and process
+                if (checkIfJsonValue(iterate.getValue())) {
                     HashMap<String, Object> updatedMsg = removeNullValuesInJsonAttributes(
-                            RulesConstants.getObjectMapper().readValue(iterate.getValue().toString(), HashMap.class));
+                        RulesConstants.getObjectMapper().readValue(
+                            RulesConstants.getObjectMapper().writeValueAsString(iterate.getValue()), HashMap.class));
                     // sets the modified values back to original message
                     resultMsg.put(iterate.getKey(), updatedMsg);
-                } catch (JsonProcessingException e) {
-                    // Handle the exception
-                    logger.error("Error parsing JSON: " + e.getMessage());
-                }
-            } else {
-                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
-                    resultMsg.put(iterate.getKey(), iterate.getValue());
+                } else {
+                    if (iterate.getValue() == null || iterate.getValue().toString().isEmpty()) {
+                        resultMsg.remove(iterate.getKey());
+                    }
                 }
             }
+        } catch (Exception e) {
+            logger.error("Exception occurred while trying to remove null/empty values from json attributes: " + e);
         }
         return resultMsg;
-    } catch (Exception e) {
-        logger.error("Exception occurred while trying to remove null/empty values from json attributes: " + e);
-        return null;
+    }
+
+    public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
+        try {
+            for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
+                if (!isLateAlarm) {
+                    if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                        // check if value itself is another json
+                        if (checkIfJsonValue(iterate.getValue())) {
+                            if (cachedMsg.get(iterate.getKey()) != null) {
+                                HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(
+                                    RulesConstants.getObjectMapper().readValue(
+                                        RulesConstants.getObjectMapper().writeValueAsString(iterate.getValue()), HashMap.class),
+                                    (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                                cachedMsg.put(iterate.getKey(), updatedMsg);
+                            } else {
+                                // if the key not already present in cache, remove null values and update in
+                                // cachedMsg
+                                cachedMsg.put(iterate.getKey(), removeNullValuesInJsonAttributes(
+                                    RulesConstants.getObjectMapper().readValue(iterate.getValue().toString(), HashMap.class)));
+                            }
+                        } else {
+                            cachedMsg.put(iterate.getKey(), iterate.getValue());
+                        }
+                    }
+                } else // late alarm
+                {
+                    if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                        // check if the key is present in cached alarm & check if its a json value or
+                        // not
+                        if (cachedMsg.get(iterate.getKey()) != null && checkIfJsonValue(cachedMsg.get(iterate.getKey()))) {
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(
+                                RulesConstants.getObjectMapper().readValue(
+                                    RulesConstants.getObjectMapper().writeValueAsString(iterate.getValue()), HashMap.class),
+                                (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                            cachedMsg.put(iterate.getKey(), updatedMsg);
+                        } else if (cachedMsg.get(iterate.getKey()) == null) {
+                            cachedMsg.put(iterate.getKey(), iterate.getValue());
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Exception occurred while trying to merge update JsonValues: " + e + " and incoming message : " + incomingMsg);
+        }
+        return (HashMap<String, Object>) cachedMsg;
+    }
+
+    public boolean checkIfJsonValue(Object obj) {
+        boolean isJson = false;
+        try {
+            // if json object
+            String jsonString = RulesConstants.getObjectMapper().writeValueAsString(obj).trim();
+            if (jsonString.startsWith("{") || jsonString.startsWith("[")) { // Check for JSON array as well
+                isJson = true;
+            }
+        } catch (JsonProcessingException e) {
+            return isJson;
+        }
+        return isJson;
     }
 }
 ```
 
-*Changes Made:*
+### Changes Made:
+1. **Initialization of `resultMsg`:** Initialized `resultMsg` with `msg` at the beginning of `removeNullValuesInJsonAttributes` to ensure it is not `null`.
 
-1. Added a try-catch block around the `RulesConstants.getObjectMapper().readValue` call to catch any `JsonProcessingException` that may occur.
-2. Modified the `if` condition to check if the value is not null and not empty before attempting to parse it as a JSON object.
-3. Added a null check for the `iterate.getValue()` before attempting to parse it as a JSON object.
+2. **Condition for JSON Array:** Updated the `checkIfJsonValue` method to check for JSON arrays as well by using `jsonString.startsWith("[")`.
 
-With these changes, the `removeNullValuesInJsonAttributes` function should now be able to handle cases where the input string is not a valid JSON object.
+3. **String Handling in `checkIfJsonValue`:** Simplified the check for JSON strings by extracting the string representation once.
+
+These changes should help with the parsing and handling of JSON strings and objects, addressing the issue with unexpected characters. Make sure the input JSON is correctly formatted and quoted, which seems to be the root cause of the original error.

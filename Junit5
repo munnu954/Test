@@ -1,40 +1,223 @@
-Certainly! You can create a utility method in Java to convert the format of `incomingMsg0ld` to `incomingMsgNew`. Here's a generic example using the `org.json` library, which is commonly used for handling JSON in Java:
+Okay, so I'm trying to figure out why this error is happening in the DeduplicationUtils class. The error message is a JsonParseException, specifically mentioning an unexpected character 'n' and expecting a double quote to start a field name. That suggests that the code is trying to parse something as JSON that isn't actually valid JSON.
+
+Looking at the example message provided, the tag is {WLS}. Hmm, that doesn't look like a JSON string. It's just a string with curly braces but no key-value pairs. So when the code tries to parse this as JSON, it fails because it's not properly formatted.
+
+The error occurs in the removeNullValuesInJsonAttributes method. Let me check that method. It iterates over each entry in the map, and if the value is a JSON string (as determined by checkIfJsonValue), it recursively processes it. Otherwise, if the value is null or empty, it removes the key.
+
+The problem seems to be that checkIfJsonValue is incorrectly identifying the string {WLS} as a JSON value. Let me look at that method. It writes the object as a string and checks if it starts with '{' or if the index of '{' is 1. Wait, that second condition might be wrong. If the string is "{WLS}", then the index of '{' is 0, which would satisfy the first condition. But if the string is something like "n{WLS}", then the index would be 1, which would incorrectly mark it as JSON.
+
+So the checkIfJsonValue method is flawed. It's not accurately determining whether a string is a valid JSON object. It's just checking for the presence of '{' at certain positions, which isn't sufficient. For example, a string like "abc{def}" would incorrectly be considered JSON because it contains '{' at position 3, but the method's condition is looking for it at position 1, which might not cover all cases.
+
+Another issue is that when the code tries to parse a string that isn't valid JSON, like "{WLS}", it throws an exception because the string isn't properly formatted. The method removeNullValuesInJsonAttributes doesn't handle this case gracefully.
+
+So, to fix this, I need to adjust the checkIfJsonValue method to more accurately determine if a string is a valid JSON object. Instead of just checking for '{', perhaps we should attempt to parse it and see if it results in a Map. If parsing succeeds and the result is a Map, then it's a JSON object. Otherwise, it's not.
+
+Additionally, in the removeNullValuesInJsonAttributes method, when we attempt to parse a value as JSON, we should handle cases where the parsing fails. Instead of letting it throw an exception, we can catch it and treat the value as a non-JSON string.
+
+Let me outline the steps:
+
+1. Modify checkIfJsonValue to attempt parsing the object as a JSON string and check if it results in a Map. If it does, return true; otherwise, false. This will accurately determine if the value is a JSON object.
+
+2. In removeNullValuesInJsonAttributes, when trying to parse a value as JSON, wrap it in a try-catch block. If parsing fails, treat the value as a regular string and proceed accordingly.
+
+3. Ensure that the method doesn't attempt to process non-JSON strings as JSON, thus preventing the JsonParseException.
+
+By making these changes, the code should correctly identify JSON values and handle non-JSON strings appropriately, avoiding the exception.
+
+Now, let me think about how to implement this in code.
+
+In checkIfJsonValue, instead of checking the string for '{', we'll try to parse it using ObjectMapper. If the parsed result is an instance of Map, then it's a JSON object. Otherwise, it's not. We'll have to handle exceptions here as well.
+
+In removeNullValuesInJsonAttributes, when we determine that a value is JSON, we'll attempt to parse it. If parsing fails, we'll log a warning and treat it as a non-JSON value, perhaps removing it if it's null or empty.
+
+Wait, but in the original code, if the value is determined to be JSON, it's parsed and processed recursively. If it's not JSON, then it's checked for null or empty. So, by improving the check, we can prevent trying to parse non-JSON strings, thus avoiding the exception.
+
+I should also consider that the value might be a string that looks like JSON but isn't. For example, "{WLS}" isn't valid JSON because the key isn't in quotes. So, when we try to parse it, it should fail, and we should treat it as a regular string.
+
+So, in the updated checkIfJsonValue, we'll attempt to parse the object into a Map. If it succeeds, return true; else, false.
+
+Let me sketch the code:
+
+public boolean checkIfJsonValue(Object obj) {
+    try {
+        String jsonStr = RulesConstants.getObjectMapper().writeValueAsString(obj);
+        Object parsed = RulesConstants.getObjectMapper().readValue(jsonStr, Object.class);
+        return parsed instanceof Map;
+    } catch (JsonProcessingException e) {
+        return false;
+    }
+}
+
+This way, only valid JSON objects will be considered as JSON values.
+
+Then, in removeNullValuesInJsonAttributes, when we have a value that's supposed to be JSON, we'll parse it. But if parsing fails, we'll handle it.
+
+Wait, but in the current code, if checkIfJsonValue returns true, it proceeds to parse. So with the updated check, it should only return true for valid JSON, so parsing should succeed. However, perhaps there are edge cases, so adding a try-catch in the parsing step is still a good idea.
+
+Alternatively, since checkIfJsonValue now ensures that the value is a valid JSON string, the parsing in removeNullValuesInJsonAttributes should not throw an exception. But to be safe, maybe we can still wrap it in a try-catch and handle any unexpected issues.
+
+So, in the removeNullValuesInJsonAttributes method, when we call readValue, if it fails, we can log an error and perhaps remove the key or handle it as needed.
+
+But given that checkIfJsonValue now accurately determines if it's a JSON object, the parsing should not fail. So perhaps the try-catch in removeNullValuesInJsonAttributes can be removed, but it's safer to keep it for any unforeseen issues.
+
+Another thing to consider is that in the original code, when the value is a JSON string, it's parsed into a HashMap, processed recursively, and then set back. So with the updated check, this should work correctly.
+
+Testing this with the example message {WLS}, checkIfJsonValue should return false because it's not a valid JSON object. Therefore, the code will treat it as a regular string. Since it's not null or empty, it will be kept in the resultMsg.
+
+Wait, but in the original code, if the value is not JSON, it checks if it's null or empty. If it is, it removes the key; otherwise, it keeps it. So in the case of {WLS}, since it's not null or empty, it remains in the message.
+
+But in the error scenario, the code was trying to parse {WLS} as JSON, which failed. With the updated check, it won't attempt to parse it, thus avoiding the exception.
+
+So, the main changes are in the checkIfJsonValue method and ensuring that only valid JSON objects are processed as such.
+
+I should also consider if there are other places in the code where similar issues might occur, but based on the provided code, it seems that the primary issue is with how JSON values are checked and parsed in removeNullValuesInJsonAttributes and mergeUpdateJsonValues.
+
+In summary, the fix involves improving the check for JSON values to ensure they are valid and handling any parsing exceptions gracefully.
+
+
+
+To fix the error, we need to ensure that only valid JSON strings are parsed as JSON. The issue arises because the code incorrectly identifies certain strings as JSON, leading to parsing errors. Here's how we can resolve it:
+
+**Changes Made:**
+
+1. **Refactored `checkIfJsonValue` Method:**
+   - Now accurately determines if a value is a valid JSON object by attempting to parse it and checking if the result is a `Map`.
+   - This prevents invalid strings from being treated as JSON.
+
+2. **Improved Error Handling in `removeNullValuesInJsonAttributes`:**
+   - Wrapped JSON parsing in a try-catch block to handle any unexpected parsing issues gracefully.
+
+3. **Enhanced Logging:**
+   - Added detailed logging to provide better insights into parsing failures.
+
+**Updated Code:**
 
 ```java
-import org.json.JSONObject;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-public class JsonConverter {
+import java.util.HashMap;
+import java.util.Map;
 
-    public static String convertOldToNewFormat(String oldMessage) {
-        // Parse the outer JSON object
-        JSONObject outerObject = new JSONObject(oldMessage);
+@Component
+public class DeduplicationUtils {
+    private static final Logger logger = LoggerFactory.getLogger(DeduplicationUtils.class);
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
-        // Extract the acknowledgment string
-        String acknowledgmentString = outerObject.getString("acknowledgment");
+    public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
+        HashMap<String, Object> resultMsg = new HashMap<>();
+        try {
+            for (Map.Entry<String, Object> entry : msg.entrySet()) {
+                String key = entry.getKey();
+                Object value = entry.getValue();
 
-        // Parse the acknowledgment string into a JSON object
-        JSONObject acknowledgmentObject = new JSONObject(acknowledgmentString);
-
-        // Replace the string with the JSON object
-        outerObject.put("acknowledgment", acknowledgmentObject);
-
-        // Convert the updated object back to a string
-        return outerObject.toString();
+                if (checkIfJsonValue(value)) {
+                    try {
+                        HashMap<String, Object> nestedMap = objectMapper.readValue(value.toString(), HashMap.class);
+                        HashMap<String, Object> processedNestedMap = removeNullValuesInJsonAttributes(nestedMap);
+                        resultMsg.put(key, processedNestedMap);
+                    } catch (JsonProcessingException e) {
+                        logger.error("Failed to parse JSON value for key '{}': {}", key, e.getMessage());
+                        // Optionally, remove the key or keep the original value
+                        resultMsg.put(key, value);
+                    }
+                } else {
+                    if (value == null || (value.toString().trim().isEmpty())) {
+                        continue; // Skip null or empty values
+                    }
+                    resultMsg.put(key, value);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Exception occurred while processing message: {}", e.getMessage(), e);
+        }
+        return resultMsg;
     }
 
-    public static void main(String[] args) {
-        String incomingMsg0ld = "{\"acknowledgment\": \"{\\\"ackDate\\\": \\\"2021-11-02 15:54:55.0\\\", \\\"ackUser\\\": \\\"System\\\"}\"}";
+    public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
+        try {
+            for (Map.Entry<String, Object> entry : incomingMsg.entrySet()) {
+                String key = entry.getKey();
+                Object value = entry.getValue();
 
-        String convertedMessage = convertOldToNewFormat(incomingMsg0ld);
-        System.out.println("Converted Message: " + convertedMessage);
+                if (!isLateAlarm) {
+                    if (value != null && !value.toString().trim().isEmpty()) {
+                        if (checkIfJsonValue(value)) {
+                            try {
+                                HashMap<String, Object> nestedIncoming = objectMapper.readValue(value.toString(), HashMap.class);
+                                HashMap<String, Object> nestedCached = (HashMap<String, Object>) cachedMsg.get(key);
+                                if (nestedCached != null) {
+                                    HashMap<String, Object> merged = mergeUpdateJsonValues(nestedIncoming, nestedCached, isLateAlarm);
+                                    cachedMsg.put(key, merged);
+                                } else {
+                                    HashMap<String, Object> processedNested = removeNullValuesInJsonAttributes(nestedIncoming);
+                                    cachedMsg.put(key, processedNested);
+                                }
+                            } catch (JsonProcessingException e) {
+                                logger.error("Failed to merge JSON values for key '{}': {}", key, e.getMessage());
+                                cachedMsg.put(key, value);
+                            }
+                        } else {
+                            cachedMsg.put(key, value);
+                        }
+                    }
+                } else {
+                    if (value != null && !value.toString().trim().isEmpty()) {
+                        Object cachedValue = cachedMsg.get(key);
+                        if (cachedValue != null && checkIfJsonValue(cachedValue)) {
+                            try {
+                                HashMap<String, Object> nestedIncoming = objectMapper.readValue(value.toString(), HashMap.class);
+                                HashMap<String, Object> nestedCached = objectMapper.readValue(cachedValue.toString(), HashMap.class);
+                                HashMap<String, Object> merged = mergeUpdateJsonValues(nestedIncoming, nestedCached, isLateAlarm);
+                                cachedMsg.put(key, merged);
+                            } catch (JsonProcessingException e) {
+                                logger.error("Failed to merge JSON values for key '{}': {}", key, e.getMessage());
+                                cachedMsg.put(key, value);
+                            }
+                        } else if (cachedValue == null) {
+                            cachedMsg.put(key, value);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Exception occurred while merging messages: {}", e.getMessage(), e);
+        }
+        return (HashMap<String, Object>) cachedMsg;
+    }
+
+    private boolean checkIfJsonValue(Object obj) {
+        if (obj == null) {
+            return false;
+        }
+        try {
+            String jsonStr = objectMapper.writeValueAsString(obj);
+            Object parsed = objectMapper.readValue(jsonStr, Object.class);
+            return parsed instanceof Map;
+        } catch (JsonProcessingException e) {
+            return false;
+        }
     }
 }
 ```
 
-### Explanation:
-- **JSONObject**: This class is used to parse and manipulate JSON data.
-- **Parsing**: First, the outer JSON object is parsed. Then, the string value of the "acknowledgment" key is parsed into a JSON object.
-- **Replacement**: The acknowledgment string is replaced with the parsed JSON object.
-- **Output**: The modified JSON object is converted back to a string format.
+**Explanation of Changes:**
 
-This code will convert the `incomingMsg0ld` format into `incomingMsgNew`. Make sure you have the `org.json` library available in your project to use this code.
+1. **`checkIfJsonValue` Method:**
+   - Now uses `objectMapper.readValue` to parse the string and checks if the result is an instance of `Map`.
+   - This ensures that only valid JSON objects are processed as JSON.
+
+2. **`removeNullValuesInJsonAttributes` Method:**
+   - Added a try-catch block around the JSON parsing to handle any parsing exceptions.
+   - Logs errors when parsing fails and optionally handles the key appropriately.
+
+3. **`mergeUpdateJsonValues` Method:**
+   - Similar improvements with try-catch blocks and logging to handle JSON parsing issues.
+
+**Example Usage:**
+
+With the updated code, processing a message like `tag={WLS}` will no longer attempt to parse `{WLS}` as JSON because `checkIfJsonValue` will return `false`. Thus, it will be treated as a regular string and processed without errors.
+
+This fix ensures that only valid JSON strings are parsed, preventing the `JsonParseException` and improving the robustness of the code.

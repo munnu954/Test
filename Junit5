@@ -1,52 +1,108 @@
-Absolutely, let’s break it down!
+The error you are encountering is due to the way you are trying to deserialize a JSON string into a `HashMap`. The `ObjectMapper` is attempting to deserialize a JSON string directly into a `HashMap`, but it needs to first convert the string into a proper JSON object.
 
-### Root Cause of the Issue:
-The error you encountered, `com.fasterxml.jackson.core.JsonParseException: Unexpected character ('n' (code 110)): was expecting double-quote to start field name`, occurred during the deserialization process with `ObjectMapper.readValue`. This suggests that the input value (in this case, from `incomingMsg`) being processed as JSON was either:
-1. **Already a JSON Object**: If `incomingMsg` or its nested structures were passed directly without converting them into a JSON-compliant String format, deserialization would treat them as malformed.
-2. **Improper `.toString()` Usage**: Using `.toString()` on a JSON-like object generates a string representation not formatted for JSON parsing. For example:
-   - JSON Object: `{"key": "value"}`
-   - `.toString()` on the object might generate something like `RAN=SomeValue` or `{key=value}` (non-JSON).
+To fix this issue, you need to ensure that when you encounter a JSON string, you first parse it into a `Map` before trying to manipulate it. Here are the changes I recommend making to your `DeduplicationUtils` class:
 
-This mismatch led to the JSON parser not recognizing the input, hence throwing the `JsonParseException`.
+### Changes Made:
 
----
+1. **Deserialization of JSON Strings**: Ensure that when you encounter a JSON string, you first convert it into a `HashMap` using `ObjectMapper` before processing it further.
 
-### How Your Fix Resolved It:
-The change you made ensures the following steps:
+2. **Initialization of `resultMsg`**: Ensure that `resultMsg` is initialized before using it in the `removeNullValuesInJsonAttributes` method.
 
-1. **Serialization with `writeValueAsString`:**
-   - `ObjectMapper.writeValueAsString(iterate.getValue())` converts the `Object` into a valid JSON string (e.g., `"{"key":"value"}"`), regardless of whether the input was already JSON-like or not. This ensures that the input passed to `readValue` is correctly formatted.
+3. **Correcting the `checkIfJsonValue` Method**: The logic in the `checkIfJsonValue` method was slightly adjusted to ensure it correctly identifies JSON strings.
 
-2. **Deserialization with `readValue`:**
-   - `ObjectMapper.readValue` then safely parses this valid JSON string back into a `HashMap`. By ensuring the format was compliant through serialization, deserialization works seamlessly.
+Here’s the updated code for the `DeduplicationUtils` class:
 
-Essentially, your fix enforces a two-step **serialize-deserialize process** that guarantees the input is valid JSON.
+```java
+@Component
+public class DeduplicationUtils {
+    Logger logger = LogManager.getLogger(this.getClass());
 
----
+    public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
+        HashMap<String, Object> resultMsg = new HashMap<>(); // Initialize resultMsg
+        try {
+            for (Map.Entry<String, Object> iterate : msg.entrySet()) {
+                // if the value itself is a json string, recursively call and process
+                if (checkIfJsonValue(iterate.getValue())) {
+                    // Deserialize the JSON string into a HashMap
+                    HashMap<String, Object> jsonValue = RulesConstants.getObjectMapper().readValue(
+                            iterate.getValue().toString(), HashMap.class);
+                    HashMap<String, Object> updatedMsg = removeNullValuesInJsonAttributes(jsonValue);
+                    // sets the modified values back to original message
+                    resultMsg.put(iterate.getKey(), updatedMsg);
+                } else {
+                    if (iterate.getValue() == null || iterate.getValue().toString().isEmpty()) {
+                        resultMsg.remove(iterate.getKey());
+                    } else {
+                        resultMsg.put(iterate.getKey(), iterate.getValue()); // Add non-null values
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Exception occurred while trying to remove null/empty values from json attributes: " + e);
+        }
+        return resultMsg;
+    }
 
-### Why `.toString()` Was the Problem:
-- `.toString()` does not serialize objects into JSON; it merely returns a string representation (which varies depending on the object type). For example:
-  ```java
-  Map<String, Object> example = new HashMap<>();
-  example.put("key", "value");
-  System.out.println(example.toString());
-  ```
-  Output: `{key=value}` (not valid JSON).
+    public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
+        try {
+            for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
+                if (!isLateAlarm) {
+                    if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                        // check if value itself is another json
+                        if (checkIfJsonValue(iterate.getValue())) {
+                            if (cachedMsg.get(iterate.getKey()) != null) {
+                                HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(
+                                        RulesConstants.getObjectMapper().readValue(
+                                                iterate.getValue().toString(), HashMap.class),
+                                        (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                                cachedMsg.put(iterate.getKey(), updatedMsg);
+                            } else {
+                                // if the key not already present in cache, remove null values and update in cachedMsg
+                                cachedMsg.put(iterate.getKey(), removeNullValuesInJsonAttributes(
+                                        RulesConstants.getObjectMapper().readValue(iterate.getValue().toString(), HashMap.class)));
+                            }
+                        } else {
+                            cachedMsg.put(iterate.getKey(), iterate.getValue());
+                        }
+                    }
+                } else { // late alarm
+                    if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                        // check if the key is present in cached alarm & check if its a json value or not
+                        if (cachedMsg.get(iterate.getKey()) != null && checkIfJsonValue(cachedMsg.get(iterate.getKey()))) {
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(
+                                    RulesConstants.getObjectMapper().readValue(
+                                            iterate.getValue().toString(), HashMap.class),
+                                    (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                            cachedMsg.put(iterate.getKey(), updatedMsg);
+                        } else if (cachedMsg.get(iterate.getKey()) == null) {
+                            cachedMsg.put(iterate.getKey(), iterate.getValue());
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Exception occurred while trying to merge update JsonValues: " + e + " and incoming message : " + incomingMsg);
+        }
+        return (HashMap<String, Object>) cachedMsg;
+    }
 
-  In contrast:
-  ```java
-  String json = new ObjectMapper().writeValueAsString(example);
-  System.out.println(json);
-  ```
-  Output: `{"key":"value"}` (valid JSON).
+    public boolean checkIfJsonValue(Object obj) {
+        boolean isJson = false;
+        try {
+            String jsonString = RulesConstants.getObjectMapper().writeValueAsString(obj).trim();
+            // Check if the string is a valid JSON object or array
+            isJson = jsonString.startsWith("{") || jsonString.startsWith("[");
+        } catch (JsonProcessingException e) {
+            return isJson;
+        }
+        return isJson;
+    }
+}
+```
 
-Your original code (`iterate.getValue().toString()`) inadvertently passed invalid input to `readValue`, which caused the parser to fail.
+### Summary of Changes:
+- **Initialization of `resultMsg`**: Added initialization of `resultMsg` in `removeNullValuesInJsonAttributes`.
+- **Deserialization Logic**: Updated the logic to deserialize JSON strings into `HashMap` before processing.
+- **Improved JSON Check**: Adjusted the `checkIfJsonValue` method to check for both JSON objects and arrays.
 
----
-
-### Key Takeaway:
-Your fix ensured that:
-1. Any object, whether JSON-like or not, is serialized into a proper JSON string before parsing.
-2. Eliminating `.toString()` avoided malformed representations, making the `readValue` process robust.
-
-Great debugging and resolution! Let me know if you’d like further insights.
+These changes should resolve the `MismatchedInputException` you were encountering.

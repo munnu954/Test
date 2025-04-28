@@ -1,39 +1,123 @@
-Here is an example of how you can write cucumber glue test case code for the given feature and scenario:
+To fix the `NullPointerException` that occurs when the `timeWindowUnits` property of the `AutoClearRule` is null, I'll add necessary null checks in the `checkTimeWindowMatch` method. This will prevent the method from attempting to call `TimeUnitEnum.getValue()` with a null value, which would cause the exception. 
 
+Here’s the refactored code with the necessary modifications:
+
+### Updated Code:
 ```java
-@RunWith(Cucumber.class)
-public class FlinkJobSubmissionTest {
-  
-  private FlinkApiController flinkApiController;
-  private UnifiedAuditMessage auditMessage;
-  private String fileType;
-  private String jobStatus;
-  
-  @Given("I have a UnifiedAuditMessage with a {string} file")
-  public void createAuditMessage(String fileType) {
-    auditMessage = new UnifiedAuditMessage();
-    auditMessage.setFileType(fileType);
-  }
-  
-  @When("I call the triggerJob method with the Unified AuditMessage and {string} as the fileType")
-  public void triggerJob(String fileType) {
-    flinkApiController = new FlinkApiController();
-    jobStatus = flinkApiController.triggerJob(auditMessage, fileType);
-  }
-  
-  @Then("the job should be submitted to the Flink API")
-  public void verifyJobSubmitted() {
-    assertThat(jobStatus).isEqualTo("Job submitted");
-  }
-  
-  @And("the job status should be updated")
-  public void verifyJobStatusUpdated() {
-    assertThat(auditMessage.getJobStatus()).isEqualTo("FLINK_JOB_SUBMITTED");
-  }
+@Component
+public class AutoClearService implements Runnable {
+    protected final Logger logger = LogManager.getLogger(this.getClass());
+    private ApolloDbHandler dbHandler;
+    SimpleDateFormat cdt = null;
+
+    @Autowired
+    TransactionLogAPI transactionLogApiCaller;
+
+    @Autowired
+    AutoClearParams autoClearParams;
+
+    @Autowired
+    CustomHealthChecker healthChecker;
+
+    private static long totalNumberOFAlarmProcessed = 0;
+    private static long lastRecordActiveAlarmId = 0;
+    private static Queue<Long> alarmsProcessedTracker = new LinkedList<>();
+    private ArrayList<Thread> threadList = new ArrayList<>();
+    private long cycleNumber = 0;
+    private static long clearedAlarmCount = 0;
+
+    public void applyAutoClearRulesAndClearMatchedAlarms(List<Alarm> alarmList) {
+        for (int i = 0; i < alarmList.size(); i++) {
+            HashMap<String, Object> alarmTagValuePair = RulesConstants.getObjectMapper().convertValue(alarmList.get(i), HashMap.class);
+            String alarmIdentity = (String) alarmTagValuePair.get("alarmIdentity");
+            logger.debug("Apply AutoClear rule for alarm identity: " + alarmIdentity);
+            logger.debug("Apply AutoClear rule for alarm message: " + alarmTagValuePair);
+
+            AutoClearRule matchedRule = null;
+            long clearCount = 0;
+
+            // Apply the rules for the alarm message
+            try {
+                synchronized (RulesLoadingService.getRulesMap()) {
+                    for (AutoClearRule rule : RulesLoadingService.getRulesMap().keySet()) {
+                        boolean result = rule.matchFilter(alarmTagValuePair);
+                        if (result) {
+                            logger.debug("Alarm Matched with RuleMatchingCriteria of AutoClear rule with ruleId: " + rule.getRuleId()
+                                    + " and Alarm Identity: " + alarmIdentity);
+
+                            // Clear alarm logic using timeWindow in RuleFunctionParameters
+                            if (alarmTagValuePair.containsKey(AlarmAutoClearConstants.ALARMUPDATEDTIME)
+                                    && alarmTagValuePair.get(AlarmAutoClearConstants.ALARMUPDATEDTIME) != null) {
+                                String alarmUpdatedTimeStr = alarmTagValuePair.get(AlarmAutoClearConstants.ALARMUPDATEDTIME).toString();
+
+                                // Check time window for clearing alarms
+                                if (!checkTimeWindowMatch(rule, alarmUpdatedTimeStr)) {
+                                    logger.debug("Alarm matched with ruleMatchingCriteria and not with time window condition of autoClear ruleId: " + rule.getRuleId()
+                                            + " and AlarmIdentity: " + alarmIdentity);
+                                    break;
+                                }
+                            } else {
+                                logger.warn("alarmUpdatedTime missing in alarm with alarmIdentity: " + alarmIdentity);
+                            }
+
+                            logger.debug("Alarm Matched With AutoClear Rule ID: " + rule.getRuleId()
+                                    + " and Alarm Identity: " + alarmIdentity);
+                            matchedRule = rule;
+                            clearCount = clearAlarmAndRelatedAlarms(alarmList.get(i), matchedRule);
+                            clearedAlarmCount += clearCount;
+                            break; // Exit the loop once a matching rule is found and the alarm is cleared
+                        } else {
+                            logger.debug("Alarm Not Matched With AutoClear Rule ID: " + rule.getRuleId() 
+                                    + " and Alarm Identity: " + alarmIdentity);
+                        }
+                    }
+                }
+
+                if (matchedRule == null) {
+                    logger.debug("Alarm Not Matched With Any Of The AutoClear Rules: Alarm Identity: " + alarmIdentity);
+                }
+            } catch (Exception e) {
+                logger.error("Exception occurred while applying the AutoClear rule with alarm identity: "
+                        + alarmIdentity + " : ", e);
+            }
+        }
+    }
+
+    private boolean checkTimeWindowMatch(AutoClearRule rule, String alarmUpdatedTimeStr) {
+        try {
+            // Check if time window units is null
+            if (rule.getTimeWindowUnits() == null) {
+                logger.warn("TimeWindowUnits is null for AutoClear rule with ID: " + rule.getRuleId());
+                return false; // Return false if time window units is null
+            }
+
+            // Proceed with normal processing
+            Instant timeWindowPeriod = Instant.now().minus(rule.getTimeWindow(),
+                    TimeUnitEnum.getValue(rule.getTimeWindowUnits()));
+            return Instant.parse(alarmUpdatedTimeStr).isBefore(timeWindowPeriod);
+        } catch (Exception e) {
+            logger.error("Exception occurred while matching alarm with time window for alarm updated time: " + alarmUpdatedTimeStr, e);
+            throw e;
+        }
+    }
 }
 ```
 
-Note: 
-- Make sure to import the required dependencies and annotations (e.g., `import cucumber.api.CucumberOptions;` and `import org.junit.runner.RunWith;`).
-- Replace the placeholder methods `createAuditMessage()`, `triggerJob()`, and `verifyJobSubmitted()` with the actual implementation specific to your codebase.
-- You may need to adjust the assertion logic in the `verifyJobSubmitted()` and `verifyJobStatusUpdated()` methods based on your actual implementation of the `triggerJob()` method.
+### Summary of Changes Made:
+
+1. **Added Null Check for `TimeWindowUnits`:**
+   - **Location:** Inside the `checkTimeWindowMatch` method.
+   - **Change:** Added a check for `rule.getTimeWindowUnits()` before proceeding to access it. If it is null, the method logs a warning and returns `false`.
+   - **Reason:** This prevents the `NullPointerException` that occurs when trying to invoke `TimeUnitEnum.getValue()` with a null value.
+
+2. **Improved Logging:**
+   - **Location:** Added a warning log entry when `TimeWindowUnits` is null.
+   - **Reason:** This provides clarity on why certain alarms might not clear when the rules aren't matched due to missing time unit information.
+
+3. **Refactoring and Cleanup:**
+   - Removed unnecessary calls and improved indentation and structure for clarity.
+   - Ensured proper method call logic when checking for time windows and handling alarm clearing.
+
+### Conclusion
+
+The modifications made will help resolve the `NullPointerException` by addressing potential null values before they lead to runtime exceptions. The enhanced logging and method structure improve the overall maintainability of the `AutoClearService` class. Make sure to test these changes in your development environment to ensure that alarms are processed as expected.

@@ -1,123 +1,134 @@
-To fix the `NullPointerException` that occurs when the `timeWindowUnits` property of the `AutoClearRule` is null, I'll add necessary null checks in the `checkTimeWindowMatch` method. This will prevent the method from attempting to call `TimeUnitEnum.getValue()` with a null value, which would cause the exception. 
+The issue you are encountering in the `ValidationService` class with the `TIMEWINDOWUNITS` check relates to how the rule is processed in the `RuleLoadingService` class. Specifically, the validation is done correctly, and if it returns `false`, the code should skip loading that rule. However, there might be a logical flaw related to how rules are processed after validation.
 
-Here’s the refactored code with the necessary modifications:
+Let's analyze the relevant parts of the `ValidationService` and `RuleLoadingService` classes and make necessary changes to prevent rules with invalid parameters from being loaded:
+
+### Issue Analysis:
+1. **Validation Logic:** The `ValidationService`'s `validateRuleFunctionParameters` method returns `false` when `TIMEWINDOWUNITS` is null. If this validation fails, it logs an error and should skip processing the rule.
+  
+2. **Processing Logic in `RuleLoadingService`:** After calling the `validateRuleFunctionParameters` method, the code continues to load the rule parameters regardless of the validation result. This means that the rule can still be added to the `rulesMap` even if it should have been invalidated.
+
+### Proposed Fix:
+Ensure that if the validation fails, the rule is not processed further. Here are the necessary code changes to correctly handle this situation:
 
 ### Updated Code:
+#### **ValidationService**
 ```java
-@Component
-public class AutoClearService implements Runnable {
+@Service
+public class ValidationService {
     protected final Logger logger = LogManager.getLogger(this.getClass());
-    private ApolloDbHandler dbHandler;
-    SimpleDateFormat cdt = null;
+
+    public boolean validateRuleFunctionParameters(HashMap<String, Object> ruleFunctionParametersMap) {
+        if (!(ruleFunctionParametersMap.get(AlarmAutoClearConstants.TIMEWINDOW) instanceof Integer)
+                || (Integer) ruleFunctionParametersMap.get(AlarmAutoClearConstants.TIMEWINDOW) <= 0) {
+            logger.info(
+                    ErrorConstants.INVALID_ATTRIBUTE_VALUE + AlarmAutoClearConstants.TIMEWINDOW + " - Integer value expected");
+            return false;
+        } else if (ruleFunctionParametersMap.get(AlarmAutoClearConstants.TIMEWINDOWUNITS) == null
+                || !EnumUtils.isValidEnumIgnoreCase(TimeUnitEnum.class,
+                        ruleFunctionParametersMap.get(AlarmAutoClearConstants.TIMEWINDOWUNITS).toString())) {
+            logger.info(
+                    ErrorConstants.INVALID_ATTRIBUTE_VALUE + AlarmAutoClearConstants.TIMEWINDOWUNITS + ". Possible values: "
+                            + Arrays.toString(TimeUnitEnum.values()) + ": milliseconds, seconds, minutes, hours, days.");
+            return false;
+        }
+        return true;
+    }
+}
+```
+#### **RuleLoadingService**
+```java
+@Service("ruleloadingService")
+public class RuleLoadingService {
+
+    protected final Logger logger = LogManager.getLogger(this.getClass());
 
     @Autowired
-    TransactionLogAPI transactionLogApiCaller;
+    ObjectMapper mapper;
 
     @Autowired
-    AutoClearParams autoClearParams;
+    ValidationService validationService;
 
-    @Autowired
-    CustomHealthChecker healthChecker;
+    public Map<Long, AutoClearRule> getRulesMap() {
+        // Logic to fetch and process rules
+        return rulesMap;
+    }
 
-    private static long totalNumberOFAlarmProcessed = 0;
-    private static long lastRecordActiveAlarmId = 0;
-    private static Queue<Long> alarmsProcessedTracker = new LinkedList<>();
-    private ArrayList<Thread> threadList = new ArrayList<>();
-    private long cycleNumber = 0;
-    private static long clearedAlarmCount = 0;
-
-    public void applyAutoClearRulesAndClearMatchedAlarms(List<Alarm> alarmList) {
-        for (int i = 0; i < alarmList.size(); i++) {
-            HashMap<String, Object> alarmTagValuePair = RulesConstants.getObjectMapper().convertValue(alarmList.get(i), HashMap.class);
-            String alarmIdentity = (String) alarmTagValuePair.get("alarmIdentity");
-            logger.debug("Apply AutoClear rule for alarm identity: " + alarmIdentity);
-            logger.debug("Apply AutoClear rule for alarm message: " + alarmTagValuePair);
-
-            AutoClearRule matchedRule = null;
-            long clearCount = 0;
-
-            // Apply the rules for the alarm message
-            try {
-                synchronized (RulesLoadingService.getRulesMap()) {
-                    for (AutoClearRule rule : RulesLoadingService.getRulesMap().keySet()) {
-                        boolean result = rule.matchFilter(alarmTagValuePair);
-                        if (result) {
-                            logger.debug("Alarm Matched with RuleMatchingCriteria of AutoClear rule with ruleId: " + rule.getRuleId()
-                                    + " and Alarm Identity: " + alarmIdentity);
-
-                            // Clear alarm logic using timeWindow in RuleFunctionParameters
-                            if (alarmTagValuePair.containsKey(AlarmAutoClearConstants.ALARMUPDATEDTIME)
-                                    && alarmTagValuePair.get(AlarmAutoClearConstants.ALARMUPDATEDTIME) != null) {
-                                String alarmUpdatedTimeStr = alarmTagValuePair.get(AlarmAutoClearConstants.ALARMUPDATEDTIME).toString();
-
-                                // Check time window for clearing alarms
-                                if (!checkTimeWindowMatch(rule, alarmUpdatedTimeStr)) {
-                                    logger.debug("Alarm matched with ruleMatchingCriteria and not with time window condition of autoClear ruleId: " + rule.getRuleId()
-                                            + " and AlarmIdentity: " + alarmIdentity);
-                                    break;
-                                }
-                            } else {
-                                logger.warn("alarmUpdatedTime missing in alarm with alarmIdentity: " + alarmIdentity);
-                            }
-
-                            logger.debug("Alarm Matched With AutoClear Rule ID: " + rule.getRuleId()
-                                    + " and Alarm Identity: " + alarmIdentity);
-                            matchedRule = rule;
-                            clearCount = clearAlarmAndRelatedAlarms(alarmList.get(i), matchedRule);
-                            clearedAlarmCount += clearCount;
-                            break; // Exit the loop once a matching rule is found and the alarm is cleared
-                        } else {
-                            logger.debug("Alarm Not Matched With AutoClear Rule ID: " + rule.getRuleId() 
-                                    + " and Alarm Identity: " + alarmIdentity);
-                        }
-                    }
-                }
-
-                if (matchedRule == null) {
-                    logger.debug("Alarm Not Matched With Any Of The AutoClear Rules: Alarm Identity: " + alarmIdentity);
-                }
-            } catch (Exception e) {
-                logger.error("Exception occurred while applying the AutoClear rule with alarm identity: "
-                        + alarmIdentity + " : ", e);
-            }
+    private void processRules(List<Map<String, Object>> rulesArray) {
+        if (rulesArray.isEmpty()) {
+            logger.debug(AlarmAutoClearConstants.RULE_NOT_FOUND);
+        } else {
+            processRulesArray(rulesArray);
         }
     }
 
-    private boolean checkTimeWindowMatch(AutoClearRule rule, String alarmUpdatedTimeStr) {
-        try {
-            // Check if time window units is null
-            if (rule.getTimeWindowUnits() == null) {
-                logger.warn("TimeWindowUnits is null for AutoClear rule with ID: " + rule.getRuleId());
-                return false; // Return false if time window units is null
-            }
+    private void processRulesArray(List<Map<String, Object>> rulesArray) {
+        for (Map<String, Object> rule : rulesArray) {
+            long ruleId = (long) Long.valueOf(rule.get(AlarmAutoClearConstants.RULEID_RMF).toString());
+            int rulePriority = 0;
 
-            // Proceed with normal processing
-            Instant timeWindowPeriod = Instant.now().minus(rule.getTimeWindow(),
-                    TimeUnitEnum.getValue(rule.getTimeWindowUnits()));
-            return Instant.parse(alarmUpdatedTimeStr).isBefore(timeWindowPeriod);
-        } catch (Exception e) {
-            logger.error("Exception occurred while matching alarm with time window for alarm updated time: " + alarmUpdatedTimeStr, e);
-            throw e;
+            try {
+                // Check for rule priority presence
+                if (!rule.containsKey(AlarmAutoClearConstants.RULEPRIORITY_RMF)) {
+                    logger.warn(ErrorConstants.RULEPRIORITY_MISSING + AlarmAutoClearConstants.INVALID_RULE + ruleId);
+                    continue; // Skip this rule if priority is missing
+                } else {
+                    rulePriority = (int) rule.get(AlarmAutoClearConstants.RULEPRIORITY_RMF);
+                }
+
+                // Check matching criteria
+                String ruleMatchingCriteria = mapper.writeValueAsString(
+                        (HashMap<String, Object>) rule.get(AlarmAutoClearConstants.RULEMATCHINGCRITERIA_RMF));
+
+                AutoClearRule autoClearRule = new AutoClearRule(ruleId,
+                        (String) rule.get(AlarmAutoClearConstants.RULENAME_RMF), rulePriority,
+                        (int) rule.get(AlarmAutoClearConstants.RULEVERSION_RMF), ruleMatchingCriteria);
+
+                // Rule function parameters validation
+                if (rule.get(AlarmAutoClearConstants.RULEFUNCTIONPARAMETERS_RMF) != null) {
+                    HashMap<String, Object> ruleFunctionParametersMap = (HashMap<String, Object>) rule
+                            .get(AlarmAutoClearConstants.RULEFUNCTIONPARAMETERS_RMF);
+
+                    // Validate rule function parameters
+                    if (!validationService.validateRuleFunctionParameters(ruleFunctionParametersMap)) {
+                        logger.warn(AlarmAutoClearConstants.INVALID_RULE + ruleId);
+                        continue; // Skip rule processing if validation fails
+                    }
+                    // If valid, load rule function parameters
+                    loadRuleFunctionParameters(autoClearRule, ruleFunctionParametersMap);
+                } else {
+                    logger.warn(AlarmAutoClearConstants.INVALID_RULE + ruleId
+                            + ". Attribute ruleFunctionParameters is missing.");
+                }
+
+                // Clear parameters processing
+                if (rule.get(AlarmAutoClearConstants.RULEACTIONCLEARPARAMETERS_RMF) != null) {
+                    String ruleClearMap = rule.get(AlarmAutoClearConstants.RULEACTIONCLEARPARAMETERS_RMF).toString();
+                    if (StringUtils.hasText(ruleClearMap)) {
+                        autoClearRule.setClearSuppressed(ruleClearMap);
+                    }
+                }
+
+                // Add rule to rules map
+                synchronized (rulesMap) {
+                    rulesMap.put(autoClearRule, ruleId);
+                }
+            } catch (Exception e) {
+                logger.error("Exception while processing AutoClear rule with ruleId: " + ruleId + " -- " + e);
+            }
         }
     }
 }
 ```
 
 ### Summary of Changes Made:
+1. **Validation Logic in `ValidationService`:**
+   - **Location:** `validateRuleFunctionParameters` method.
+   - **Change:** Ensured that the null check for `TIMEWINDOWUNITS` is performed correctly, and it should return false if the condition is violated.
 
-1. **Added Null Check for `TimeWindowUnits`:**
-   - **Location:** Inside the `checkTimeWindowMatch` method.
-   - **Change:** Added a check for `rule.getTimeWindowUnits()` before proceeding to access it. If it is null, the method logs a warning and returns `false`.
-   - **Reason:** This prevents the `NullPointerException` that occurs when trying to invoke `TimeUnitEnum.getValue()` with a null value.
-
-2. **Improved Logging:**
-   - **Location:** Added a warning log entry when `TimeWindowUnits` is null.
-   - **Reason:** This provides clarity on why certain alarms might not clear when the rules aren't matched due to missing time unit information.
-
-3. **Refactoring and Cleanup:**
-   - Removed unnecessary calls and improved indentation and structure for clarity.
-   - Ensured proper method call logic when checking for time windows and handling alarm clearing.
+2. **Rule Processing Logic in `RuleLoadingService`:**
+   - **Location:** `processRulesArray` method.
+   - **Change:** Added a `continue;` statement after the validation call to `validateRuleFunctionParameters` to ensure that if validation fails for the rule parameters, the processing of that rule is immediately skipped.
+   - **Reason:** This ensures that any invalid rule parameters prevent further processing of that rule, adhering to the intended logic.
 
 ### Conclusion
-
-The modifications made will help resolve the `NullPointerException` by addressing potential null values before they lead to runtime exceptions. The enhanced logging and method structure improve the overall maintainability of the `AutoClearService` class. Make sure to test these changes in your development environment to ensure that alarms are processed as expected.
+With these changes, rules that do not pass validation will be ignored, and no further attempts will be made to load these invalid rules. Make sure to thoroughly test these updates to confirm that the intended functionality is preserved and that invalid rules are correctly ignored during processing.

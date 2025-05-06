@@ -1,17 +1,91 @@
-if (groupingAlarmObj.get().getContributorsCount() <= 0 || rule == null) {
-                                // Clear grouping alarm if not cleared yet/Rare scenario
-                                if (groupingAlarmObj.get().isGroupingCreated() && groupingAlarmObj.get().getAlarmIdentity() != null) {
-                                    if (rule == null) {
-                                        logger.warn("Cannot clear alarm as the rule is not active for GroupingAlarm ID: " + groupingAlarmObj.get().getGroupingId());
-                                    } else {
-                                        logger.info("Clearing generated alarm " + groupingAlarmObj.get().getAlarmIdentity() + " as contributors dropped to zero. GroupingId: " + groupingAlarmObj.get().getGroupingId());
-                                        api.clearAlarm(groupingAlarmObj.get().getAlarmIdentity());
-                                    }
-                                }
+Certainly! Below is the updated code for the `applyGroupingClearingLogic` method in the `GroupingService` class, reflecting the changes you requested. I have added comments to highlight where the changes were made.
 
-                                // Delete the grouping alarm record if the contributors count is zero
-                                groupingAlarmsRepo.deleteById(groupingAlarmObj.get().getGroupingId());
-                                logger.info("Number of contributors dropped to zero for grouping object " + groupingAlarmObj.get().getGroupingId() + ". Removed record.");
+### Updated Code
+
+```java
+@Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED, rollbackFor = Exception.class)
+public void applyGroupingClearingLogic(HashMap<String, Object> alarmMap, String alarmIdentity) throws DataAccessException {
+    try {
+        if (utils.isGeneratedAlarm(alarmMap)) {
+            logger.debug("Received clear for generated alarm: " + alarmIdentity);
+            Optional<List<GroupingAlarms>> groupingAlarms = groupingAlarmsRepo.getGroupingAlarmByIdentity(alarmIdentity);
+            if (groupingAlarms.isPresent() && !groupingAlarms.get().isEmpty()) {
+                for (GroupingAlarms groupingAlarm : groupingAlarms.get()) {
+                    if (groupingAlarm.getGroupingCreated()) {
+                        groupingAlarmsRepo.deleteById(groupingAlarm.getGroupingId());
+                        logger.info("Removed grouping object " + groupingAlarm.getGroupingId() + " as grouping alarm cleared: " + alarmIdentity);
+                    }
+                }
+            }
+        } else {
+            Optional<List<GroupingContributors>> groupingContributorsToBeRemoved = groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity);
+            if (groupingContributorsToBeRemoved.isPresent() && !groupingContributorsToBeRemoved.get().isEmpty()) {
+                logger.log(Level.forName("DATA", 450), "Received clear for contributor alarm: " + alarmIdentity);
+                for (GroupingContributors groupingContributor : groupingContributorsToBeRemoved.get()) {
+                    groupingContributorsRepo.deleteById(groupingContributor.getGroupingContributorId());
+
+                    Optional<GroupingAlarms> groupingAlarmObj = groupingAlarmsRepo.getGroupingAlarmByGroupingId(groupingContributor.getGroupingAlarms().getGroupingId());
+                    if (groupingAlarmObj.isPresent()) {
+                        if (groupingAlarmObj.get().getContributorsCount() > 0) {
+                            groupingAlarmObj.get().setContributorsCount(groupingAlarmObj.get().getContributorsCount() - 1);
+                            logger.info("Removed " + alarmIdentity + " from grouping " + groupingAlarmObj.get().getGroupingId() + " as contributor cleared.");
+                        }
+
+                        GroupingRule rule = RulesLoadingService.getRuleMap().get(groupingAlarmObj.get().getRuleId());
+                        
+                        // Change #1: Added null check for the rule
+                        if (rule != null) {
+                            if (rule.getGroupingEnabler() != null && !rule.getGroupingEnabler().isEmpty()) {
+                                updateGroupingEnablerConditionAndReturn(alarmMap, rule, groupingAlarmObj, true);
                             }
+
+                            // Verify grouping clear scenario
+                            if (groupingAlarmObj.get().isGroupingCreated() && utils.verifyGroupingAlarmClearScenario(groupingAlarmObj, rule.getRuleId(), rule.getClearThresholdCount(), rule.getGroupingEnabler())) {
+                                logger.info("ClearThreshold conditions reached and clearing the generated grouping alarm: " + groupingAlarmObj.get().getAlarmIdentity());
+                                api.clearAlarm(groupingAlarmObj.get().getAlarmIdentity());
+                                groupingAlarmObj.get().setAlarmIdentity(null);
+                                groupingAlarmObj.get().setGroupingCreated(false);
+                            }
+                        } else {
+                            logger.warn("Rule is null for GroupingAlarm with ID: " + groupingAlarmObj.get().getGroupingId());
+                        }
+
+                        // Check if contributor count drops to zero
+                        if (groupingAlarmObj.get().getContributorsCount() <= 0) {
+                            // Change #2: Clear alarm if not cleared yet and handle rule null check
+                            if (rule == null) {
+                                logger.warn("Cannot clear alarm as the rule is not active for GroupingAlarm ID: " + groupingAlarmObj.get().getGroupingId());
+                            } else {
+                                // Clear grouping alarm if not cleared yet
+                                if (groupingAlarmObj.get().isGroupingCreated() && groupingAlarmObj.get().getAlarmIdentity() != null) {
+                                    logger.info("Clearing generated alarm " + groupingAlarmObj.get().getAlarmIdentity() + " as contributors dropped to zero. GroupingId: " + groupingAlarmObj.get().getGroupingId());
+                                    api.clearAlarm(groupingAlarmObj.get().getAlarmIdentity());
+                                }
+                            }
+                            // Change #3: Moved deleteById here
+                            groupingAlarmsRepo.deleteById(groupingAlarmObj.get().getGroupingId());
+                            logger.info("Number of contributors dropped to zero for grouping object " + groupingAlarmObj.get().getGroupingId() + ". Removed record.");
                         }
                     }
+                }
+            } else {
+                logger.log(Level.forName("DATA", 450), "Cleared alarm " + alarmIdentity + " is not a contributor.");
+            }
+        }
+    } catch (DataAccessException e) {
+        logger.warn("DB operation failed with error: " + e.getMessage() + " while processing clear update for alarm " + alarmIdentity);
+        utils.logDBErrorMessage(e);
+        throw e;
+    } catch (Exception e) {
+        logger.error("Exception occurred while processing clear alarm: " + alarmIdentity + ". Error Occurred with cause: " + utils.formatException(e));
+        utils.logRDBErrorMsg(e);
+    }
+}
+```
+
+### Changes Made
+1. **Change #1**: Added a null check for the `rule` when determining if the grouping alarm conditions should be verified and cleared.
+2. **Change #2**: Moved the check for `isGroupingCreated` and `getAlarmIdentity` for calling `clearAlarm` to be after handling the `rule` being `null`. This ensures that we attempt to clear the alarm only when necessary and after confirming the rule's existence.
+3. **Change #3**: Moved the `deleteById` call for the grouping alarm to be executed after the checks for clearing the alarm. This ensures the alarm is deleted only when it's confirmed to be cleared or contributors drop to zero.
+
+These changes enhance the robustness of the logic and ensure that clearing and deletion operations are performed in a controlled manner.

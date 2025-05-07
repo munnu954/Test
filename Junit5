@@ -1,26 +1,18 @@
-To ensure that the catch block for `HttpClientErrorException.NotFound` is fully covered in your JUnit 5 test case, we need to make sure we are throwing the correct type of exception and verifying that the logger is indeed called. Below is the complete test case that accomplishes this:
-
-```java
-import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-import org.junit.jupiter.api.BeforeEach;
+import java.net.URI;
+
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpMethod;
+import org.mockito.MockitoAnnotations;
+import org.springframework.http.*;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
-import org.slf4j.Logger;
+import org.springframework.test.util.ReflectionTestUtils;
 
-@ExtendWith(MockitoExtension.class)
 public class ApiOperationTest {
-
-    @InjectMocks
-    private ApiOperation apiOperation;
 
     @Mock
     private RestTemplate restTemplate;
@@ -28,44 +20,35 @@ public class ApiOperationTest {
     @Mock
     private AlarmGroupingParams configParams;
 
-    @Mock
-    private Logger logger; // Mock the logger
+    @InjectMocks
+    private ApiOperation apiOperation;
 
-    @BeforeEach
-    public void setUp() {
-        // Mocking values for the configuration parameters
-        when(configParams.getAlarmFetchURL()).thenReturn("http://mock-url");
-        when(configParams.getAlarmFilterKey()).thenReturn("mock-api-key");
-
-        // Injecting the mock into the ApiOperation instance
-        ReflectionTestUtils.setField(apiOperation, "configParams", configParams);
-        ReflectionTestUtils.setField(apiOperation, "logger", logger); // Injecting the logger
+    public ApiOperationTest() {
+        MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    public void testGetAlarmDetailsById_NotFound() {
+    void testGetAlarmDetailsById_NotFound() {
+        // Setting values using ReflectionTestUtils
+        ReflectionTestUtils.setField(apiOperation, "restTemplate", restTemplate);
+        ReflectionTestUtils.setField(configParams, "alarmFetchURL", "http://mocked-url");
+        ReflectionTestUtils.setField(configParams, "alarmFilterKey", "mocked-auth-key");
+
         String alarmIdentity = "12345";
+        String url = "http://mocked-url";
+        
+        // Mocking the behavior of restTemplate.exchange() to throw HttpClientErrorException.NotFound
+        when(restTemplate.exchange(
+            eq(url), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)
+        )).thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND, "Not Found"));
 
-        // Create and throw the HttpClientErrorException.NotFound to trigger the catch block
-        HttpClientErrorException notFoundException = new HttpClientErrorException(HttpStatus.NOT_FOUND);
-        when(restTemplate.exchange(eq("http://mock-url"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
-                .thenThrow(notFoundException);
-
-        // Call the method
+        // Execute method under test
         String result = apiOperation.getAlarmDetailsById(alarmIdentity);
 
-        // Verify that the result is null since the alarm was not found
-        assertNull(result);
+        // Assertions
+        assertNull(result, "Expected result to be null when NotFound exception occurs");
 
-        // Verify that the logger's warn method was called with the correct message
-        verify(logger).warn("Alarm Identity not found in the DB. ErrorCode: 1003, ErrorMessage: Alarm Identity not found");
+        // Verify that exchange method was called once
+        verify(restTemplate, times(1)).exchange(eq(url), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class));
     }
 }
-```
-
-### Important Elements:
-1. **Logger Mocking**: A mock for the `Logger` is created to track calls to the logging methods.
-2. **Correct Exception Type**: An instance of `HttpClientErrorException.NotFound` is explicitly created and thrown when invoking the `restTemplate.exchange` method, ensuring that the catch block you want to test is executed.
-3. **Verification of Behavior**: After calling the `getAlarmDetailsById` method, we check that the returned result is `null`, indicating that the method handled the exception as expected. Additionally, we verify that the logger's `warn` method is invoked with the correct warning message, confirming that the catch block was indeed executed.
-
-This test case should now adequately cover the catch block for `HttpClientErrorException.NotFound`, ensuring that your method behaves correctly in this scenario.

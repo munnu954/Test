@@ -1,66 +1,61 @@
-Certainly! If you're encountering a `NullPointerException` because the `configParams` field is not being injected, you can use `ReflectionTestUtils` from Spring to set the field directly in your test. This allows you to bypass the dependency injection mechanism and set the mock directly.
-
-Here's how you can modify your test case using `ReflectionTestUtils`:
-
-```java
 import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
+
+import java.net.URI;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpEntity;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
-@ExtendWith(MockitoExtension.class)
+@ExtendWith(MockitoExtension.class) // Enables Mockito without Spring Context
 public class ApiOperationTest {
-
-    @InjectMocks
-    private ApiOperation apiOperation;
 
     @Mock
     private RestTemplate restTemplate;
 
-    @Mock
-    private AlarmGroupingParams configParams;
+    @InjectMocks
+    private ApiOperation apiOperation;
+
+    private AlarmGroupingParams configParams; // Creating an instance instead of mocking
 
     @BeforeEach
-    public void setUp() {
-        // Set up the mocked configParams values
-        when(configParams.getAlarmFetchURL()).thenReturn("http://mock-url");
-        when(configParams.getAlarmFilterKey()).thenReturn("mock-api-key");
+    void setUp() {
+        configParams = new AlarmGroupingParams();
+        
+        // Manually setting values using ReflectionTestUtils
+        ReflectionTestUtils.setField(configParams, "alarmFetchURL", "http://mock-url.com");
+        ReflectionTestUtils.setField(configParams, "alarmFilterKey", "mock-auth-key");
 
-        // Use ReflectionTestUtils to set the configParams field in apiOperation
+        // Inject configParams manually into apiOperation
         ReflectionTestUtils.setField(apiOperation, "configParams", configParams);
     }
 
     @Test
-    public void testGetAlarmDetailsById_NotFound() {
-        String alarmIdentity = "12345";
+    void testGetAlarmDetailsById_NotFoundException() {
+        String alarmIdentity = "test-alarm-id";
+        String mockUrl = configParams.getAlarmFetchURL();
+        
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", configParams.getAlarmFilterKey());
+        HttpEntity<Object> entity = new HttpEntity<>(null, headers);
 
-        // Simulate HttpClientErrorException.NotFound
-        when(restTemplate.exchange(eq("http://mock-url"), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
-                .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+        // Simulate HttpClientErrorException.NotFound exception
+        when(restTemplate.exchange(eq(mockUrl), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND, "Not Found"));
 
-        // Call the method
+        // Execute method and verify result
         String result = apiOperation.getAlarmDetailsById(alarmIdentity);
 
-        // Verify the result is null since the alarm was not found
-        assertNull(result);
-
-        // Optionally, verify that the logger was called (if you have a logger)
-        // verify(logger).warn("Alarm Identity not found in the DB. ErrorCode: 1003, ErrorMessage: Alarm Identity not found");
+        assertNull(result, "Expected result to be null when NotFound exception is thrown");
     }
 }
-```
-
-### Key Changes:
-1. **ReflectionTestUtils**: In the `setUp` method, we use `ReflectionTestUtils.setField` to set the `configParams` field of the `apiOperation` object with the mocked `AlarmGroupingParams`. This avoids the `NullPointerException` issue.
-2. **Mocking Behavior**: The mocked behavior for `configParams.getAlarmFetchURL()` and `configParams.getAlarmFilterKey()` remains the same to ensure the method has the necessary configuration to execute.
-
-This should resolve the `NullPointerException` issue, allowing your test to execute successfully. Make sure you have the necessary dependencies for Spring Test included in your project.

@@ -1,95 +1,171 @@
-    @Test
-    public void testApplyGroupingClearingLogic_GroupingCreated_IdentityNotNull() {
-        // Arrange
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        String alarmIdentity = "test-alarm-id";
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.*;
 
-        // Simulate grouping alarm with isGroupingCreated = true and identity not null
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataAccessException;
+
+import java.util.*;
+
+@ExtendWith(MockitoExtension.class)
+public class GroupingServiceTest {
+
+    @InjectMocks
+    private GroupingService groupingService;
+
+    @Mock
+    private GroupingUtils utils;
+    @Mock
+    private GroupingAlarmsRepository groupingAlarmsRepo;
+    @Mock
+    private GroupingContributorsRepository groupingContributorsRepo;
+    @Mock
+    private ApiOperation api;
+
+    // Test cases covering the 4 branches
+
+    @Test
+    void whenGroupingCreatedTrueAndAlarmIdentityNotNull_thenClearAndDelete() {
+        // Setup
+        String alarmIdentity = "ALARM_1";
+        int groupingId = 1;
+        String groupingAlarmId = "GROUP_1";
+        long ruleId = 1;
+
+        GroupingContributors contributor = new GroupingContributors();
         GroupingAlarms groupingAlarm = new GroupingAlarms();
-        groupingAlarm.setGroupingId(1);
+        groupingAlarm.setGroupingId(groupingId);
+        groupingAlarm.setRuleId(ruleId);
+        groupingAlarm.setAlarmIdentity(groupingAlarmId);
         groupingAlarm.setGroupingCreated(true);
-        groupingAlarm.setAlarmIdentity("SampleIdentity");
+        groupingAlarm.setContributorsCount(1);
+        contributor.setGroupingAlarms(groupingAlarm);
 
-        // Set up mock behavior
-        when(utils.isGeneratedAlarm(alarmMap)).thenReturn(false);
-        when(groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity)).thenReturn(Optional.of(new ArrayList<>()));
-        when(groupingAlarmsRepo.getGroupingAlarmByGroupingId(anyInt())).thenReturn(Optional.of(groupingAlarm));
+        when(groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity))
+            .thenReturn(Optional.of(List.of(contributor)));
+        when(groupingAlarmsRepo.getGroupingAlarmByGroupingId(groupingId))
+            .thenReturn(Optional.of(groupingAlarm));
+        when(utils.isGeneratedAlarm(any())).thenReturn(false);
+        when(utils.verifyGroupingAlarmClearScenario(any(), anyLong(), anyInt(), any()))
+            .thenReturn(false);
 
-        // Act
-        groupingService.applyGroupingClearingLogic(alarmMap, alarmIdentity);
+        RulesLoadingService.getRuleMap().put(ruleId, new GroupingRule());
 
-        // Assert: Check that api.clearAlarm was called with the correct identity
-        verify(apiOperation).clearAlarm("SampleIdentity");
+        // Execute
+        groupingService.applyGroupingClearingLogic(new HashMap<>(), alarmIdentity);
+
+        // Verify
+        verify(api).clearAlarm(groupingAlarmId);
+        verify(groupingAlarmsRepo).deleteById(groupingId);
+        RulesLoadingService.getRuleMap().clear();
     }
 
     @Test
-    public void testApplyGroupingClearingLogic_GroupingCreated_IdentityNull() {
-        // Arrange
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        String alarmIdentity = "test-alarm-id";
+    void whenGroupingCreatedTrueAndAlarmIdentityNull_thenDeleteWithoutClear() {
+        // Setup
+        String alarmIdentity = "ALARM_2";
+        int groupingId = 2;
+        long ruleId = 2;
 
-        // Simulate grouping alarm with isGroupingCreated = true and identity null
+        GroupingContributors contributor = new GroupingContributors();
         GroupingAlarms groupingAlarm = new GroupingAlarms();
-        groupingAlarm.setGroupingId(1);
+        groupingAlarm.setGroupingId(groupingId);
+        groupingAlarm.setRuleId(ruleId);
+        groupingAlarm.setAlarmIdentity(null);
         groupingAlarm.setGroupingCreated(true);
-        groupingAlarm.setAlarmIdentity(null);
+        groupingAlarm.setContributorsCount(1);
+        contributor.setGroupingAlarms(groupingAlarm);
 
-        // Set up mock behavior
-        when(utils.isGeneratedAlarm(alarmMap)).thenReturn(false);
-        when(groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity)).thenReturn(Optional.of(new ArrayList<>()));
-        when(groupingAlarmsRepo.getGroupingAlarmByGroupingId(anyInt())).thenReturn(Optional.of(groupingAlarm));
+        when(groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity))
+            .thenReturn(Optional.of(List.of(contributor)));
+        when(groupingAlarmsRepo.getGroupingAlarmByGroupingId(groupingId))
+            .thenReturn(Optional.of(groupingAlarm));
+        when(utils.isGeneratedAlarm(any())).thenReturn(false);
+        when(utils.verifyGroupingAlarmClearScenario(any(), anyLong(), anyInt(), any()))
+            .thenReturn(false);
 
-        // Act
-        groupingService.applyGroupingClearingLogic(alarmMap, alarmIdentity);
+        RulesLoadingService.getRuleMap().put(ruleId, new GroupingRule());
 
-        // Assert: Ensure clearAlarm is not called
-        verify(apiOperation, never()).clearAlarm(anyString());
+        // Execute
+        groupingService.applyGroupingClearingLogic(new HashMap<>(), alarmIdentity);
+
+        // Verify
+        verify(api, never()).clearAlarm(any());
+        verify(groupingAlarmsRepo).deleteById(groupingId);
+        RulesLoadingService.getRuleMap().clear();
     }
 
     @Test
-    public void testApplyGroupingClearingLogic_GroupingNotCreated_IdentityNotNull() {
-        // Arrange
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        String alarmIdentity = "test-alarm-id";
+    void whenGroupingCreatedFalseAndAlarmIdentityNotNull_thenDeleteWithoutClear() {
+        // Setup
+        String alarmIdentity = "ALARM_3";
+        int groupingId = 3;
+        long ruleId = 3;
 
-        // Simulate grouping alarm with isGroupingCreated = false and identity not null
+        GroupingContributors contributor = new GroupingContributors();
         GroupingAlarms groupingAlarm = new GroupingAlarms();
-        groupingAlarm.setGroupingId(1);
+        groupingAlarm.setGroupingId(groupingId);
+        groupingAlarm.setRuleId(ruleId);
+        groupingAlarm.setAlarmIdentity("GROUP_3");
         groupingAlarm.setGroupingCreated(false);
-        groupingAlarm.setAlarmIdentity("SampleIdentity");
+        groupingAlarm.setContributorsCount(1);
+        contributor.setGroupingAlarms(groupingAlarm);
 
-        // Set up mock behavior
-        when(utils.isGeneratedAlarm(alarmMap)).thenReturn(false);
-        when(groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity)).thenReturn(Optional.of(new ArrayList<>()));
-        when(groupingAlarmsRepo.getGroupingAlarmByGroupingId(anyInt())).thenReturn(Optional.of(groupingAlarm));
+        when(groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity))
+            .thenReturn(Optional.of(List.of(contributor)));
+        when(groupingAlarmsRepo.getGroupingAlarmByGroupingId(groupingId))
+            .thenReturn(Optional.of(groupingAlarm));
+        when(utils.isGeneratedAlarm(any())).thenReturn(false);
+        when(utils.verifyGroupingAlarmClearScenario(any(), anyLong(), anyInt(), any()))
+            .thenReturn(false);
 
-        // Act
-        groupingService.applyGroupingClearingLogic(alarmMap, alarmIdentity);
+        RulesLoadingService.getRuleMap().put(ruleId, new GroupingRule());
 
-        // Assert: Ensure clearAlarm is not called
-        verify(apiOperation, never()).clearAlarm(anyString());
+        // Execute
+        groupingService.applyGroupingClearingLogic(new HashMap<>(), alarmIdentity);
+
+        // Verify
+        verify(api, never()).clearAlarm(any());
+        verify(groupingAlarmsRepo).deleteById(groupingId);
+        RulesLoadingService.getRuleMap().clear();
     }
 
     @Test
-    public void testApplyGroupingClearingLogic_GroupingNotCreated_IdentityNull() {
-        // Arrange
-        HashMap<String, Object> alarmMap = new HashMap<>();
-        String alarmIdentity = "test-alarm-id";
+    void whenGroupingCreatedFalseAndAlarmIdentityNull_thenDeleteWithoutClear() {
+        // Setup
+        String alarmIdentity = "ALARM_4";
+        int groupingId = 4;
+        long ruleId = 4;
 
-        // Simulate grouping alarm with isGroupingCreated = false and identity null
+        GroupingContributors contributor = new GroupingContributors();
         GroupingAlarms groupingAlarm = new GroupingAlarms();
-        groupingAlarm.setGroupingId(1);
-        groupingAlarm.setGroupingCreated(false);
+        groupingAlarm.setGroupingId(groupingId);
+        groupingAlarm.setRuleId(ruleId);
         groupingAlarm.setAlarmIdentity(null);
+        groupingAlarm.setGroupingCreated(false);
+        groupingAlarm.setContributorsCount(1);
+        contributor.setGroupingAlarms(groupingAlarm);
 
-        // Set up mock behavior
-        when(utils.isGeneratedAlarm(alarmMap)).thenReturn(false);
-        when(groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity)).thenReturn(Optional.of(new ArrayList<>()));
-        when(groupingAlarmsRepo.getGroupingAlarmByGroupingId(anyInt())).thenReturn(Optional.of(groupingAlarm));
+        when(groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity))
+            .thenReturn(Optional.of(List.of(contributor)));
+        when(groupingAlarmsRepo.getGroupingAlarmByGroupingId(groupingId))
+            .thenReturn(Optional.of(groupingAlarm));
+        when(utils.isGeneratedAlarm(any())).thenReturn(false);
+        when(utils.verifyGroupingAlarmClearScenario(any(), anyLong(), anyInt(), any()))
+            .thenReturn(false);
 
-        // Act
-        groupingService.applyGroupingClearingLogic(alarmMap, alarmIdentity);
+        RulesLoadingService.getRuleMap().put(ruleId, new GroupingRule());
 
-        // Assert: Ensure clearAlarm is not called
-        verify(apiOperation, never()).clearAlarm(anyString());
+        // Execute
+        groupingService.applyGroupingClearingLogic(new HashMap<>(), alarmIdentity);
+
+        // Verify
+        verify(api, never()).clearAlarm(any());
+        verify(groupingAlarmsRepo).deleteById(groupingId);
+        RulesLoadingService.getRuleMap().clear();
     }
+}

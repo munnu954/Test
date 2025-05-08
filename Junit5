@@ -1,40 +1,103 @@
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Optional;
+
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.appender.ListAppender;
+import org.apache.logging.log4j.core.LogEvent;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.RequestEntity;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestTemplate;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.*;
+@ExtendWith(MockitoExtension.class)
+public class GroupingServiceTest {
 
-public class ApiOperationTest {
+    @InjectMocks
+    private GroupingService groupingService;
 
-    @Test
-    public void testGetAlarmDetailsByIdHttpClientNotFoundException() {
-        // given
-        RestTemplate restTemplate = mock(RestTemplate.class);
-        HttpClientErrorException.NotFound notFoundException = mock(HttpClientErrorException.NotFound.class);
-        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(), eq(String.class)))
-                .thenThrow(notFoundException);
+    @Mock
+    private GroupingUtils utils;
 
-        AlarmGroupingParams configParams = new AlarmGroupingParams();
-        ReflectionTestUtils.setField(configParams, "alarmFetchURL", "http://example.com");
-        ReflectionTestUtils.setField(configParams, "alarmFilterKey", "authKey");
+    @Mock
+    private GroupingAlarmsRepository groupingAlarmsRepo;
 
-        ApiOperation apiOperation = new ApiOperation();
-        ReflectionTestUtils.setField(apiOperation, "restTemplate", restTemplate);
-        ReflectionTestUtils.setField(apiOperation, "configParams", configParams);
+    @Mock
+    private GroupingContributorsRepository groupingContributorsRepo;
 
-        // when
-        String result = apiOperation.getAlarmDetailsById("123");
+    @Mock
+    private GenerateGroupingAlarmService generateAlarm;
 
-        // then
-        assertEquals(null, result);
+    @Mock
+    private ApiOperation api;
+
+    private ListAppender listAppender;
+
+    @BeforeEach
+    void setUp() {
+        // Setup Log4j2 ListAppender to capture logs
+        Logger logger = (Logger) LogManager.getLogger(GroupingService.class);
+        listAppender = new ListAppender("ListAppender");
+        listAppender.start();
+        logger.addAppender(listAppender);
     }
 
-}
-```
+    @Test
+    void applyGroupingClearingLogic_RuleIsNull_LogsWarning() {
+        // Given
+        String alarmIdentity = "testAlarmIdentity";
+        HashMap<String, Object> alarmMap = new HashMap<>();
 
-In this test case, we are mocking the RestTemplate class and specifically throwing a HttpClientErrorException.NotFound when the exchange method is called. We are setting up the AlarmGroupingParams fields using ReflectionTestUtils and then testing the getAlarmDetailsById method to cover the HttpClientErrorException.NotFound catch block.
+        // Mock GroupingUtils.isGeneratedAlarm to return false to enter else block
+        when(utils.isGeneratedAlarm(alarmMap)).thenReturn(false);
+
+        // Create a GroupingAlarm with ruleId not present in RulesLoadingService
+        GroupingAlarms groupingAlarm = new GroupingAlarms();
+        groupingAlarm.setGroupingId(123);
+        groupingAlarm.setRuleId(456L);
+        groupingAlarm.setContributorsCount(1); // After decrement, becomes 0
+        groupingAlarm.setGroupingCreated(true);
+        groupingAlarm.setAlarmIdentity("groupedAlarmId");
+
+        // Create a GroupingContributor linked to the GroupingAlarm
+        GroupingContributors contributor = new GroupingContributors();
+        contributor.setGroupingAlarms(groupingAlarm);
+
+        List<GroupingContributors> contributors = Collections.singletonList(contributor);
+
+        // Mock repository responses
+        when(groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity))
+                .thenReturn(Optional.of(contributors));
+        when(groupingAlarmsRepo.getGroupingAlarmByGroupingId(123))
+                .thenReturn(Optional.of(groupingAlarm));
+
+        // Ensure the rule map does not contain ruleId 456
+        RulesLoadingService.getRuleMap().clear();
+
+        // When
+        groupingService.applyGroupingClearingLogic(alarmMap, alarmIdentity);
+
+        // Then: Verify the warning log is generated
+        List<LogEvent> logs = listAppender.getEvents();
+        assertTrue(logs.stream().anyMatch(event ->
+                event.getLevel() == Level.WARN &&
+                event.getMessage().getFormattedMessage().contains("Rule is null for GroupingAlarm with ID: 123")
+        ));
+
+        // Verify interactions
+        verify(groupingContributorsRepo).deleteById(contributor.getGroupingContributorId());
+        verify(groupingAlarmsRepo).deleteById(123);
+    }
+}

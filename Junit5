@@ -1,103 +1,56 @@
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+@Test
+void applyGroupingClearingLogic_RuleIsNullAndContributorsCountPositive_DeletesGroupingAlarm() {
+    // Given
+    String alarmIdentity = "testContributorAlarm";
+    HashMap<String, Object> alarmMap = new HashMap<>();
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Optional;
+    // Mock GroupingUtils.isGeneratedAlarm to return false (process contributor alarms)
+    when(utils.isGeneratedAlarm(alarmMap)).thenReturn(false);
 
-import org.apache.logging.log4j.Level;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.core.Logger;
-import org.apache.logging.log4j.core.appender.ListAppender;
-import org.apache.logging.log4j.core.LogEvent;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+    // Create a GroupingAlarm with:
+    // - contributorsCount = 2 (after decrement becomes 1, which is >0)
+    // - ruleId not in RulesLoadingService (rule == null)
+    GroupingAlarms groupingAlarm = new GroupingAlarms();
+    groupingAlarm.setGroupingId(123);
+    groupingAlarm.setRuleId(456L); // Rule 456 does NOT exist in RulesLoadingService
+    groupingAlarm.setContributorsCount(2); // After decrement: 2 - 1 = 1 (>0)
+    groupingAlarm.setGroupingCreated(true);
+    groupingAlarm.setAlarmIdentity("groupedAlarm123");
 
-@ExtendWith(MockitoExtension.class)
-public class GroupingServiceTest {
+    // Link a GroupingContributor to the GroupingAlarm
+    GroupingContributors contributor = new GroupingContributors();
+    contributor.setGroupingAlarms(groupingAlarm);
+    List<GroupingContributors> contributors = Collections.singletonList(contributor);
 
-    @InjectMocks
-    private GroupingService groupingService;
+    // Mock repository responses
+    when(groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity))
+        .thenReturn(Optional.of(contributors));
+    when(groupingAlarmsRepo.getGroupingAlarmByGroupingId(123))
+        .thenReturn(Optional.of(groupingAlarm));
 
-    @Mock
-    private GroupingUtils utils;
+    // Ensure RulesLoadingService has no rule for ID 456
+    RulesLoadingService.getRuleMap().clear();
 
-    @Mock
-    private GroupingAlarmsRepository groupingAlarmsRepo;
+    // When
+    groupingService.applyGroupingClearingLogic(alarmMap, alarmIdentity);
 
-    @Mock
-    private GroupingContributorsRepository groupingContributorsRepo;
+    // Then: Verify the grouping alarm is deleted due to rule == null (even though contributorsCount >0)
+    verify(groupingAlarmsRepo).deleteById(123);
 
-    @Mock
-    private GenerateGroupingAlarmService generateAlarm;
+    // Verify the generated alarm is cleared
+    verify(api).clearAlarm("groupedAlarm123");
 
-    @Mock
-    private ApiOperation api;
+    // Verify the warning log for null rule
+    List<LogEvent> logs = listAppender.getEvents();
+    assertTrue(logs.stream().anyMatch(event ->
+        event.getLevel() == Level.WARN &&
+        event.getMessage().getFormattedMessage().contains("Rule is null for GroupingAlarm with ID: 123")
+    ));
 
-    private ListAppender listAppender;
-
-    @BeforeEach
-    void setUp() {
-        // Setup Log4j2 ListAppender to capture logs
-        Logger logger = (Logger) LogManager.getLogger(GroupingService.class);
-        listAppender = new ListAppender("ListAppender");
-        listAppender.start();
-        logger.addAppender(listAppender);
-    }
-
-    @Test
-    void applyGroupingClearingLogic_RuleIsNull_LogsWarning() {
-        // Given
-        String alarmIdentity = "testAlarmIdentity";
-        HashMap<String, Object> alarmMap = new HashMap<>();
-
-        // Mock GroupingUtils.isGeneratedAlarm to return false to enter else block
-        when(utils.isGeneratedAlarm(alarmMap)).thenReturn(false);
-
-        // Create a GroupingAlarm with ruleId not present in RulesLoadingService
-        GroupingAlarms groupingAlarm = new GroupingAlarms();
-        groupingAlarm.setGroupingId(123);
-        groupingAlarm.setRuleId(456L);
-        groupingAlarm.setContributorsCount(1); // After decrement, becomes 0
-        groupingAlarm.setGroupingCreated(true);
-        groupingAlarm.setAlarmIdentity("groupedAlarmId");
-
-        // Create a GroupingContributor linked to the GroupingAlarm
-        GroupingContributors contributor = new GroupingContributors();
-        contributor.setGroupingAlarms(groupingAlarm);
-
-        List<GroupingContributors> contributors = Collections.singletonList(contributor);
-
-        // Mock repository responses
-        when(groupingContributorsRepo.getGroupingContributorsByIdentity(alarmIdentity))
-                .thenReturn(Optional.of(contributors));
-        when(groupingAlarmsRepo.getGroupingAlarmByGroupingId(123))
-                .thenReturn(Optional.of(groupingAlarm));
-
-        // Ensure the rule map does not contain ruleId 456
-        RulesLoadingService.getRuleMap().clear();
-
-        // When
-        groupingService.applyGroupingClearingLogic(alarmMap, alarmIdentity);
-
-        // Then: Verify the warning log is generated
-        List<LogEvent> logs = listAppender.getEvents();
-        assertTrue(logs.stream().anyMatch(event ->
-                event.getLevel() == Level.WARN &&
-                event.getMessage().getFormattedMessage().contains("Rule is null for GroupingAlarm with ID: 123")
-        ));
-
-        // Verify interactions
-        verify(groupingContributorsRepo).deleteById(contributor.getGroupingContributorId());
-        verify(groupingAlarmsRepo).deleteById(123);
-    }
+    // Verify the log for deleting the grouping alarm due to rule == null
+    assertTrue(logs.stream().anyMatch(event ->
+        event.getLevel() == Level.INFO &&
+        event.getMessage().getFormattedMessage().contains("Removed record") &&
+        event.getMessage().getFormattedMessage().contains("groupingObject 123")
+    ));
 }

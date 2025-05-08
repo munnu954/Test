@@ -1,32 +1,16 @@
-The error message you're receiving indicates that the field name provided in `ReflectionTestUtils.setField` does not match any field in the `ApiOperation` class. It's crucial to ensure that the field names used in `ReflectionTestUtils` match exactly with those declared in your class.
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-Let’s carefully set up the test using `ReflectionTestUtils` to ensure the correct fields are being targeted. Here is a revised approach:
+import java.net.URI;
 
-### Steps to Fix the Issue:
-1. **Verify Field Names**: Double-check the actual field names in your `ApiOperation` class. Make sure you use the correct field name when using `ReflectionTestUtils`.
-2. **Update Field Names**: Ensure that the field names used in `setField` correctly correspond to those in the `ApiOperation` class.
-
-### Updated Test Code
-
-```java
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
+import org.springframework.http.*;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.test.util.ReflectionTestUtils;
-
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 public class ApiOperationTest {
@@ -34,45 +18,39 @@ public class ApiOperationTest {
     @Mock
     private RestTemplate restTemplate;
 
+    @Mock
+    private AlarmGroupingParams configParams;
+
     @InjectMocks
     private ApiOperation apiOperation;
 
-    private AlarmGroupingParams configParams;
-
-    @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
-
-        // Initialize the AlarmGroupingParams and set the fields using ReflectionTestUtils
-        configParams = new AlarmGroupingParams();
-        ReflectionTestUtils.setField(configParams, "alarmFetchURL", "http://example.com/alarm");
-        ReflectionTestUtils.setField(configParams, "alarmFilterKey", "dummyKey");
-
-        // Correctly set the configParams in ApiOperation using reflection
-        ReflectionTestUtils.setField(apiOperation, "configParams", configParams); // Ensure this field name matches the actual field in ApiOperation
-    }
-
     @Test
-    public void testGetAlarmDetailsById_NotFound() {
-        String alarmIdentity = "testAlarmIdentity";
-        String url = "http://example.com/alarm";
+    void testGetAlarmDetailsById_NotFound() {
+        // Mocking the values for AlarmGroupingParams
+        when(configParams.getAlarmFetchURL()).thenReturn("http://mocked-url");
+        when(configParams.getAlarmFilterKey()).thenReturn("mocked-auth-key");
+
+        String alarmIdentity = "12345";
+        String url = configParams.getAlarmFetchURL();
+        
+        // Setting up HttpHeaders
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", configParams.getAlarmFilterKey());
+
+        // Creating a mock request entity
+        HttpEntity<Object> entity = new HttpEntity<>(null, headers);
 
         // Mocking RestTemplate to throw HttpClientErrorException.NotFound
-        doThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND))
-                .when(restTemplate)
-                .exchange(eq(url), eq(HttpMethod.POST), any(), eq(String.class));
+        when(restTemplate.exchange(eq(url), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND, "Not Found"));
 
-        // Test the method
+        // Execute method under test
         String result = apiOperation.getAlarmDetailsById(alarmIdentity);
 
-        // Assert that the result is null since the NotFound exception should be caught
-        assertNull(result);
+        // Assertions
+        assertNull(result, "Expected result to be null when NotFound exception occurs");
+
+        // Verify that exchange method was called once
+        verify(restTemplate, times(1)).exchange(eq(url), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class));
     }
 }
-```
-
-### Explanation:
-- **Correct Field Names**: Replace `"configParams"` in `ReflectionTestUtils.setField` with the actual field name used in the `ApiOperation` class. If it's different, use the correct one.
-- **Consistent Mocking**: Ensure the `AlarmGroupingParams` fields are correctly set with expected values.
-
-The above setup assumes `configParams` is the correct field name in the `ApiOperation` class. If this is not the case, substitute it with the correct field name as declared in the class.

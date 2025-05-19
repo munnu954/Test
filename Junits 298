@@ -1,53 +1,61 @@
-To improve handling of the specific status `404 Not Found` with the error message `"Alarm Identity not found"`, you can modify the code to check for the HTTP status code and handle it appropriately. Here's an updated version of the method with suggestions on where the changes have been made:
+The error occurs because the `jsonNode.get(key).asText()` returns a string that is already an array in JSON format, but it's enclosed in quotes, making it a string instead of an array. When you try to read this string as a JSON array using `objectMapper.readValue()`, it throws an error because the string is not a valid JSON array.
 
-```java
-@Component
-public class ApiOperation {
-
-    // Assuming restTemplate and configParams are properly injected and initialized
-    private final RestTemplate restTemplate;
-    private final ConfigParams configParams;
-
-    public ApiOperation(RestTemplate restTemplate, ConfigParams configParams) {
-        this.restTemplate = restTemplate;
-        this.configParams = configParams;
-    }
-
-    public String getAlarmDetailsById(String alarmIdentity) {
-        String result = null;
-        try {
-            String url = configParams.getAlarmFetchURL();
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("Authorization", configParams.getAlarmFilterKey());
-
-            // Create a request entity without setting the body directly, modify accordingly
-            RequestEntity<Object> requestBody = new RequestEntity<>(null, headers, HttpMethod.POST, URI.create(url));
-
-            // Using HttpEntity to set body (if needed)
-            HttpEntity<Object> entity = new HttpEntity<>(requestBody.getBody(), headers);
-
-            // Exchange with a try-catch to handle specific HTTP statuses
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
-            result = response.getBody();
-        } catch (HttpClientErrorException.NotFound e) {
-            // Catching specific 404 Not Found exception
-            logger.warn("Alarm Identity not found in the DB. ErrorCode: 1003, ErrorMessage: Alarm Identity not found");
-        } catch (RestClientException e) {
-            // Handling other exceptions
-            logger.error("Exception occurred while calling Alarm Filtering API: " + e);
-        }
-        return result;
-    }
+Possible inputs for recreating the exception:
+The following inputs might recreate the exception:
+{
+  "tag": "WLS"
 }
-```
 
-**Changes Made:**
-1. **HttpClientErrorException**: Added a specific catch block for `HttpClientErrorException.NotFound` to handle the `404 Not Found` status directly. This provides a cleaner way to handle specific HTTP status codes.
-   
-2. **Logging**: Improved logging in the `NotFound` case to include the error code and message, making it clear that this is a specific scenario handled separately.
+{
+  "tag": "[WLS"
+}
 
-3. **Constructors**: Added constructor injection for `RestTemplate` and `ConfigParams` (assuming these are components or configurations available in your Spring context).
+{
+  "tag": "WLS]"
+}
 
-4. **HttpEntity/RequestEntity**: Adjusted the use of `HttpEntity<Object>` to ensure that it's correctly handling the body and headers. Note that the original code seems to misuse `requestBody.getBody().setAlarmIdentity(alarmIdentity);`, which is incorrect as `requestBody.getBody()` is `null`. You might want to set the body content properly based on your requirements.
+{
+  "tag": "['WLS']"
+}
 
-These changes improve the code by providing more specific error handling and clearer logging for the `404 Not Found` scenario.
+In all these cases, the `objectMapper.readValue()` method will throw an error because the string is not a valid JSON array.
+
+Fixed solution:
+To fix this issue, you can use the `JsonNode` directly to get the array values without converting it to a string and then parsing it again. Here's the updated code:
+public String[] getArrayValueForTags(JsonNode jsonNode, String key) {
+    String[] value = null;
+    if (jsonNode.get(key) != null) {
+        try {
+            if (jsonNode.get(key).isArray()) {
+                value = new String[jsonNode.get(key).size()];
+                for (int i = 0; i < jsonNode.get(key).size(); i++) {
+                    value[i] = jsonNode.get(key).get(i).asText();
+                }
+            } else if (jsonNode.get(key).isTextual()) {
+                // Try to parse the string as a JSON array
+                try {
+                    String[] tagArray = new ObjectMapper().readValue(jsonNode.get(key).asText(), String[].class);
+                    value = tagArray;
+                } catch (Exception e) {
+                    // If parsing fails, treat it as a single string value
+                    value = new String[]{jsonNode.get(key).asText().replaceAll("\\[|\\]", "").replaceAll("\"", "")};
+                }
+            }
+        } catch (Exception e) {
+            LOG.error("exception in processing tags" + e.getMessage());
+            return value;
+        }
+    }
+    return value;
+}
+In this updated code:
+
+- *Check if the field is an array*: Before trying to read the array values, we check if the field is an array using `jsonNode.get(key).isArray()`.
+- *Read array values directly from the `JsonNode`*: If the field is an array, we read the array values directly from the `JsonNode` using `jsonNode.get(key).get(i).asText()`.
+- *Handle single string values*: If the field is not an array, but a single string, we try to parse it as a JSON array. If parsing fails, we treat it as a single string value and remove any square brackets and quotes.
+
+Explanation of changes:
+
+- *Added array check*: We added a check to see if the field is an array before trying to read its values.
+- *Read array values directly*: We read the array values directly from the `JsonNode` instead of converting it to a string and parsing it again.
+- *Handle single string values*: We added a check to see if the field is a single string value and try to parse it as a JSON array. If parsing fails, we treat it as a single string value and remove any square brackets and quotes.

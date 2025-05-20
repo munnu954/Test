@@ -1,49 +1,51 @@
-To fix the error and improve the code, the following changes are necessary:
+To fix the error and ensure proper handling of JSON values, including nested structures within strings, the following changes have been made:
 
-1. **Initialize `resultMsg` Properly**: Ensure `resultMsg` is initialized as a copy of the input map to avoid modifying the original directly.
-2. **Correct JSON Value Handling**: Differentiate between actual JSON objects (Maps) and JSON-formatted Strings, parsing Strings into Maps when necessary.
-3. **Use Iterator for Safe Removal**: Use an iterator to safely remove entries while iterating through the map.
+1. **Initialization Fix**: The `resultMsg` is initialized as a copy of the input map to prevent `NullPointerException`.
+2. **Handling JSON Strings**: Correctly parse JSON strings into maps, process them recursively, and convert them back to strings if necessary.
+3. **Revised JSON Check**: The `checkIfJsonValue` method now accurately identifies valid JSON objects (maps) and JSON-formatted strings.
 
 Here's the refactored code:
 
 ```java
 @Component
 public class DeduplicationUtils {
-    private static final Logger logger = LogManager.getLogger(DeduplicationUtils.class);
+    Logger logger = LogManager.getLogger(this.getClass());
 
     public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
         HashMap<String, Object> resultMsg = new HashMap<>(msg); // Initialize with a copy of the input map
         try {
-            Iterator<Map.Entry<String, Object>> iterator = resultMsg.entrySet().iterator();
-            while (iterator.hasNext()) {
-                Map.Entry<String, Object> entry = iterator.next();
-                Object value = entry.getValue();
+            for (Map.Entry<String, Object> iterate : msg.entrySet()) {
+                Object value = iterate.getValue();
                 if (checkIfJsonValue(value)) {
-                    Map<String, Object> nestedMap;
-                    if (value instanceof String) {
-                        // Parse the JSON string into a Map
-                        try {
-                            nestedMap = RulesConstants.getObjectMapper().readValue((String) value, HashMap.class);
-                        } catch (JsonProcessingException e) {
-                            logger.error("Failed to parse JSON string for key: " + entry.getKey(), e);
-                            continue;
+                    Object originalValue = value;
+                    boolean isOriginalValueString = originalValue instanceof String;
+                    Map<String, Object> nestedMap = null;
+                    try {
+                        if (isOriginalValueString) {
+                            nestedMap = RulesConstants.getObjectMapper().readValue((String) originalValue, HashMap.class);
+                        } else {
+                            nestedMap = RulesConstants.getObjectMapper().convertValue(originalValue, HashMap.class);
                         }
-                    } else {
-                        // Cast to Map if it's already a JSON object
-                        nestedMap = (Map<String, Object>) value;
+                        HashMap<String, Object> updatedMsg = removeNullValuesInJsonAttributes(nestedMap);
+                        if (isOriginalValueString) {
+                            String updatedStr = RulesConstants.getObjectMapper().writeValueAsString(updatedMsg);
+                            resultMsg.put(iterate.getKey(), updatedStr);
+                        } else {
+                            resultMsg.put(iterate.getKey(), updatedMsg);
+                        }
+                    } catch (IOException e) {
+                        logger.error("Error parsing JSON value for key '" + iterate.getKey() + "': ", e);
+                        // Keep the original value if parsing fails
+                        resultMsg.put(iterate.getKey(), originalValue);
                     }
-                    // Recursively process the nested map
-                    HashMap<String, Object> processedNestedMap = removeNullValuesInJsonAttributes(nestedMap);
-                    entry.setValue(processedNestedMap);
                 } else {
-                    // Remove entry if value is null or empty
                     if (value == null || value.toString().isEmpty()) {
-                        iterator.remove();
+                        resultMsg.remove(iterate.getKey());
                     }
                 }
             }
         } catch (Exception e) {
-            logger.error("Exception occurred while removing null/empty values: ", e);
+            logger.error("Exception occurred while trying to remove null/empty values from JSON attributes: ", e);
         }
         return resultMsg;
     }
@@ -52,36 +54,26 @@ public class DeduplicationUtils {
         if (obj instanceof Map) {
             return true;
         } else if (obj instanceof String) {
-            String str = ((String) obj).trim();
-            if (str.startsWith("{") && str.endsWith("}")) {
-                try {
-                    // Attempt to parse the string to confirm it's a valid JSON object
-                    RulesConstants.getObjectMapper().readValue(str, Map.class);
-                    return true;
-                } catch (JsonProcessingException e) {
-                    return false;
-                }
+            String str = (String) obj;
+            try {
+                RulesConstants.getObjectMapper().readValue(str, Map.class);
+                return true;
+            } catch (IOException e) {
+                return false;
             }
         }
         return false;
     }
 
-    // Other methods (mergeUpdateJsonValues) remain with similar corrections...
+    // mergeUpdateJsonValues method remains unchanged but ensure similar JSON handling if needed
 }
 ```
 
-**Key Fixes:**
+**Explanation of Changes:**
 
-1. **Initialization of `resultMsg`**: The method starts by creating a copy of the input map to avoid concurrent modification issues and ensure we're working on a modifiable copy.
-2. **Iterator Usage**: Uses an iterator to safely remove entries from `resultMsg` while iterating.
-3. **JSON Handling**:
-   - **Strings Checked and Parsed**: The `checkIfJsonValue` method now checks if a String can be parsed into a JSON object. If so, it's parsed into a `Map` for recursive processing.
-   - **Direct Map Handling**: If the value is already a `Map`, it's processed directly without unnecessary serialization/deserialization.
+- **Initialization**: `resultMsg` is initialized with `new HashMap<>(msg)`, ensuring we modify a copy of the input map.
+- **JSON String Handling**: If the value is a JSON-formatted string, it's parsed into a `HashMap`, processed recursively, and converted back to a string to maintain the original data type.
+- **Improved JSON Detection**: `checkIfJsonValue` checks if the object is a `Map` or a parsable JSON string, avoiding incorrect parsing attempts.
+- **Error Handling**: Added error logging and fallback to retain original values if parsing fails, ensuring data integrity.
 
-**Additional Notes:**
-
-- **Error Logging**: Improved error logging to provide more context when exceptions occur.
-- **Efficiency**: Avoids redundant serialization/deserialization when the value is already a `Map`.
-- **Safety**: Proper type checks and exception handling around JSON parsing to prevent invalid processing.
-
-These changes should resolve the `MismatchedInputException` by ensuring that JSON-formatted Strings are correctly parsed into `Map` instances before further processing.
+These changes address the `MismatchedInputException` by correctly handling nested JSON structures within strings and ensure the method works as intended with minimal impact on existing functionality.

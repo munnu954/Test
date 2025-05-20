@@ -1,51 +1,61 @@
-import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.util.Collector;
-import org.json.JSONObject;
+The error you're encountering is due to the attempt to parse malformed JSON strings. In your case, the value for the `tag` key is not valid JSON, which results in the `Unrecognized token` error. To handle such cases gracefully, you can modify the `getArrayValueForTags` method to include additional checks and transformations for common malformed formats.
 
-public class CsvToJsonRCSMESSAGINGTransformer implements FlatMapFunction<String, String> {
-    @Override
-    public void flatMap(String s, Collector<String> collector) throws Exception {
-        String[] lines = s.split(System.lineSeparator());
+### Changes Made:
+1. **Added Validation for JSON Array Format**: Before attempting to parse the string as JSON, check if it is a valid JSON array by ensuring it starts with `[` and ends with `]`.
+2. **Improved Handling of Malformed Strings**: Added logic to handle more malformed formats by cleaning the input string and providing default fallbacks.
+3. **Logging Improvements**: Enhanced logging to provide clearer error messages for better debugging.
 
-        for (String str : lines) {
-            String[] arr = str.split(",");
+Here’s the revised code:
 
-            JSONObject obj = new JSONObject();
-            boolean validLine = true;
+```java
+@Repository
+public class AlarmRepositoryImpl {
+    private static final Logger LOG = LoggerFactory.getLogger(AlarmRepositoryImpl.class);
 
-            // Using TreeMap to store keys in sorted order
-            TreeMap<Integer, String> sortedMap = new TreeMap<>();
-
-            for (int i = 0; i < arr.length; i++) {
-                try {
-                    // Assuming the keys are integer indices
-                    int key = Integer.parseInt(arr[i].trim());
-                    String value = arr[i + 1].trim().replace("target.*\\**", "replacement **");
-
-                    sortedMap.put(key, value);
-                    i++; // Skip the next element since it is the corresponding value
-                } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
-                    validLine = false;
-                    break;
+    public String[] getArrayValueForTags(JsonNode jsonNode, String key) {
+        String[] value = null;
+        ObjectMapper objectMapper = new ObjectMapper();
+        
+        if (jsonNode.get(key) != null) {
+            try {
+                String tagValue = jsonNode.get(key).asText();
+                
+                // Handle possible malformed array representations
+                // Replace single quotes with double quotes
+                tagValue = tagValue.replace("'", "\"").trim();
+                
+                // Clean up the tagValue for common issues
+                if (tagValue.startsWith("[") && tagValue.endsWith("]")) {
+                    // If it looks like a JSON array, parse it
+                    value = objectMapper.readValue(tagValue, String[].class);
+                } else if (tagValue.startsWith("[") || tagValue.endsWith("]")) {
+                    // Handle cases like "[WLS" or "WLS]"
+                    tagValue = tagValue.replaceAll("[\\[\\]]", "").trim(); // Remove brackets
+                    value = new String[]{tagValue};
+                } else if (tagValue.contains(",")) {
+                    // Handle comma-separated values
+                    value = tagValue.split(",");
+                } else {
+                    // Handle single tags or malformed formats, return as an array of one
+                    value = new String[]{tagValue};
                 }
-            }
-
-            // Populate JSON object with sorted key-value pairs
-            for (Map.Entry<Integer, String> entry : sortedMap.entrySet()) {
-                obj.put(String.valueOf(entry.getKey()), entry.getValue());
-            }
-
-            // Add additional key-value pairs or modifications if needed
-            obj.put("name", "FILENAME"); // Example additional key-value pair
-            // ...
-
-            if (validLine) {
-                this.successIntCounter.add(1);
-                collector.collect(obj.toString());
-            } else {
-                this.failureIntCounter.add(1);
-                // Handle invalid lines if necessary
+            } catch (Exception e) {
+                LOG.error("Exception in processing tags: " + e.getMessage());
+                return new String[0]; // Return empty array on error
             }
         }
+        return value;
     }
 }
+```
+
+### Explanation of Fixes:
+
+1. **Trimming Input**: We trim the `tagValue` to remove any leading or trailing whitespace, which helps prevent issues with parsing.
+2. **Checking Bracket Conditions**: Added checks to identify if the string starts or ends with brackets and handle them accordingly.
+   - If it starts with `[` and ends with `]`, it attempts to parse it as a JSON array.
+   - If it starts or ends with brackets but is not a complete array, it removes the brackets and treats the remaining string as a single tag.
+3. **Regular Expression Cleanup**: Used `replaceAll("[\\[\\]]", "")` to remove any square brackets from the tag value, ensuring we can safely parse it.
+4. **Fallbacks for Malformed Formats**: When malformed formats are encountered, the string is returned as a single-element array instead of throwing an error.
+
+This should help you handle the specific malformed inputs you've provided without throwing exceptions.

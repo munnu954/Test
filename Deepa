@@ -1,101 +1,87 @@
-Certainly! To achieve 100% code coverage for the `getArrayValueForTags` method, we need to create JUnit 5 test cases that cover all branches of the conditional statements, especially focusing on the `else if (tagValue.startsWith("[") || tagValue.endsWith("]"))` statement. 
+To fix the error and improve the code, the following changes are necessary:
 
-Here's the JUnit 5 test class that tests all the relevant scenarios:
+1. **Initialize `resultMsg` Properly**: Ensure `resultMsg` is initialized as a copy of the input map to avoid modifying the original directly.
+2. **Correct JSON Value Handling**: Differentiate between actual JSON objects (Maps) and JSON-formatted Strings, parsing Strings into Maps when necessary.
+3. **Use Iterator for Safe Removal**: Use an iterator to safely remove entries while iterating through the map.
+
+Here's the refactored code:
 
 ```java
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
+@Component
+public class DeduplicationUtils {
+    private static final Logger logger = LogManager.getLogger(DeduplicationUtils.class);
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-
-public class AlarmRepositoryImplTest {
-
-    private AlarmRepositoryImpl alarmRepository;
-    private ObjectMapper objectMapper;
-
-    @BeforeEach
-    public void setUp() {
-        alarmRepository = new AlarmRepositoryImpl();
-        objectMapper = new ObjectMapper();
+    public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
+        HashMap<String, Object> resultMsg = new HashMap<>(msg); // Initialize with a copy of the input map
+        try {
+            Iterator<Map.Entry<String, Object>> iterator = resultMsg.entrySet().iterator();
+            while (iterator.hasNext()) {
+                Map.Entry<String, Object> entry = iterator.next();
+                Object value = entry.getValue();
+                if (checkIfJsonValue(value)) {
+                    Map<String, Object> nestedMap;
+                    if (value instanceof String) {
+                        // Parse the JSON string into a Map
+                        try {
+                            nestedMap = RulesConstants.getObjectMapper().readValue((String) value, HashMap.class);
+                        } catch (JsonProcessingException e) {
+                            logger.error("Failed to parse JSON string for key: " + entry.getKey(), e);
+                            continue;
+                        }
+                    } else {
+                        // Cast to Map if it's already a JSON object
+                        nestedMap = (Map<String, Object>) value;
+                    }
+                    // Recursively process the nested map
+                    HashMap<String, Object> processedNestedMap = removeNullValuesInJsonAttributes(nestedMap);
+                    entry.setValue(processedNestedMap);
+                } else {
+                    // Remove entry if value is null or empty
+                    if (value == null || value.toString().isEmpty()) {
+                        iterator.remove();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Exception occurred while removing null/empty values: ", e);
+        }
+        return resultMsg;
     }
 
-    @Test
-    public void testGetArrayValueForTags_ValidJsonArray() throws Exception {
-        String jsonString = "{\"tags\": \"[\\\"tag1\\\", \\\"tag2\\\"]\"}";
-        JsonNode jsonNode = objectMapper.readTree(jsonString);
-        String[] expected = {"tag1", "tag2"};
-
-        String[] result = alarmRepository.getArrayValueForTags(jsonNode, "tags");
-
-        assertArrayEquals(expected, result);
+    public boolean checkIfJsonValue(Object obj) {
+        if (obj instanceof Map) {
+            return true;
+        } else if (obj instanceof String) {
+            String str = ((String) obj).trim();
+            if (str.startsWith("{") && str.endsWith("}")) {
+                try {
+                    // Attempt to parse the string to confirm it's a valid JSON object
+                    RulesConstants.getObjectMapper().readValue(str, Map.class);
+                    return true;
+                } catch (JsonProcessingException e) {
+                    return false;
+                }
+            }
+        }
+        return false;
     }
 
-    @Test
-    public void testGetArrayValueForTags_StartsWithBracket() throws Exception {
-        String jsonString = "{\"tags\": \"[tag1\"}";
-        JsonNode jsonNode = objectMapper.readTree(jsonString);
-        String[] expected = {"tag1"};
-
-        String[] result = alarmRepository.getArrayValueForTags(jsonNode, "tags");
-
-        assertArrayEquals(expected, result);
-    }
-
-    @Test
-    public void testGetArrayValueForTags_EndsWithBracket() throws Exception {
-        String jsonString = "{\"tags\": \"tag1]\"}";
-        JsonNode jsonNode = objectMapper.readTree(jsonString);
-        String[] expected = {"tag1"};
-
-        String[] result = alarmRepository.getArrayValueForTags(jsonNode, "tags");
-
-        assertArrayEquals(expected, result);
-    }
-
-    @Test
-    public void testGetArrayValueForTags_MalformedJsonArray() throws Exception {
-        String jsonString = "{\"tags\": \"[WLS\"}";
-        JsonNode jsonNode = objectMapper.readTree(jsonString);
-        String[] expected = {"WLS"};
-
-        String[] result = alarmRepository.getArrayValueForTags(jsonNode, "tags");
-
-        assertArrayEquals(expected, result);
-    }
-
-    @Test
-    public void testGetArrayValueForTags_EmptyArray() throws Exception {
-        String jsonString = "{\"tags\": \"[]\"}";
-        JsonNode jsonNode = objectMapper.readTree(jsonString);
-        String[] expected = {};
-
-        String[] result = alarmRepository.getArrayValueForTags(jsonNode, "tags");
-
-        assertArrayEquals(expected, result);
-    }
-
-    @Test
-    public void testGetArrayValueForTags_NoTagsKey() throws Exception {
-        String jsonString = "{\"otherKey\": \"value\"}";
-        JsonNode jsonNode = objectMapper.readTree(jsonString);
-        String[] expected = {};
-
-        String[] result = alarmRepository.getArrayValueForTags(jsonNode, "tags");
-
-        assertArrayEquals(expected, result);
-    }
+    // Other methods (mergeUpdateJsonValues) remain with similar corrections...
 }
 ```
 
-### Explanation of the Tests:
-1. **testGetArrayValueForTags_ValidJsonArray**: Tests a valid JSON array format.
-2. **testGetArrayValueForTags_StartsWithBracket**: Tests a case where the string starts with a bracket but is not a complete array.
-3. **testGetArrayValueForTags_EndsWithBracket**: Tests a case where the string ends with a bracket but is not a complete array.
-4. **testGetArrayValueForTags_MalformedJsonArray**: Tests a malformed JSON array representation.
-5. **testGetArrayValueForTags_EmptyArray**: Tests an empty array representation.
-6. **testGetArrayValueForTags_NoTagsKey**: Tests the scenario where the specified key doesn't exist in the JSON.
+**Key Fixes:**
 
-These tests will help ensure that all branches of the specified conditional statement are covered, leading to 100% code coverage for the `getArrayValueForTags` method.
+1. **Initialization of `resultMsg`**: The method starts by creating a copy of the input map to avoid concurrent modification issues and ensure we're working on a modifiable copy.
+2. **Iterator Usage**: Uses an iterator to safely remove entries from `resultMsg` while iterating.
+3. **JSON Handling**:
+   - **Strings Checked and Parsed**: The `checkIfJsonValue` method now checks if a String can be parsed into a JSON object. If so, it's parsed into a `Map` for recursive processing.
+   - **Direct Map Handling**: If the value is already a `Map`, it's processed directly without unnecessary serialization/deserialization.
+
+**Additional Notes:**
+
+- **Error Logging**: Improved error logging to provide more context when exceptions occur.
+- **Efficiency**: Avoids redundant serialization/deserialization when the value is already a `Map`.
+- **Safety**: Proper type checks and exception handling around JSON parsing to prevent invalid processing.
+
+These changes should resolve the `MismatchedInputException` by ensuring that JSON-formatted Strings are correctly parsed into `Map` instances before further processing.

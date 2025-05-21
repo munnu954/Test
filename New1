@@ -1,6 +1,6 @@
-Thank you for your patience. To handle only improperly formatted JSON inputs without causing errors for properly formatted ones, we can modify the code to check if the input can be serialized with `writeValueAsString`. If it cannot be serialized, we will apply the serialization and deserialization process.
+Thank you for your patience. To ensure that we only apply the serialization and deserialization process to improperly formatted JSON inputs, we need to implement a more robust check that identifies whether the input is in a proper JSON format before attempting to serialize it. 
 
-Here's the updated code:
+Here’s the revised `removeNullValuesInJsonAttributes` method that addresses this issue:
 
 ```java
 public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
@@ -18,14 +18,18 @@ public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Obje
                     HashMap.class
                 );
             } else {
-                // Convert the improper JSON to a valid JSON string and then parse it back to a HashMap
-                updatedMsg = RulesConstants.getObjectMapper().readValue(
-                    RulesConstants.getObjectMapper().writeValueAsString(value),
-                    HashMap.class
-                );
+                // Handle improper JSON by converting it to a valid JSON string first
+                try {
+                    String jsonString = RulesConstants.getObjectMapper().writeValueAsString(value);
+                    updatedMsg = RulesConstants.getObjectMapper().readValue(jsonString, HashMap.class);
+                } catch (Exception e) {
+                    // If any error occurs during serialization, log it and skip this entry
+                    logger.error("Error serializing improper JSON input: " + value + ". Error: " + e);
+                    continue; // Skip to the next entry
+                }
             }
 
-            // If the value itself is a JSON object, recursively call the method
+            // Recursively call the method to remove null values in nested JSON objects
             updatedMsg = removeNullValuesInJsonAttributes(updatedMsg);
 
             // Remove null or empty values from updatedMsg
@@ -46,10 +50,14 @@ public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Obje
 ```
 
 ### Key Changes:
-1. **Conditional Handling**: The code checks if the value is a properly formatted JSON using `checkIfJsonValue(value)`. If it passes this check (i.e., it is valid), it is parsed directly without serialization.
+1. **Improper JSON Handling**:
+   - When encountering an improperly formatted JSON, the method attempts to serialize it to a valid JSON string using `writeValueAsString`.
+   - If serialization fails (i.e., the input is not serializable), an error is logged, and the entry is skipped.
 
-2. **Serialization for Improper JSON**: If the value is not in a proper JSON format, it is serialized using `writeValueAsString`, ensuring that it is converted into a valid JSON string before being parsed.
+2. **Error Handling**: 
+   - Errors during serialization are caught, logged, and handled gracefully without disrupting the processing of other entries.
 
-3. **Recursive Call**: After processing, the recursive call to `removeNullValuesInJsonAttributes(updatedMsg)` is retained to handle any nested JSON objects.
+3. **Preservation of Logic**: 
+   - The recursive call to `removeNullValuesInJsonAttributes(updatedMsg)` is maintained to ensure all nested JSON structures are processed.
 
-This adjustment should ensure that only improperly formatted JSON inputs go through the serialization process, thereby avoiding errors with properly formatted JSON.
+This approach ensures that only improperly formatted JSON messages undergo serialization, while properly formatted messages are processed correctly without errors.

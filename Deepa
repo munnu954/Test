@@ -1,79 +1,27 @@
-To fix the error and ensure proper handling of JSON values, including nested structures within strings, the following changes have been made:
-
-1. **Initialization Fix**: The `resultMsg` is initialized as a copy of the input map to prevent `NullPointerException`.
-2. **Handling JSON Strings**: Correctly parse JSON strings into maps, process them recursively, and convert them back to strings if necessary.
-3. **Revised JSON Check**: The `checkIfJsonValue` method now accurately identifies valid JSON objects (maps) and JSON-formatted strings.
-
-Here's the refactored code:
-
-```java
-@Component
-public class DeduplicationUtils {
-    Logger logger = LogManager.getLogger(this.getClass());
-
-    public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
-        HashMap<String, Object> resultMsg = new HashMap<>(msg); // Initialize with a copy of the input map
-        try {
-            for (Map.Entry<String, Object> iterate : msg.entrySet()) {
-                Object value = iterate.getValue();
-                if (checkIfJsonValue(value)) {
-                    Object originalValue = value;
-                    boolean isOriginalValueString = originalValue instanceof String;
-                    Map<String, Object> nestedMap = null;
-                    try {
-                        if (isOriginalValueString) {
-                            nestedMap = RulesConstants.getObjectMapper().readValue((String) originalValue, HashMap.class);
-                        } else {
-                            nestedMap = RulesConstants.getObjectMapper().convertValue(originalValue, HashMap.class);
-                        }
-                        HashMap<String, Object> updatedMsg = removeNullValuesInJsonAttributes(nestedMap);
-                        if (isOriginalValueString) {
-                            String updatedStr = RulesConstants.getObjectMapper().writeValueAsString(updatedMsg);
-                            resultMsg.put(iterate.getKey(), updatedStr);
-                        } else {
-                            resultMsg.put(iterate.getKey(), updatedMsg);
-                        }
-                    } catch (IOException e) {
-                        logger.error("Error parsing JSON value for key '" + iterate.getKey() + "': ", e);
-                        // Keep the original value if parsing fails
-                        resultMsg.put(iterate.getKey(), originalValue);
-                    }
-                } else {
-                    if (value == null || value.toString().isEmpty()) {
-                        resultMsg.remove(iterate.getKey());
-                    }
+public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
+    HashMap<String, Object> resultMsg = new HashMap<>(msg);
+    try {
+        for (Map.Entry<String, Object> iterate : msg.entrySet()) {
+            if (checkIfJsonValue(iterate.getValue())) {
+                String jsonString = iterate.getValue().toString().trim();
+                
+                // Ensure proper formatting before parsing
+                if (!jsonString.startsWith("{") || !jsonString.endsWith("}")) {
+                    continue; // Skip invalid JSON structures
+                }
+                
+                HashMap<String, Object> updatedMsg = removeNullValuesInJsonAttributes(
+                    RulesConstants.getObjectMapper().readValue(jsonString, HashMap.class)
+                );
+                resultMsg.put(iterate.getKey(), updatedMsg);
+            } else {
+                if (iterate.getValue() == null || iterate.getValue().toString().isEmpty()) {
+                    resultMsg.remove(iterate.getKey());
                 }
             }
-        } catch (Exception e) {
-            logger.error("Exception occurred while trying to remove null/empty values from JSON attributes: ", e);
         }
-        return resultMsg;
+    } catch (Exception e) {
+        logger.error("Exception occurred while trying to remove null/empty values from JSON attributes: ", e);
     }
-
-    public boolean checkIfJsonValue(Object obj) {
-        if (obj instanceof Map) {
-            return true;
-        } else if (obj instanceof String) {
-            String str = (String) obj;
-            try {
-                RulesConstants.getObjectMapper().readValue(str, Map.class);
-                return true;
-            } catch (IOException e) {
-                return false;
-            }
-        }
-        return false;
-    }
-
-    // mergeUpdateJsonValues method remains unchanged but ensure similar JSON handling if needed
+    return resultMsg;
 }
-```
-
-**Explanation of Changes:**
-
-- **Initialization**: `resultMsg` is initialized with `new HashMap<>(msg)`, ensuring we modify a copy of the input map.
-- **JSON String Handling**: If the value is a JSON-formatted string, it's parsed into a `HashMap`, processed recursively, and converted back to a string to maintain the original data type.
-- **Improved JSON Detection**: `checkIfJsonValue` checks if the object is a `Map` or a parsable JSON string, avoiding incorrect parsing attempts.
-- **Error Handling**: Added error logging and fallback to retain original values if parsing fails, ensuring data integrity.
-
-These changes address the `MismatchedInputException` by correctly handling nested JSON structures within strings and ensure the method works as intended with minimal impact on existing functionality.

@@ -1,55 +1,68 @@
-To handle the malformed tag value `"[\"\"WLS\"\"]"` in the provided code, we need to adjust the parsing logic to correctly deal with extra quotes that may appear within the JSON array elements. 
-
-Here are the changes made to the code:
-
-1. **Modification of the string cleanup logic**: Added a check to remove any double quotes that are incorrectly placed, specifically those that are not part of valid JSON formatting.
-
-2. **Updated parsing logic to handle the cleaned-up string**: Adjusted the parsing logic to ensure that it can correctly interpret the string after cleaning.
-
-Here’s the updated code with the changes highlighted in comments:
-
 ```java
-@Repository
-public class AlarmRepositoryImpl {
-    private static final Logger LOG = LoggerFactory.getLogger(AlarmRepositoryImpl.class);
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.springframework.stereotype.Component;
 
-    public String[] getArrayValueForTags(JsonNode jsonNode, String key) {
-        String[] value = null;
-        ObjectMapper objectMapper = new ObjectMapper();
-        
-        if (jsonNode.get(key) != null) {
-            try {
-                String tagValue = jsonNode.get(key).asText();
-                
-                // Handle possible malformed array representations
-                // Replace single quotes with double quotes
-                tagValue = tagValue.replace("'", "\"").trim();
-                
-                // Clean up the tagValue for common issues
-                if (tagValue.startsWith("[") && tagValue.endsWith("]")) {
-                    // If it looks like a JSON array, parse it
-                    // Remove extra double quotes from elements
-                    tagValue = tagValue.replaceAll("\"\"", "\""); // NEW: Handle extra quotes
-                    value = objectMapper.readValue(tagValue, String[].class);
-                } else if (tagValue.startsWith("[") || tagValue.endsWith("]")) {
-                    // Handle cases like "[WLS" or "WLS]"
-                    tagValue = tagValue.replaceAll("[\\[\\]]", "").trim(); // Remove brackets
-                    value = new String[]{tagValue};
-                } else {
-                    // Handle single tags or malformed formats, return as an array of one
-                    value = new String[]{tagValue};
+import java.util.HashMap;
+import java.util.Map;
+
+@Component
+public class DeduplicationUtils {
+    private static final Logger logger = LogManager.getLogger(DeduplicationUtils.class);
+    private static final ObjectMapper objectMapper = RulesConstants.getObjectMapper();
+
+    public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
+        HashMap<String, Object> resultMsg = new HashMap<>(msg);
+
+        try {
+            for (Map.Entry<String, Object> entry : new HashMap<>(msg).entrySet()) {
+                String key = entry.getKey();
+                Object value = entry.getValue();
+
+                if (value == null || (value instanceof String && ((String) value).isEmpty())) {
+                    resultMsg.remove(key);
+                    continue;
                 }
-            } catch (Exception e) {
-                LOG.error("Exception in processing tags: " + e.getMessage());
-                return new String[0]; // Return empty array on error
+
+                try {
+                    // Serialize the value to a JSON string, regardless of its original format
+                    String jsonString = objectMapper.writeValueAsString(value);
+
+                    // Deserialize the JSON string back into a HashMap
+                    HashMap<String, Object> updatedValue = objectMapper.readValue(jsonString, HashMap.class);
+
+                    // Recursively process for nested JSON structures
+                    resultMsg.put(key, removeNullValuesInJsonAttributes(updatedValue));
+
+
+                } catch (JsonProcessingException e) {
+                    // Log the error and keep the original value if serialization/deserialization fails
+                    logger.warn("JSON processing error for key {}: {}. Keeping original value.", key, value, e);
+                    resultMsg.put(key, value); 
+                }
             }
+        } catch (Exception e) {
+            logger.error("Error removing null/empty values: " + e.getMessage(), e);
         }
-        return value;
+        return resultMsg;
     }
+
+    // ... (rest of your code)
 }
 ```
 
-### Summary of Changes:
-1. **New Line Added**: `tagValue = tagValue.replaceAll("\"\"", "\"");` – This line was added to handle the specific case where double quotes appear inappropriately within the tag value. 
+### Key Changes and Explanation:
 
-This adjustment will ensure that the malformed input `"[\"\"WLS\"\"]"` is processed correctly, resulting in the desired output.
+1. **Serialization Before Deserialization:** The core change is the use of `objectMapper.writeValueAsString(value)` to consistently serialize the value into a JSON string before attempting deserialization with `objectMapper.readValue(jsonString, HashMap.class)`. This addresses the original problem of trying to deserialize potentially invalid JSON-like objects.  It normalizes the input to a valid JSON string format first.
+2. **Simplified Logic:**  The code is now significantly simpler. No separate checks for the structure (object/array vs string) are needed. The consistent serialization/deserialization handles all cases.
+3. **Handling Errors:** The `try-catch` block handles potential `JsonProcessingException` during serialization or deserialization. If an error occurs, a warning is logged, and the *original* value is retained in the `resultMsg` to avoid data loss. This maintains the principle of minimal change in cases of invalid or non-processable JSON.
+4. **Recursive Processing:** Nested JSON structures are handled using the recursive call to `removeNullValuesInJsonAttributes` after deserialization.
+5. **Iterating a Copy:**  Continues to iterate over a copy of the input `msg` using `new HashMap<>(msg).entrySet()` to prevent `ConcurrentModificationException`.
+
+
+
+
+
+This improved version simplifies the logic while ensuring correct handling of various types of values in the `msg` Map, including those that aren't proper JSON but can be converted to JSON strings and deserialized safely.  Importantly, it handles errors more gracefully and preserves existing values in the map when encountering issues with invalid or non-processable JSON.

@@ -1,59 +1,102 @@
-To handle the cases where the `tag` value can be formatted as a JSON array string (e.g., `"[\"CBRS,WLS\"]"`), or as a single string that looks like an array (e.g., `"['WLS']"`), we need to refine our logic further. 
+To achieve 100% code coverage for the `removeNullValuesInJsonAttributes` method in the `DeduplicationUtils` class, we need to create JUnit 5 test cases that cover all possible branches in the method. This includes scenarios where the input values are JSON strings, non-JSON objects, and null or empty values.
 
-Here's the updated code that properly handles these scenarios:
+Below is the JUnit 5 test code that demonstrates how to cover all these branches:
 
 ```java
-@Repository
-public class AlarmRepositoryImpl {
-    public String[] getArrayValueForTags(JsonNode jsonNode, String key) {
-        String[] value = null;
-        ObjectMapper objectMapper = new ObjectMapper();
-        if (jsonNode.get(key) != null) {
-            try {
-                String tagValue = jsonNode.get(key).asText();
-                // Trim whitespace
-                tagValue = tagValue.trim();
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-                // Handle cases of valid JSON array format
-                if (tagValue.startsWith("[") && tagValue.endsWith("]")) {
-                    // It's a JSON array, attempt to parse it
-                    value = objectMapper.readValue(tagValue, String[].class);
-                } else if (tagValue.startsWith("['") && tagValue.endsWith("']")) {
-                    // It's a single quoted string resembling an array
-                    String innerValue = tagValue.substring(2, tagValue.length() - 2); // Remove the leading "['" and trailing "']"
-                    value = new String[] { innerValue };
-                } else if (tagValue.contains(",")) {
-                    // Handle case of comma-separated values in a single string
-                    value = tagValue.split(","); // Split by comma
-                } else if (!tagValue.isEmpty()) {
-                    // It's a single value
-                    value = new String[] { tagValue };
-                }
-            } catch (Exception e) {
-                LOG.error("exception in processing tags " + e.getMessage());
-                return value;
-            }
-        }
-        return value;
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+public class DeduplicationUtilsTest {
+
+    private DeduplicationUtils deduplicationUtils;
+
+    @BeforeEach
+    public void setUp() {
+        deduplicationUtils = new DeduplicationUtils();
+        // Mocking RulesConstants.getObjectMapper() to return a new ObjectMapper
+        RulesConstants.setObjectMapper(new ObjectMapper());
+    }
+
+    @Test
+    public void testRemoveNullValuesInJsonAttributes_NullValues() {
+        Map<String, Object> input = new HashMap<>();
+        input.put("type", "RAN");
+        input.put("equipmentType", "EBH");
+        input.put("RAN", Map.of("nodeId", "", "cellId", "", "du", null, "technology", ""));
+        
+        Map<String, Object> expectedOutput = new HashMap<>();
+        expectedOutput.put("type", "RAN");
+        expectedOutput.put("equipmentType", "EBH");
+        expectedOutput.put("RAN", new HashMap<>()); // Empty map for RAN
+        
+        Map<String, Object> actualOutput = deduplicationUtils.removeNullValuesInJsonAttributes(input);
+        assertEquals(expectedOutput, actualOutput);
+    }
+
+    @Test
+    public void testRemoveNullValuesInJsonAttributes_EmptyString() {
+        Map<String, Object> input = new HashMap<>();
+        input.put("type", "RAN");
+        input.put("equipmentType", "EBH");
+        input.put("RAN", "{\"nodeId\":\"\", \"cellId\":\"\"}");
+
+        Map<String, Object> expectedOutput = new HashMap<>();
+        expectedOutput.put("type", "RAN");
+        expectedOutput.put("equipmentType", "EBH");
+        expectedOutput.put("RAN", new HashMap<>()); // Empty map for RAN
+        
+        Map<String, Object> actualOutput = deduplicationUtils.removeNullValuesInJsonAttributes(input);
+        assertEquals(expectedOutput, actualOutput);
+    }
+
+    @Test
+    public void testRemoveNullValuesInJsonAttributes_NonJsonObject() {
+        Map<String, Object> input = new HashMap<>();
+        input.put("type", "RAN");
+        input.put("equipmentType", "EBH");
+        input.put("RAN", "Non-JSON String");
+
+        Map<String, Object> expectedOutput = new HashMap<>();
+        expectedOutput.put("type", "RAN");
+        expectedOutput.put("equipmentType", "EBH");
+        expectedOutput.put("RAN", "Non-JSON String");
+        
+        Map<String, Object> actualOutput = deduplicationUtils.removeNullValuesInJsonAttributes(input);
+        assertEquals(expectedOutput, actualOutput);
+    }
+
+    @Test
+    public void testRemoveNullValuesInJsonAttributes_JsonObjectWithNull() {
+        Map<String, Object> input = new HashMap<>();
+        input.put("type", "RAN");
+        input.put("equipmentType", "EBH");
+        input.put("RAN", Map.of("nodeId", null, "cellId", "someValue"));
+
+        Map<String, Object> expectedOutput = new HashMap<>();
+        expectedOutput.put("type", "RAN");
+        expectedOutput.put("equipmentType", "EBH");
+        expectedOutput.put("RAN", Map.of("cellId", "someValue")); // Remove nodeId since it's null
+        
+        Map<String, Object> actualOutput = deduplicationUtils.removeNullValuesInJsonAttributes(input);
+        assertEquals(expectedOutput, actualOutput);
     }
 }
 ```
 
-### Changes Made:
-1. **Additional Handling for String-Resembling Arrays**: 
-   - Added a condition to check if the `tagValue` starts with `['` and ends with `']`, which allows it to extract the inner string correctly.
+### Explanation of Test Cases
+1. **testRemoveNullValuesInJsonAttributes_NullValues**: Tests a map with a nested map that contains null/empty values.
    
-2. **Comma-Separated Values Handling**: 
-   - Included a check for cases where the string contains commas, allowing it to split the string into an array of values.
+2. **testRemoveNullValuesInJsonAttributes_EmptyString**: Tests a map with a JSON string that contains empty strings.
 
-3. **General Validity Checks**: 
-   - Ensured that we handle empty strings appropriately.
+3. **testRemoveNullValuesInJsonAttributes_NonJsonObject**: Tests a map where one of the values is a non-JSON string.
 
-### Explanation:
-- This code now robustly handles various formats for the `tag` value, including:
-  - Valid JSON arrays (e.g., `"[\"CBRS,WLS\"]"`).
-  - Single-quoted string resembling arrays (e.g., `"['WLS']"`).
-  - Comma-separated values (e.g., `"CBRS,WLS"`).
-  - Single strings without array syntax.
+4. **testRemoveNullValuesInJsonAttributes_JsonObjectWithNull**: Tests a map containing a nested map with some values as null.
 
-This approach ensures that your method can gracefully handle various malformed and correctly formatted inputs without throwing exceptions.
+These test cases ensure that all branches of the method are covered, particularly those that involve calling `writeValueAsString` and the different scenarios of handling JSON values. Make sure to adjust the `RulesConstants` class to allow mocking of the `ObjectMapper` as shown in the setup method.

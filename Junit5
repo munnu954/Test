@@ -1,90 +1,77 @@
-Certainly! Below is the updated JUnit 5 test case code with all initialization and setup done within the test methods themselves, rather than using the `@BeforeEach` annotation.
+The error you are encountering is due to an issue with deserializing a JSON string into a `HashMap`. Specifically, the error message indicates that during the deserialization process, the Jackson library is trying to convert a string that represents a JSON object into a `HashMap`, but it fails because the string is not being recognized as a valid JSON object.
+
+### Root Cause:
+1. The issue arises in the `mergeUpdateJsonValues` method when `iterate.getValue()` is a JSON string that represents an object (e.g., `{"timeWindow":300,"count":1,"timeWindowUnits":"seconds"}`).
+2. The method attempts to deserialize this JSON string directly into a `HashMap` without first ensuring that it is properly formatted as a JSON object.
+3. The deserialization fails because Jackson expects an object structure but receives a string format that isn't being parsed correctly.
+
+### Fixes:
+1. **Check if the value is a JSON string before trying to deserialize it**: You need to ensure that you only attempt to deserialize strings that are valid JSON representations.
+2. **Use a proper method to parse JSON strings**: Modify the way you handle JSON strings to ensure they are converted to `HashMap` correctly.
+
+Here’s the revised code with the necessary changes highlighted:
 
 ```java
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
+public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
+    try {
+        for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
+            if (!isLateAlarm) {
+                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                    // Check if value itself is another JSON
+                    if (checkIfJsonValue(iterate.getValue())) {
+                        if (cachedMsg.get(iterate.getKey()) != null) {
+                            // Deserialize only if it's a String
+                            HashMap<String, Object> incomingValueMap;
+                            if (iterate.getValue() instanceof String) {
+                                incomingValueMap = RulesConstants.getObjectMapper().readValue((String) iterate.getValue(), HashMap.class);
+                            } else {
+                                incomingValueMap = (HashMap<String, Object>) iterate.getValue();
+                            }
 
-import java.util.HashMap;
-import java.util.Map;
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValueMap, (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                            cachedMsg.put(iterate.getKey(), updatedMsg);
+                        } else {
+                            // If the key not already present in cache, remove null values and update in cachedMsg
+                            HashMap<String, Object> newValueMap;
+                            if (iterate.getValue() instanceof String) {
+                                newValueMap = removeNullValuesInJsonAttributes(RulesConstants.getObjectMapper().readValue((String) iterate.getValue(), HashMap.class));
+                            } else {
+                                newValueMap = removeNullValuesInJsonAttributes((HashMap<String, Object>) iterate.getValue());
+                            }
+                            cachedMsg.put(iterate.getKey(), newValueMap);
+                        }
+                    } else {
+                        cachedMsg.put(iterate.getKey(), iterate.getValue());
+                    }
+                }
+            } else { // Late alarm
+                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                    // Check if the key is present in cached alarm & check if its a JSON value or not
+                    if (cachedMsg.get(iterate.getKey()) != null && checkIfJsonValue(cachedMsg.get(iterate.getKey()))) {
+                        HashMap<String, Object> incomingValueMap;
+                        if (iterate.getValue() instanceof String) {
+                            incomingValueMap = RulesConstants.getObjectMapper().readValue((String) iterate.getValue(), HashMap.class);
+                        } else {
+                            incomingValueMap = (HashMap<String, Object>) iterate.getValue();
+                        }
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.when;
-
-class DeduplicationUtilsTest {
-
-    @Test
-    void testRemoveNullValuesInJsonAttributes_ExceptionInReadValue() throws JsonProcessingException {
-        // Initialize the DeduplicationUtils and mock ObjectMapper
-        DeduplicationUtils deduplicationUtils = new DeduplicationUtils();
-        ObjectMapper mockObjectMapper = Mockito.mock(ObjectMapper.class);
-        RulesConstants.setObjectMapper(mockObjectMapper);
-
-        // Prepare input for the test
-        Map<String, Object> input = new HashMap<>();
-        input.put("type", "RAN");
-        input.put("equipmentType", "EBH");
-        input.put("RAN", "{\"nodeId\": null}");
-
-        // Simulating an exception when calling readValue
-        when(mockObjectMapper.readValue(any(String.class), eq(HashMap.class))).thenThrow(new JsonProcessingException("Mock Exception") {});
-
-        // Call the method, it should handle the exception and return the original input
-        Map<String, Object> result = deduplicationUtils.removeNullValuesInJsonAttributes(input);
-        assertEquals(input, result); // The result should be the same as input since it should not modify on exception
+                        HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValueMap, (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                        cachedMsg.put(iterate.getKey(), updatedMsg);
+                    } else if (cachedMsg.get(iterate.getKey()) == null) {
+                        cachedMsg.put(iterate.getKey(), iterate.getValue());
+                    }
+                }
+            }
+        }
+    } catch (Exception e) {
+        logger.error("Exception occurred while trying to merge update JsonValues: {} and incoming message : {} and cached message : {}", e, incomingMsg, cachedMsg);
     }
-
-    @Test
-    void testRemoveNullValuesInJsonAttributes_ExceptionInWriteValueAsString() throws JsonProcessingException {
-        // Initialize the DeduplicationUtils and mock ObjectMapper
-        DeduplicationUtils deduplicationUtils = new DeduplicationUtils();
-        ObjectMapper mockObjectMapper = Mockito.mock(ObjectMapper.class);
-        RulesConstants.setObjectMapper(mockObjectMapper);
-
-        // Prepare input for the test
-        Map<String, Object> input = new HashMap<>();
-        input.put("type", "RAN");
-        input.put("equipmentType", "EBH");
-        input.put("RAN", new HashMap<>());
-
-        // Simulating an exception when calling writeValueAsString
-        when(mockObjectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("Mock Exception") {});
-
-        // Call the method, it should handle the exception and return the original input
-        Map<String, Object> result = deduplicationUtils.removeNullValuesInJsonAttributes(input);
-        assertEquals(input, result); // The result should be the same as input since it should not modify on exception
-    }
-
-    @Test
-    void testRemoveNullValuesInJsonAttributes_ExceptionInBothReadAndWrite() throws JsonProcessingException {
-        // Initialize the DeduplicationUtils and mock ObjectMapper
-        DeduplicationUtils deduplicationUtils = new DeduplicationUtils();
-        ObjectMapper mockObjectMapper = Mockito.mock(ObjectMapper.class);
-        RulesConstants.setObjectMapper(mockObjectMapper);
-
-        // Prepare input for the test
-        Map<String, Object> input = new HashMap<>();
-        input.put("type", "RAN");
-        input.put("equipmentType", "EBH");
-        input.put("RAN", new HashMap<>());
-
-        // Simulating exceptions for both readValue and writeValueAsString
-        when(mockObjectMapper.readValue(any(String.class), eq(HashMap.class))).thenThrow(new JsonProcessingException("Mock read exception") {});
-        when(mockObjectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("Mock write exception") {});
-
-        // Call the method, it should handle the exceptions and return the original input
-        Map<String, Object> result = deduplicationUtils.removeNullValuesInJsonAttributes(input);
-        assertEquals(input, result); // The result should be the same as input since it should not modify on exception
-    }
+    return (HashMap<String, Object>) cachedMsg;
 }
 ```
 
-### Explanation:
-1. **Initialization within the Test Method**: Each test method now initializes `DeduplicationUtils` and mocks `ObjectMapper` directly within the method.
-2. **Mocking Behavior**: The mock behavior for `readValue` and `writeValueAsString` methods is set up within the respective test methods.
-3. **Assertions**: The assertions confirm that the output remains unchanged when exceptions are thrown.
+### Changes Made:
+1. **Deserialization Check**: Added checks to determine whether `iterate.getValue()` is a `String`. If it is a string, it is deserialized into a `HashMap` using `readValue()`. If it is already a `HashMap`, it is used directly.
+2. **Error Handling**: Ensured that the error handling remains robust and logs meaningful information in case of further exceptions.
 
-This approach keeps the setup localized within each test case, making it easier to understand the context of each test independently.
+These modifications should resolve the deserialization issue and help your application handle JSON values correctly.

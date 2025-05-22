@@ -1,55 +1,45 @@
-Sure! We can implement the logic to check if the `value` is an instance of `String`. If it is, we will use `toString()`, otherwise, we will use `writeValueAsString` to ensure that we convert the value to a valid JSON string correctly.
+@Component
+public class DeduplicationUtils {
+    Logger logger = LogManager.getLogger(this.getClass());
 
-Here’s the updated `removeNullValuesInJsonAttributes` method reflecting these requirements:
+    public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
+        HashMap<String, Object> resultMsg = new HashMap<>(msg);
 
-```java
-public HashMap<String, Object> removeNullValuesInJsonAttributes(Map<String, Object> msg) {
-    HashMap<String, Object> resultMsg = new HashMap<>(msg);
-    try {
-        for (Map.Entry<String, Object> iterate : msg.entrySet()) {
-            Object value = iterate.getValue();
-            HashMap<String, Object> updatedMsg;
+        try {
+            for (Map.Entry<String, Object> iterate : msg.entrySet()) {
+                Object value = iterate.getValue();
 
-            // Convert the value to a valid JSON string
-            String jsonString;
-            if (value instanceof String) {
-                jsonString = value.toString(); // Use toString() for String values
-            } else {
-                jsonString = RulesConstants.getObjectMapper().writeValueAsString(value); // Use writeValueAsString for other types
+                // Ensure proper JSON parsing by handling String values correctly
+                if (value instanceof String) {
+                    value = value.toString();
+                } else {
+                    value = RulesConstants.getObjectMapper().writeValueAsString(value);
+                }
+
+                if (checkIfJsonValue(value)) {
+                    HashMap<String, Object> updatedMsg = removeNullValuesInJsonAttributes(
+                            RulesConstants.getObjectMapper().readValue(value.toString(), HashMap.class));
+                    resultMsg.put(iterate.getKey(), updatedMsg);
+                } else {
+                    if (value == null || value.toString().isEmpty()) {
+                        resultMsg.remove(iterate.getKey());
+                    }
+                }
             }
-
-            // Parse the JSON string back to a HashMap
-            updatedMsg = RulesConstants.getObjectMapper().readValue(jsonString, HashMap.class);
-
-            // Recursively call the method to remove null values in nested JSON objects
-            updatedMsg = removeNullValuesInJsonAttributes(updatedMsg);
-
-            // Remove null or empty values from updatedMsg
-            updatedMsg.values().removeIf(v -> v == null || (v instanceof String && v.toString().isEmpty()));
-
-            // If updatedMsg is not empty, put it back into the result
-            if (!updatedMsg.isEmpty()) {
-                resultMsg.put(iterate.getKey(), updatedMsg);
-            } else {
-                resultMsg.remove(iterate.getKey());
-            }
+        } catch (Exception e) {
+            logger.error("Exception occurred while trying to remove null/empty values from JSON attributes: " + e);
         }
-    } catch (Exception e) {
-        logger.error("Exception occurred while trying to remove null/empty values from json attributes: " + e);
+        return resultMsg;
     }
-    return resultMsg;
+
+    public boolean checkIfJsonValue(Object obj) {
+        boolean isJson = false;
+        try {
+            String jsonString = RulesConstants.getObjectMapper().writeValueAsString(obj).trim();
+            isJson = jsonString.startsWith("{") || jsonString.indexOf("{") == 1;
+        } catch (JsonProcessingException e) {
+            return isJson;
+        }
+        return isJson;
+    }
 }
-```
-
-### Key Changes:
-1. **Type Checking**: 
-   - The code checks if `value` is an instance of `String`. If true, it directly uses `toString()`.
-   - If `value` is not a string, it uses `writeValueAsString` to convert it into a valid JSON string.
-
-2. **Parsing Logic**: 
-   - After creating the `jsonString`, it is parsed back into a `HashMap` regardless of whether it originated from a string or was serialized.
-
-3. **Preservation of Logic**: 
-   - The recursive call to `removeNullValuesInJsonAttributes(updatedMsg)` remains to ensure that nested JSON objects are processed correctly, and the logic for removing null or empty values is retained.
-
-This implementation will handle both string and non-string values appropriately, ensuring that the method works as expected.

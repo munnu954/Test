@@ -1,117 +1,86 @@
-Certainly! To achieve 100% code coverage for the conditional statement involving the check `if (iterate.getValue() instanceof String)`, we need to create JUnit 5 test cases that cover all possible scenarios for this condition. Here’s how you can structure your test cases:
+The error you are encountering, `java.lang.ClassCastException: class java.lang.String cannot be cast to class java.util.HashMap`, indicates that somewhere in your code, you are trying to cast a `String` to a `HashMap`. This typically happens when you are expecting a JSON object (which is deserialized into a `HashMap`) but instead receive a JSON string.
 
-1. **Case where `iterate.getValue()` is a valid JSON string.**
-2. **Case where `iterate.getValue()` is a non-JSON string.**
-3. **Case where `iterate.getValue()` is a `null` value.**
-4. **Case where `iterate.getValue()` is an object that is not a string (e.g., a `Map`).**
+In your provided code, there are two primary places where this issue could arise:
 
-Below is a sample JUnit 5 test class that covers these scenarios. You may need to adapt it to fit your existing test framework and structure.
+1. When checking if the value is a JSON string and trying to convert it to a `HashMap`.
+2. When merging values from `incomingMsg` to `cachedMsg`, and assuming that the value is already in `HashMap` format without ensuring it is deserialized properly.
 
-### JUnit 5 Test Cases
+Based on the error message, it seems that the `AggregationDetails` field is causing the problem. The incoming message has `AggregationDetails` as a string, while your code assumes it could be a `HashMap`.
+
+### Suggested Fixes
+1. **Ensure proper deserialization**: Always check if the JSON string needs to be deserialized before attempting to cast it to `HashMap`.
+2. **Avoid casting directly**: Use `instanceof` checks to determine the type before performing a cast.
+
+Here’s an updated version of your method with the necessary changes highlighted:
 
 ```java
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
+public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
+    try {
+        for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
+            if (!isLateAlarm) {
+                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                    // Check if value itself is another JSON
+                    if (checkIfJsonValue(iterate.getValue())) {
+                        if (cachedMsg.get(iterate.getKey()) != null) {
+                            // Deserialize only if it's a String and check if it can be treated as JSON
+                            HashMap<String, Object> incomingValueMap;
+                            if (iterate.getValue() instanceof String) {
+                                String value = (String) iterate.getValue();
+                                incomingValueMap = RulesConstants.getObjectMapper().readValue(value, HashMap.class);
+                            } else if (iterate.getValue() instanceof HashMap) {
+                                incomingValueMap = (HashMap<String, Object>) iterate.getValue();
+                            } else {
+                                continue; // Skip if it's neither String nor HashMap
+                            }
 
-import java.util.HashMap;
-import java.util.Map;
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValueMap, (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                            cachedMsg.put(iterate.getKey(), updatedMsg);
+                        } else {
+                            // If the key not already present in cache, remove null values and update in cachedMsg
+                            HashMap<String, Object> newValueMap;
+                            if (iterate.getValue() instanceof String) {
+                                newValueMap = removeNullValuesInJsonAttributes(RulesConstants.getObjectMapper().readValue((String) iterate.getValue(), HashMap.class));
+                            } else if (iterate.getValue() instanceof HashMap) {
+                                newValueMap = removeNullValuesInJsonAttributes((HashMap<String, Object>) iterate.getValue());
+                            } else {
+                                continue; // Skip if it's neither String nor HashMap
+                            }
+                            cachedMsg.put(iterate.getKey(), newValueMap);
+                        }
+                    } else {
+                        cachedMsg.put(iterate.getKey(), iterate.getValue());
+                    }
+                }
+            } else { // Late alarm
+                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                    // Check if the key is present in cached alarm & check if its a JSON value or not
+                    if (cachedMsg.get(iterate.getKey()) != null && checkIfJsonValue(cachedMsg.get(iterate.getKey()))) {
+                        HashMap<String, Object> incomingValueMap;
+                        if (iterate.getValue() instanceof String) {
+                            incomingValueMap = RulesConstants.getObjectMapper().readValue((String) iterate.getValue(), HashMap.class);
+                        } else if (iterate.getValue() instanceof HashMap) {
+                            incomingValueMap = (HashMap<String, Object>) iterate.getValue();
+                        } else {
+                            continue; // Skip if it's neither String nor HashMap
+                        }
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.mockito.Mockito.*;
-
-public class DeduplicationUtilsTest {
-
-    private DeduplicationUtils deduplicationUtils;
-    private ObjectMapper objectMapper;
-
-    @BeforeEach
-    public void setUp() {
-        deduplicationUtils = new DeduplicationUtils();
-        objectMapper = mock(ObjectMapper.class);
-        RulesConstants.setObjectMapper(objectMapper); // Assuming you have a setter for the ObjectMapper
+                        HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValueMap, (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                        cachedMsg.put(iterate.getKey(), updatedMsg);
+                    } else if (cachedMsg.get(iterate.getKey()) == null) {
+                        cachedMsg.put(iterate.getKey(), iterate.getValue());
+                    }
+                }
+            }
+        }
+    } catch (Exception e) {
+        logger.error("Exception occurred while trying to merge update JsonValues: {} and incoming message : {} and cached message : {}", e, incomingMsg, cachedMsg);
     }
-
-    @Test
-    public void testMergeUpdateJsonValues_whenValueIsValidJsonString() throws Exception {
-        // Arrange
-        Map<String, Object> incomingMsg = new HashMap<>();
-        Map<String, Object> cachedMsg = new HashMap<>();
-        String jsonString = "{\"key\":\"value\"}";
-
-        incomingMsg.put("testKey", jsonString);
-        when(objectMapper.readValue(jsonString, HashMap.class)).thenReturn(new HashMap<String, Object>() {{
-            put("key", "value");
-        }});
-
-        // Act
-        HashMap<String, Object> result = deduplicationUtils.mergeUpdateJsonValues(incomingMsg, cachedMsg, false);
-
-        // Assert
-        assertEquals(1, result.size());
-        assertEquals("value", result.get("testKey").get("key"));
-    }
-
-    @Test
-    public void testMergeUpdateJsonValues_whenValueIsNonJsonString() throws Exception {
-        // Arrange
-        Map<String, Object> incomingMsg = new HashMap<>();
-        Map<String, Object> cachedMsg = new HashMap<>();
-        String nonJsonString = "just a string";
-
-        incomingMsg.put("testKey", nonJsonString);
-
-        // Act
-        HashMap<String, Object> result = deduplicationUtils.mergeUpdateJsonValues(incomingMsg, cachedMsg, false);
-
-        // Assert
-        assertEquals(1, result.size());
-        assertEquals("just a string", result.get("testKey"));
-    }
-
-    @Test
-    public void testMergeUpdateJsonValues_whenValueIsNull() throws Exception {
-        // Arrange
-        Map<String, Object> incomingMsg = new HashMap<>();
-        Map<String, Object> cachedMsg = new HashMap<>();
-
-        incomingMsg.put("testKey", null);
-
-        // Act
-        HashMap<String, Object> result = deduplicationUtils.mergeUpdateJsonValues(incomingMsg, cachedMsg, false);
-
-        // Assert
-        assertEquals(0, result.size());
-    }
-
-    @Test
-    public void testMergeUpdateJsonValues_whenValueIsMap() throws Exception {
-        // Arrange
-        Map<String, Object> incomingMsg = new HashMap<>();
-        Map<String, Object> cachedMsg = new HashMap<>();
-        Map<String, Object> mapValue = new HashMap<>();
-        mapValue.put("key", "value");
-
-        incomingMsg.put("testKey", mapValue);
-
-        // Act
-        HashMap<String, Object> result = deduplicationUtils.mergeUpdateJsonValues(incomingMsg, cachedMsg, false);
-
-        // Assert
-        assertEquals(1, result.size());
-        assertEquals("value", ((Map<String, Object>) result.get("testKey")).get("key"));
-    }
+    return (HashMap<String, Object>) cachedMsg;
 }
 ```
 
-### Explanation of the Test Cases:
-1. **`testMergeUpdateJsonValues_whenValueIsValidJsonString`**: This test case verifies that when `iterate.getValue()` is a valid JSON string, it is correctly deserialized into a `HashMap`.
-2. **`testMergeUpdateJsonValues_whenValueIsNonJsonString`**: This test checks the scenario where `iterate.getValue()` is a non-JSON string, ensuring it is added directly to the result without deserialization.
-3. **`testMergeUpdateJsonValues_whenValueIsNull`**: This case checks the behavior when `iterate.getValue()` is `null`, ensuring nothing is added to the result.
-4. **`testMergeUpdateJsonValues_whenValueIsMap`**: This test ensures that when `iterate.getValue()` is already a `Map`, it is directly added to the result without any changes.
+### Changes Made
+1. Added checks for `instanceof HashMap` before casting to prevent `ClassCastException`.
+2. Used `continue` statements to skip processing if the value is neither a `String` nor a `HashMap`.
 
-### Note:
-- This example assumes that you have a way to set a mock `ObjectMapper` in your `RulesConstants` class. You might need to add a static setter or use a different approach based on your existing code structure.
-- Make sure to handle any necessary imports and adapt the test class to fit your project's structure and dependencies.
+These changes should help resolve the `ClassCastException` you are experiencing while processing the incoming and cached messages.

@@ -1,4 +1,42 @@
-The root cause of the error seems to be a mismatch in deserialization when trying to convert a `String` representation of a JSON into a `HashMap`. Specifically:
-- The incoming message has `AggregationDetails` stored as a `String` (`"{\"timeWindow\":300,\"count\":1,\"timeWindowUnits\":\"seconds\"}"`).
-- The cached message has `AggregationDetails` already deserialized into a `HashMap`.
-- Your code attempts to deserialize `AggregationDetails` using `RulesConstants.getObjectMapper().readValue(iterate.getValue().toString(), HashMap.class)`, but since `AggregationDetails` is already a `HashMap` in `cachedMsg`, this results in an attempt to deserialize a `String` when it’s not required.
+public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
+    try {
+        for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
+            if (!isLateAlarm) {
+                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                    // check if value itself is another json
+                    if (checkIfJsonValue(iterate.getValue())) {
+                        if (iterate.getValue() instanceof String) {
+                            // If it's a string, parse it directly
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(RulesConstants.getObjectMapper().readValue(iterate.getValue().toString(), HashMap.class), (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                            cachedMsg.put(iterate.getKey(), updatedMsg);
+                        } else {
+                            // If it's not a string, serialize and deserialize it
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(RulesConstants.getObjectMapper().readValue(RulesConstants.getObjectMapper().writeValueAsString(iterate.getValue()), HashMap.class), (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                            cachedMsg.put(iterate.getKey(), updatedMsg);
+                        }
+                    } else {
+                        cachedMsg.put(iterate.getKey(), iterate.getValue());
+                    }
+                }
+            } else {
+                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
+                    // check if the key is present in cached alarm & check if its a json value or not
+                    if (cachedMsg.get(iterate.getKey()) != null && checkIfJsonValue(cachedMsg.get(iterate.getKey()))) {
+                        if (iterate.getValue() instanceof String) {
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(RulesConstants.getObjectMapper().readValue(iterate.getValue().toString(), HashMap.class), (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                            cachedMsg.put(iterate.getKey(), updatedMsg);
+                        } else {
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(RulesConstants.getObjectMapper().readValue(RulesConstants.getObjectMapper().writeValueAsString(iterate.getValue()), HashMap.class), (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                            cachedMsg.put(iterate.getKey(), updatedMsg);
+                        }
+                    } else if (cachedMsg.get(iterate.getKey()) == null) {
+                        cachedMsg.put(iterate.getKey(), iterate.getValue());
+                    }
+                }
+            }
+        }
+    } catch (Exception e) {
+        logger.error("Exception occurred while trying to merge update JsonValues: {} and incoming message : {} and cached message : {}", e, incomingMsg, cachedMsg);
+    }
+    return (HashMap<String, Object>) cachedMsg;
+}

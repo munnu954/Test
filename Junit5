@@ -1,49 +1,36 @@
-The error you are encountering, `java.lang.ClassCastException: class java.lang.String cannot be cast to class java.util.HashMap`, indicates that somewhere in your code, you are trying to cast a `String` to a `HashMap`. This typically happens when you are expecting a JSON object (which is deserialized into a `HashMap`) but instead receive a JSON string.
-
-In your provided code, there are two primary places where this issue could arise:
-
-1. When checking if the value is a JSON string and trying to convert it to a `HashMap`.
-2. When merging values from `incomingMsg` to `cachedMsg`, and assuming that the value is already in `HashMap` format without ensuring it is deserialized properly.
-
-Based on the error message, it seems that the `AggregationDetails` field is causing the problem. The incoming message has `AggregationDetails` as a string, while your code assumes it could be a `HashMap`.
-
-### Suggested Fixes
-1. **Ensure proper deserialization**: Always check if the JSON string needs to be deserialized before attempting to cast it to `HashMap`.
-2. **Avoid casting directly**: Use `instanceof` checks to determine the type before performing a cast.
-
-Here’s an updated version of your method with the necessary changes highlighted:
-
-```java
 public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
     try {
         for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
             if (!isLateAlarm) {
                 if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
-                    // Check if value itself is another JSON
                     if (checkIfJsonValue(iterate.getValue())) {
-                        if (cachedMsg.get(iterate.getKey()) != null) {
-                            // Deserialize only if it's a String and check if it can be treated as JSON
+                        if (cachedMsg.containsKey(iterate.getKey())) {
+                            // Handle incoming value
                             HashMap<String, Object> incomingValueMap;
                             if (iterate.getValue() instanceof String) {
-                                String value = (String) iterate.getValue();
-                                incomingValueMap = RulesConstants.getObjectMapper().readValue(value, HashMap.class);
-                            } else if (iterate.getValue() instanceof HashMap) {
-                                incomingValueMap = (HashMap<String, Object>) iterate.getValue();
+                                incomingValueMap = RulesConstants.getObjectMapper().readValue((String) iterate.getValue(), HashMap.class);
                             } else {
-                                continue; // Skip if it's neither String nor HashMap
+                                incomingValueMap = (HashMap<String, Object>) iterate.getValue();
                             }
 
-                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValueMap, (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                            // Handle cached value: parse if it's a String
+                            Object cachedValue = cachedMsg.get(iterate.getKey());
+                            HashMap<String, Object> cachedValueMap;
+                            if (cachedValue instanceof String) {
+                                cachedValueMap = RulesConstants.getObjectMapper().readValue((String) cachedValue, HashMap.class);
+                            } else {
+                                cachedValueMap = (HashMap<String, Object>) cachedValue;
+                            }
+
+                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValueMap, cachedValueMap, isLateAlarm);
                             cachedMsg.put(iterate.getKey(), updatedMsg);
                         } else {
-                            // If the key not already present in cache, remove null values and update in cachedMsg
+                            // Key not present in cache, deserialize and remove nulls
                             HashMap<String, Object> newValueMap;
                             if (iterate.getValue() instanceof String) {
                                 newValueMap = removeNullValuesInJsonAttributes(RulesConstants.getObjectMapper().readValue((String) iterate.getValue(), HashMap.class));
-                            } else if (iterate.getValue() instanceof HashMap) {
-                                newValueMap = removeNullValuesInJsonAttributes((HashMap<String, Object>) iterate.getValue());
                             } else {
-                                continue; // Skip if it's neither String nor HashMap
+                                newValueMap = removeNullValuesInJsonAttributes((HashMap<String, Object>) iterate.getValue());
                             }
                             cachedMsg.put(iterate.getKey(), newValueMap);
                         }
@@ -53,20 +40,27 @@ public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomin
                 }
             } else { // Late alarm
                 if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
-                    // Check if the key is present in cached alarm & check if its a JSON value or not
-                    if (cachedMsg.get(iterate.getKey()) != null && checkIfJsonValue(cachedMsg.get(iterate.getKey()))) {
+                    Object cachedValue = cachedMsg.get(iterate.getKey());
+                    if (cachedValue != null && checkIfJsonValue(cachedValue)) {
+                        // Handle incoming value
                         HashMap<String, Object> incomingValueMap;
                         if (iterate.getValue() instanceof String) {
                             incomingValueMap = RulesConstants.getObjectMapper().readValue((String) iterate.getValue(), HashMap.class);
-                        } else if (iterate.getValue() instanceof HashMap) {
-                            incomingValueMap = (HashMap<String, Object>) iterate.getValue();
                         } else {
-                            continue; // Skip if it's neither String nor HashMap
+                            incomingValueMap = (HashMap<String, Object>) iterate.getValue();
                         }
 
-                        HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValueMap, (HashMap<String, Object>) cachedMsg.get(iterate.getKey()), isLateAlarm);
+                        // Handle cached value: parse if it's a String
+                        HashMap<String, Object> cachedValueMap;
+                        if (cachedValue instanceof String) {
+                            cachedValueMap = RulesConstants.getObjectMapper().readValue((String) cachedValue, HashMap.class);
+                        } else {
+                            cachedValueMap = (HashMap<String, Object>) cachedValue;
+                        }
+
+                        HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValueMap, cachedValueMap, isLateAlarm);
                         cachedMsg.put(iterate.getKey(), updatedMsg);
-                    } else if (cachedMsg.get(iterate.getKey()) == null) {
+                    } else if (cachedValue == null) {
                         cachedMsg.put(iterate.getKey(), iterate.getValue());
                     }
                 }
@@ -77,10 +71,3 @@ public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomin
     }
     return (HashMap<String, Object>) cachedMsg;
 }
-```
-
-### Changes Made
-1. Added checks for `instanceof HashMap` before casting to prevent `ClassCastException`.
-2. Used `continue` statements to skip processing if the value is neither a `String` nor a `HashMap`.
-
-These changes should help resolve the `ClassCastException` you are experiencing while processing the incoming and cached messages.

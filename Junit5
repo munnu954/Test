@@ -1,95 +1,147 @@
-The `ClassCastException` you are encountering indicates that somewhere in your code, a `String` is being treated as a `HashMap`. This usually occurs when the code tries to cast a JSON string directly to a `HashMap` without proper deserialization.
+### Analysis of the Error
 
-### Possible Root Cause
-In the message you provided, the `AggregationDetails` key is being passed as a JSON string rather than a `HashMap`. If the code tries to access `cachedMsg.get(iterate.getKey())` and that value is a string (in this case, a JSON string), the subsequent casting to `HashMap` will fail, leading to the `ClassCastException`.
+The error you're encountering indicates a JSON parsing issue when processing the `tag` field in the input JSON:
 
-### Changes to Fix the Issue
-To fix this, we need to ensure that whenever we access values from `incomingMsg` or `cachedMsg`, we handle JSON strings properly and deserialize them before casting. 
+```
+exception in processing tagsUnrecognized token 'WLS': was expecting (JSON String, Number, Array, Object or token 'null', 'true' or 'false')
+```
 
-Here are the specific changes made to the code:
+This error occurs because the `tag` field in your JSON input is a string representation of a JSON array (`"[\"WLS\"]"`) rather than a proper JSON array node. When you call `jsonNode.get(key).asText()`, it returns the string `"[\"WLS\"]"`, and `ObjectMapper.readValue()` attempts to parse this string as JSON. However, since the string starts with a value (`WLS`) without proper JSON structure, it throws the `Unrecognized token` error.
 
-1. **Deserialization Check**: Ensure that when we retrieve values from `cachedMsg`, we check if it's a JSON string and deserialize it if necessary.
-2. **Consistent Handling of JSON Strings**: Ensure that whenever we read from `incomingMsg` or `cachedMsg`, we manage the data types correctly.
+#### Root Cause
+The root cause is that the `tag` field in the input JSON is a JSON-encoded string (`"[\"WLS\"]"`) rather than a direct JSON array (`["WLS"]`). The code assumes that `jsonNode.get(key)` is a JSON array node, but it's actually a JSON string node containing a serialized array. Using `asText()` retrieves the string `"[\"WLS\"]"`, and passing it to `ObjectMapper.readValue()` causes the parsing failure.
 
-### Updated Code with Changes Highlighted
+#### Possible Reasons for the Error
+1. **Input JSON Format**: The `tag` field is a string (`"[\"WLS\"]"`) instead of an array (`["WLS"]`). This could be due to:
+   - The upstream system or data source serializing the array as a string.
+   - Incorrect JSON generation or preprocessing before it reaches your code.
+2. **Incorrect Parsing Logic**: The code assumes `jsonNode.get(key)` is a JSON array node and uses `asText()` to extract it as a string, which is then deserialized again. This is unnecessary if the field is already a JSON array or can lead to errors if the string isn't valid JSON.
+3. **ObjectMapper Misuse**: Using `readValue(jsonNode.get(key).asText(), String[].class)` is problematic because `asText()` is meant for scalar values, not serialized JSON structures. If the node is an array, you should work with it directly.
+
+#### Recommended Fix: Use `ObjectMapper.treeToValue`
+As you suggested, using `ObjectMapper.treeToValue()` is a better approach because it directly converts a `JsonNode` (which could be an array node) to the desired type (`String[].class`) without the intermediate string conversion. This avoids the issue of parsing a JSON-encoded string and handles array nodes correctly.
+
+### Fixed Code
+
+Below is the corrected version of the `AlarmRepositoryImpl` class, incorporating `treeToValue` and additional checks to handle various input cases robustly.
+
 ```java
-public HashMap<String, Object> mergeUpdateJsonValues(Map<String, Object> incomingMsg, Map<String, Object> cachedMsg, boolean isLateAlarm) {
-    try {
-        for (Map.Entry<String, Object> iterate : incomingMsg.entrySet()) {
-            if (!isLateAlarm) {
-                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
-                    // Check if value itself is another JSON
-                    if (checkIfJsonValue(iterate.getValue())) {
-                        if (cachedMsg.get(iterate.getKey()) != null) {
-                            // Deserialize only if it's a String and check if it can be treated as JSON
-                            HashMap<String, Object> incomingValueMap;
-                            if (iterate.getValue() instanceof String) {
-                                String value = (String) iterate.getValue();
-                                incomingValueMap = RulesConstants.getObjectMapper().readValue(value, HashMap.class);
-                            } else if (iterate.getValue() instanceof HashMap) {
-                                incomingValueMap = (HashMap<String, Object>) iterate.getValue();
-                            } else {
-                                continue; // Skip if it's neither String nor HashMap
-                            }
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Repository;
 
-                            // **Updated Section: Deserialize the cached value if it's a String** 
-                            HashMap<String, Object> cachedValueMap = (cachedMsg.get(iterate.getKey()) instanceof String) 
-                                ? RulesConstants.getObjectMapper().readValue((String) cachedMsg.get(iterate.getKey()), HashMap.class) 
-                                : (HashMap<String, Object>) cachedMsg.get(iterate.getKey());
-                            
-                            HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValueMap, cachedValueMap, isLateAlarm);
-                            cachedMsg.put(iterate.getKey(), updatedMsg);
-                        } else {
-                            // If the key not already present in cache, remove null values and update in cachedMsg
-                            HashMap<String, Object> newValueMap;
-                            if (iterate.getValue() instanceof String) {
-                                newValueMap = removeNullValuesInJsonAttributes(RulesConstants.getObjectMapper().readValue((String) iterate.getValue(), HashMap.class));
-                            } else if (iterate.getValue() instanceof HashMap) {
-                                newValueMap = removeNullValuesInJsonAttributes((HashMap<String, Object>) iterate.getValue());
-                            } else {
-                                continue; // Skip if it's neither String nor HashMap
-                            }
-                            cachedMsg.put(iterate.getKey(), newValueMap);
-                        }
-                    } else {
-                        cachedMsg.put(iterate.getKey(), iterate.getValue());
-                    }
-                }
-            } else { // Late alarm
-                if (iterate.getValue() != null && !iterate.getValue().toString().isEmpty()) {
-                    // Check if the key is present in cached alarm & check if its a JSON value or not
-                    if (cachedMsg.get(iterate.getKey()) != null && checkIfJsonValue(cachedMsg.get(iterate.getKey()))) {
-                        HashMap<String, Object> incomingValueMap;
-                        if (iterate.getValue() instanceof String) {
-                            incomingValueMap = RulesConstants.getObjectMapper().readValue((String) iterate.getValue(), HashMap.class);
-                        } else if (iterate.getValue() instanceof HashMap) {
-                            incomingValueMap = (HashMap<String, Object>) iterate.getValue();
-                        } else {
-                            continue; // Skip if it's neither String nor HashMap
-                        }
+@Repository
+public class AlarmRepositoryImpl {
+    private static final Logger LOG = LoggerFactory.getLogger(AlarmRepositoryImpl.class);
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-                        // **Updated Section: Deserialize the cached value if it's a String**
-                        HashMap<String, Object> cachedValueMap = (cachedMsg.get(iterate.getKey()) instanceof String) 
-                            ? RulesConstants.getObjectMapper().readValue((String) cachedMsg.get(iterate.getKey()), HashMap.class) 
-                            : (HashMap<String, Object>) cachedMsg.get(iterate.getKey());
-                        
-                        HashMap<String, Object> updatedMsg = mergeUpdateJsonValues(incomingValueMap, cachedValueMap, isLateAlarm);
-                        cachedMsg.put(iterate.getKey(), updatedMsg);
-                    } else if (cachedMsg.get(iterate.getKey()) == null) {
-                        cachedMsg.put(iterate.getKey(), iterate.getValue());
-                    }
+    public String[] getArrayValueForTags(JsonNode jsonNode, String key) {
+        try {
+            JsonNode node = jsonNode.get(key);
+            if (node == null || node.isNull()) {
+                LOG.warn("No value found for key: {}", key);
+                return null;
+            }
+
+            // Case 1: Node is an array
+            if (node.isArray()) {
+                return objectMapper.treeToValue(node, String[].class);
+            }
+
+            // Case 2: Node is a string (e.g., "[\"WLS\"]")
+            if (node.isTextual()) {
+                String textValue = node.asText();
+                if (textValue != null && !textValue.isEmpty()) {
+                    // Attempt to parse the string as a JSON array
+                    return objectMapper.readValue(textValue, String[].class);
                 }
             }
+
+            LOG.warn("Invalid format for key: {}. Expected array or stringified array, got: {}", key, node.getNodeType());
+            return null;
+        } catch (Exception e) {
+            LOG.error("Exception in processing tags for key {}: {}", key, e.getMessage(), e);
+            return null;
         }
-    } catch (Exception e) {
-        logger.error("Exception occurred while trying to merge update JsonValues: {} and incoming message : {} and cached message : {}", e, incomingMsg, cachedMsg);
     }
-    return (HashMap<String, Object>) cachedMsg;
 }
 ```
 
-### Summary of Changes
-1. **Deserialize the Cached Value**: Added a section to check if the value retrieved from `cachedMsg` is a `String`. If it is, deserialize it into a `HashMap` before proceeding. This is found in two places (for both non-late and late alarm cases).
-2. **Maintain Proper Type Handling**: Ensured that any access to cached values is properly handled to avoid casting errors.
+### Changes Made
 
-With these changes, your method should now handle JSON strings correctly and avoid the `ClassCastException`.
+1. **Replaced `readValue` with `treeToValue` for Array Nodes**:
+   - **Location**: Inside the `if (node.isArray())` block.
+   - **Reason**: If the `JsonNode` for the `key` is already an array node (e.g., `["WLS"]`), `treeToValue(node, String[].class)` directly converts it to a `String[]`. This avoids the unnecessary string conversion via `asText()` and subsequent parsing.
+   - **Impact**: This handles cases where the input JSON has a proper array (e.g., `"tag": ["WLS"]`) correctly.
+
+2. **Added Support for Stringified Arrays**:
+   - **Location**: Added an `if (node.isTextual())` block to handle cases where the node is a string (e.g., `"[\"WLS\"]"`).
+   - **Reason**: Your input JSON has the `tag` field as a stringified array. This block uses `readValue` to parse the string into a `String[]`, addressing the current input format.
+   - **Impact**: This ensures compatibility with your current JSON format while also supporting proper JSON arrays.
+
+3. **Improved Null and Type Checking**:
+   - **Location**: Added checks for `node == null` or `node.isNull()` and validated node type (`isArray()` or `isTextual()`).
+   - **Reason**: Prevents `NullPointerException` and provides better error handling for unexpected node types.
+   - **Impact**: Makes the code more robust by handling edge cases (e.g., missing key, null values, or invalid formats).
+
+4. **Enhanced Logging**:
+   - **Location**: Updated `LOG.error` to include the key and exception stack trace, and added `LOG.warn` for invalid formats or missing values.
+   - **Reason**: Improves debugging by providing more context about the error or invalid input.
+   - **Impact**: Easier to trace issues in production logs.
+
+5. **Moved `ObjectMapper` to Instance Field**:
+   - **Location**: Declared `ObjectMapper` as a `final` instance field instead of creating a new instance in the method.
+   - **Reason**: `ObjectMapper` is thread-safe and expensive to instantiate. Reusing a single instance is more efficient.
+   - **Impact**: Improves performance by avoiding repeated instantiation.
+
+### Does `treeToValue` Resolve the Error?
+
+Using `treeToValue` alone would not fully resolve the error in your case because the `tag` field is a string (`"[\"WLS\"]"`) rather than an array node (`["WLS"]`). If the input JSON had a proper array (e.g., `"tag": ["WLS"]`), `treeToValue` would work directly. However, since your input is a stringified array, you still need to parse the string using `readValue` for your current JSON format.
+
+The fixed code handles both cases:
+- **Proper JSON Array**: Uses `treeToValue` to convert array nodes directly.
+- **Stringified Array**: Uses `readValue` to parse the string into an array.
+
+This dual approach ensures the code works with your current input (`"tag": "[\"WLS\"]"`) and is future-proof for proper JSON arrays (`"tag": ["WLS"]`).
+
+### Additional Recommendations
+
+1. **Fix Upstream JSON**:
+   - The ideal fix is to update the upstream system to send the `tag` field as a proper JSON array (`["WLS"]`) instead of a string (`"[\"WLS\"]"`). This would simplify the code to only use `treeToValue` and avoid the string parsing step.
+   - If possible, work with the team responsible for the JSON input to make this change.
+
+2. **Validate Input JSON**:
+   - Add validation to ensure the `tag` field is either an array or a valid stringified array. You could use a JSON schema or additional checks to reject invalid formats early.
+
+3. **Test with Different Inputs**:
+   - Test the code with various inputs, such as:
+     - `"tag": ["WLS", "ABC"]` (proper array)
+     - `"tag": "[\"WLS\", \"ABC\"]"` (stringified array)
+     - `"tag": null` (null value)
+     - `"tag": ""` (empty string)
+     - Missing `tag` key
+     - Invalid JSON string (e.g., `"tag": "[invalid]"`)
+
+### Testing the Fixed Code
+
+To verify the fix, you can test with your provided JSON input:
+
+```json
+{
+    "tag": "[\"WLS\"]"
+}
+```
+
+The code will:
+1. Detect that `jsonNode.get("tag")` is a textual node.
+2. Extract the string `"[\"WLS\"]"`.
+3. Use `objectMapper.readValue` to parse it into `String[] { "WLS" }`.
+4. Return the array successfully.
+
+For a proper JSON array like `"tag": ["WLS"]`, it will use `treeToValue` and achieve the same result.
+
+### Conclusion
+
+The error was caused by attempting to parse a stringified JSON array (`"[\"WLS\"]"`) as JSON using `readValue` after extracting it with `asText()`. The fixed code uses `treeToValue` for array nodes and `readValue` for stringified arrays, with improved error handling and logging. The changes ensure compatibility with your current input while supporting proper JSON arrays, making the code more robust and maintainable. If you can fix the upstream JSON to use proper arrays, you can simplify the code further to rely solely on `treeToValue`.

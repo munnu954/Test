@@ -1,202 +1,25 @@
-public String[] getArrayValueForTags(JsonNode jsonNode, String key) {
-    String[] value = null;
-    ObjectMapper objectMapper = new ObjectMapper();
-    if (jsonNode.get(key) != null) {
-        try {
-            if (jsonNode.get(key).isArray()) {
-                value = objectMapper.treeToValue(jsonNode.get(key), String[].class);
-            } else if (jsonNode.get(key).isTextual() && jsonNode.get(key).asText().startsWith("[") && jsonNode.get(key).asText().endsWith("]")) {
-                value = objectMapper.readValue(jsonNode.get(key).asText(), String[].class);
-            } else {
-                value = new String[]{jsonNode.get(key).asText()};
-            }
-        } catch (Exception e) {
-            LOG.error("exception in processing tags" + e.getMessage());
-            return value;
-        }
-    }
-    return value;
-}
+Certainly! Here's a detailed explanation of the root cause of the issue and the fix that was applied:
 
+### Root Cause of the Issue:
+The original implementation of the `getArrayValueForTags` method was not equipped to handle different types of JSON node structures for the "tag" key. Specifically, it only attempted to process the node as a JSON string representation of an array using `objectMapper.readValue(jsonNode.get(key).asText(), String[].class);`. This approach worked for some inputs but failed in other scenarios:
 
+1. **JSON Array**: If the "tag" value was a direct JSON array (e.g., `"tag": ["hidden"]`), the conversion to text using `.asText()` would not correctly represent the array, causing processing errors.
+   
+2. **Simple String**: If the "tag" value was a simple string (e.g., `"tag": "WLS"`), the method tried to parse it as an array, leading to errors because a simple string is not a valid JSON array.
 
+These limitations resulted in exceptions when processing inputs that did not match the expected format.
 
+### Fix Applied:
+To address these issues, the method was updated to handle three distinct cases, ensuring it can process any type of input for the "tag" key:
 
-  // If the node is a JSON array, use treeToValue
+1. **JSON Array Handling**:
+   - If the JSON node is an actual array (`node.isArray()`), the method uses `objectMapper.treeToValue(node, String[].class);` to directly convert the node into a `String[]`. This handles cases where the "tag" value is naturally a JSON array.
 
+2. **String Representation of JSON Array**:
+   - If the JSON node is textual (`node.isTextual()`), the method checks if the text is a JSON string that represents an array (e.g., starts with `[` and ends with `]`). If so, it uses `objectMapper.readValue(textValue, String[].class);` to parse the text into a `String[]`.
 
-     // If the node is a JSON string that represents an array, use readValue
+3. **Simple String Handling**:
+   - If the textual node does not represent an array, it is assumed to be a simple string. The method converts this string into a single-element array with `value = new String[]{textValue};`.
 
-@Repository
-public class AlarmRepositoryImpl {
-    public String[] getArrayValueForTags(JsonNode jsonNode, String key) {
-        String[] value = null;
-        ObjectMapper objectMapper = new ObjectMapper();
-        
-        if (jsonNode.get(key) != null) {
-            try {
-                JsonNode tagNode = jsonNode.get(key);
-                
-                if (tagNode.isArray()) {
-                    // Case 1: When "tag" is a direct JSON array
-                    value = objectMapper.treeToValue(tagNode, String[].class);
-                } else if (tagNode.isTextual()) {
-                    // Case 2: When "tag" is a string representation of a JSON array
-                    value = objectMapper.readValue(tagNode.asText(), String[].class);
-                }
-            } catch (Exception e) {
-                LOG.error("Exception in processing tags: " + e.getMessage());
-            }
-        }
-        return value;
-    }
-}
-
-__££_________________________________
-### Analysis of the Error
-
-The error you're encountering indicates a JSON parsing issue when processing the `tag` field in the input JSON:
-
-```
-exception in processing tagsUnrecognized token 'WLS': was expecting (JSON String, Number, Array, Object or token 'null', 'true' or 'false')
-```
-
-This error occurs because the `tag` field in your JSON input is a string representation of a JSON array (`"[\"WLS\"]"`) rather than a proper JSON array node. When you call `jsonNode.get(key).asText()`, it returns the string `"[\"WLS\"]"`, and `ObjectMapper.readValue()` attempts to parse this string as JSON. However, since the string starts with a value (`WLS`) without proper JSON structure, it throws the `Unrecognized token` error.
-
-#### Root Cause
-The root cause is that the `tag` field in the input JSON is a JSON-encoded string (`"[\"WLS\"]"`) rather than a direct JSON array (`["WLS"]`). The code assumes that `jsonNode.get(key)` is a JSON array node, but it's actually a JSON string node containing a serialized array. Using `asText()` retrieves the string `"[\"WLS\"]"`, and passing it to `ObjectMapper.readValue()` causes the parsing failure.
-
-#### Possible Reasons for the Error
-1. **Input JSON Format**: The `tag` field is a string (`"[\"WLS\"]"`) instead of an array (`["WLS"]`). This could be due to:
-   - The upstream system or data source serializing the array as a string.
-   - Incorrect JSON generation or preprocessing before it reaches your code.
-2. **Incorrect Parsing Logic**: The code assumes `jsonNode.get(key)` is a JSON array node and uses `asText()` to extract it as a string, which is then deserialized again. This is unnecessary if the field is already a JSON array or can lead to errors if the string isn't valid JSON.
-3. **ObjectMapper Misuse**: Using `readValue(jsonNode.get(key).asText(), String[].class)` is problematic because `asText()` is meant for scalar values, not serialized JSON structures. If the node is an array, you should work with it directly.
-
-#### Recommended Fix: Use `ObjectMapper.treeToValue`
-As you suggested, using `ObjectMapper.treeToValue()` is a better approach because it directly converts a `JsonNode` (which could be an array node) to the desired type (`String[].class`) without the intermediate string conversion. This avoids the issue of parsing a JSON-encoded string and handles array nodes correctly.
-
-### Fixed Code
-
-Below is the corrected version of the `AlarmRepositoryImpl` class, incorporating `treeToValue` and additional checks to handle various input cases robustly.
-
-```java
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Repository;
-
-@Repository
-public class AlarmRepositoryImpl {
-    private static final Logger LOG = LoggerFactory.getLogger(AlarmRepositoryImpl.class);
-    private final ObjectMapper objectMapper = new ObjectMapper();
-
-    public String[] getArrayValueForTags(JsonNode jsonNode, String key) {
-        try {
-            JsonNode node = jsonNode.get(key);
-            if (node == null || node.isNull()) {
-                LOG.warn("No value found for key: {}", key);
-                return null;
-            }
-
-            // Case 1: Node is an array
-            if (node.isArray()) {
-                return objectMapper.treeToValue(node, String[].class);
-            }
-
-            // Case 2: Node is a string (e.g., "[\"WLS\"]")
-            if (node.isTextual()) {
-                String textValue = node.asText();
-                if (textValue != null && !textValue.isEmpty()) {
-                    // Attempt to parse the string as a JSON array
-                    return objectMapper.readValue(textValue, String[].class);
-                }
-            }
-
-            LOG.warn("Invalid format for key: {}. Expected array or stringified array, got: {}", key, node.getNodeType());
-            return null;
-        } catch (Exception e) {
-            LOG.error("Exception in processing tags for key {}: {}", key, e.getMessage(), e);
-            return null;
-        }
-    }
-}
-```
-
-### Changes Made
-
-1. **Replaced `readValue` with `treeToValue` for Array Nodes**:
-   - **Location**: Inside the `if (node.isArray())` block.
-   - **Reason**: If the `JsonNode` for the `key` is already an array node (e.g., `["WLS"]`), `treeToValue(node, String[].class)` directly converts it to a `String[]`. This avoids the unnecessary string conversion via `asText()` and subsequent parsing.
-   - **Impact**: This handles cases where the input JSON has a proper array (e.g., `"tag": ["WLS"]`) correctly.
-
-2. **Added Support for Stringified Arrays**:
-   - **Location**: Added an `if (node.isTextual())` block to handle cases where the node is a string (e.g., `"[\"WLS\"]"`).
-   - **Reason**: Your input JSON has the `tag` field as a stringified array. This block uses `readValue` to parse the string into a `String[]`, addressing the current input format.
-   - **Impact**: This ensures compatibility with your current JSON format while also supporting proper JSON arrays.
-
-3. **Improved Null and Type Checking**:
-   - **Location**: Added checks for `node == null` or `node.isNull()` and validated node type (`isArray()` or `isTextual()`).
-   - **Reason**: Prevents `NullPointerException` and provides better error handling for unexpected node types.
-   - **Impact**: Makes the code more robust by handling edge cases (e.g., missing key, null values, or invalid formats).
-
-4. **Enhanced Logging**:
-   - **Location**: Updated `LOG.error` to include the key and exception stack trace, and added `LOG.warn` for invalid formats or missing values.
-   - **Reason**: Improves debugging by providing more context about the error or invalid input.
-   - **Impact**: Easier to trace issues in production logs.
-
-5. **Moved `ObjectMapper` to Instance Field**:
-   - **Location**: Declared `ObjectMapper` as a `final` instance field instead of creating a new instance in the method.
-   - **Reason**: `ObjectMapper` is thread-safe and expensive to instantiate. Reusing a single instance is more efficient.
-   - **Impact**: Improves performance by avoiding repeated instantiation.
-
-### Does `treeToValue` Resolve the Error?
-
-Using `treeToValue` alone would not fully resolve the error in your case because the `tag` field is a string (`"[\"WLS\"]"`) rather than an array node (`["WLS"]`). If the input JSON had a proper array (e.g., `"tag": ["WLS"]`), `treeToValue` would work directly. However, since your input is a stringified array, you still need to parse the string using `readValue` for your current JSON format.
-
-The fixed code handles both cases:
-- **Proper JSON Array**: Uses `treeToValue` to convert array nodes directly.
-- **Stringified Array**: Uses `readValue` to parse the string into an array.
-
-This dual approach ensures the code works with your current input (`"tag": "[\"WLS\"]"`) and is future-proof for proper JSON arrays (`"tag": ["WLS"]`).
-
-### Additional Recommendations
-
-1. **Fix Upstream JSON**:
-   - The ideal fix is to update the upstream system to send the `tag` field as a proper JSON array (`["WLS"]`) instead of a string (`"[\"WLS\"]"`). This would simplify the code to only use `treeToValue` and avoid the string parsing step.
-   - If possible, work with the team responsible for the JSON input to make this change.
-
-2. **Validate Input JSON**:
-   - Add validation to ensure the `tag` field is either an array or a valid stringified array. You could use a JSON schema or additional checks to reject invalid formats early.
-
-3. **Test with Different Inputs**:
-   - Test the code with various inputs, such as:
-     - `"tag": ["WLS", "ABC"]` (proper array)
-     - `"tag": "[\"WLS\", \"ABC\"]"` (stringified array)
-     - `"tag": null` (null value)
-     - `"tag": ""` (empty string)
-     - Missing `tag` key
-     - Invalid JSON string (e.g., `"tag": "[invalid]"`)
-
-### Testing the Fixed Code
-
-To verify the fix, you can test with your provided JSON input:
-
-```json
-{
-    "tag": "[\"WLS\"]"
-}
-```
-
-The code will:
-1. Detect that `jsonNode.get("tag")` is a textual node.
-2. Extract the string `"[\"WLS\"]"`.
-3. Use `objectMapper.readValue` to parse it into `String[] { "WLS" }`.
-4. Return the array successfully.
-
-For a proper JSON array like `"tag": ["WLS"]`, it will use `treeToValue` and achieve the same result.
-
-### Conclusion
-
-The error was caused by attempting to parse a stringified JSON array (`"[\"WLS\"]"`) as JSON using `readValue` after extracting it with `asText()`. The fixed code uses `treeToValue` for array nodes and `readValue` for stringified arrays, with improved error handling and logging. The changes ensure compatibility with your current input while supporting proper JSON arrays, making the code more robust and maintainable. If you can fix the upstream JSON to use proper arrays, you can simplify the code further to rely solely on `treeToValue`.
+### Summary:
+The root cause was the limited handling of different JSON node types, leading to exceptions when processing unexpected formats. The fix expanded the method to recognize and correctly process JSON arrays, string representations of arrays, and simple strings. This comprehensive approach ensures robust handling of varied input formats without causing exceptions.

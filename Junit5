@@ -1,6 +1,8 @@
-To write JUnit 5 test cases for the `run()` and `forwardMessages()` methods in the `MessageConsumer` class, we can use Mockito to mock dependencies and the `ReflectionTestUtils` from the Spring framework for accessing private methods and fields. Since you requested not to use `@SpringBootTest`, we'll focus on unit testing.
+The error you're encountering suggests that the `doNothing()` method is being used incorrectly. The `doNothing()` method in Mockito is only applicable to methods that return `void`. If you're trying to stub non-void methods with `doNothing()`, it will throw this exception.
 
-Here's a sample test class with test cases to cover the `run()` and `forwardMessages()` methods:
+Let's correct the test case for the `run()` method. We will mock the necessary method calls and ensure that the consumer's receive and messageProducer's publish methods are set up correctly.
+
+Here's the updated test case:
 
 ```java
 import static org.mockito.Mockito.*;
@@ -12,9 +14,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,13 +44,18 @@ public class MessageConsumerTest {
         ReflectionTestUtils.setField(messageConsumer, "VMBConnectionFailureThresholdCount", 3);
         when(environment.getProperty(anyString())).thenReturn("test");
         when(histogramBuckets.histogramBoundaries()).thenReturn(new double[]{0.1, 1.0, 10.0});
+        // Mock the consumer to always return a connected status and a mock message
+        when(consumer.isConnected()).thenReturn(true);
+        Message<byte[]> mockMessage = mock(Message.class);
+        when(mockMessage.getData()).thenReturn("testMessage".getBytes());
+        when(consumer.receive(anyLong(), any(TimeUnit.class))).thenReturn(mockMessage);
+        // Mock the message producer to always successfully publish the message
+        when(messageProducer.publishTheMessageToVMB(anyString())).thenReturn(true);
     }
 
     @Test
     public void testRun() {
-        // Setup mocks
-        doNothing().when(consumer).receive();
-        doNothing().when(messageProducer).publishTheMessageToVMB(anyString());
+        // Setup the run field to allow the loop to execute
         ReflectionTestUtils.setField(messageConsumer, "run", true);
 
         // Execute the run method in a separate thread to avoid blocking the test
@@ -59,7 +66,7 @@ public class MessageConsumerTest {
 
         // Allow some time for the thread to run
         try {
-            Thread.sleep(1000);
+            Thread.sleep(1000); // Sleep for 1000 milliseconds
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
@@ -68,34 +75,25 @@ public class MessageConsumerTest {
         ReflectionTestUtils.setField(messageConsumer, "run", false);
 
         // Verify the behavior
-        verify(consumer, atLeastOnce()).receive();
+        verify(consumer, atLeastOnce()).receive(anyLong(), any(TimeUnit.class));
+        verify(messageProducer, atLeastOnce()).publishTheMessageToVMB("testMessage");
     }
 
     @Test
     public void testForwardMessages() throws Exception {
-        // Setup a mock message
-        Message<byte[]> mockMessage = mock(Message.class);
-        when(mockMessage.getData()).thenReturn("testMessage".getBytes());
-        when(consumer.receive(anyLong(), any(TimeUnit.class))).thenReturn(mockMessage);
-        when(consumer.isConnected()).thenReturn(true);
-        when(messageProducer.publishTheMessageToVMB(anyString())).thenReturn(true);
-
         // Invoke the private method using ReflectionTestUtils
         ReflectionTestUtils.invokeMethod(messageConsumer, "forwardMessages");
 
         // Verify message processing and acknowledgment
         verify(messageProducer, times(1)).publishTheMessageToVMB("testMessage");
-        verify(consumer, times(1)).acknowledge(mockMessage);
+        verify(consumer, times(1)).acknowledge(any(Message.class));
     }
 }
 ```
 
-### Explanation:
+### Key Changes:
 
-- **Mocks and Setup**: We use Mockito to mock dependencies like `CustomHealthChecker`, `Environment`, `MeterRegistry`, `MessageProducer`, `Consumer`, and `HistogramBuckets`. We inject these mocks into the `MessageConsumer` instance.
-
-- **ReflectionTestUtils**: We use it to set private fields and invoke private methods, which allows us to test without changing the visibility of these methods.
-
-- **Test Methods**:
-  - `testRun()`: This test method simulates the behavior of the `run()` method by running it in a separate thread. We ensure that the thread runs for a short period and then stop it, verifying that `receive()` is called on the consumer.
-  - `testForwardMessages()`: This test
+- **Consumer Setup**: Instead of using `doNothing()`, we mock the `receive` method to return a mock message.
+- **Mock Message**: We create a mock message and configure it to return a test byte array when `getData()` is called.
+- **Producer Setup**: We mock the `publishTheMessageToVMB` method to always return `true`, simulating a successful message publish.
+- **Thread Handling**: We ensure that the `run` method runs in a separate thread and is stopped after a short period, allowing the test to verify the method's behavior without getting stuck in an infinite loop.

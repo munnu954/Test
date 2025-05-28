@@ -1,25 +1,136 @@
-Certainly! Here's a detailed explanation of the root cause of the issue and the fix that was applied:
+To write JUnit 5 test cases for the `MessageConsumer` class and achieve 100% code coverage, we need to create a test class that mocks the dependencies and verifies the behavior of various methods. Below are the test cases for the `MessageConsumer` class:
 
-### Root Cause of the Issue:
-The original implementation of the `getArrayValueForTags` method was not equipped to handle different types of JSON node structures for the "tag" key. Specifically, it only attempted to process the node as a JSON string representation of an array using `objectMapper.readValue(jsonNode.get(key).asText(), String[].class);`. This approach worked for some inputs but failed in other scenarios:
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
-1. **JSON Array**: If the "tag" value was a direct JSON array (e.g., `"tag": ["hidden"]`), the conversion to text using `.asText()` would not correctly represent the array, causing processing errors.
-   
-2. **Simple String**: If the "tag" value was a simple string (e.g., `"tag": "WLS"`), the method tried to parse it as an array, leading to errors because a simple string is not a valid JSON array.
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-These limitations resulted in exceptions when processing inputs that did not match the expected format.
+@ExtendWith(SpringExtension.class)
+@SpringBootTest
+public class MessageConsumerTest {
 
-### Fix Applied:
-To address these issues, the method was updated to handle three distinct cases, ensuring it can process any type of input for the "tag" key:
+    @InjectMocks
+    private MessageConsumer messageConsumer;
 
-1. **JSON Array Handling**:
-   - If the JSON node is an actual array (`node.isArray()`), the method uses `objectMapper.treeToValue(node, String[].class);` to directly convert the node into a `String[]`. This handles cases where the "tag" value is naturally a JSON array.
+    @Mock
+    private CustomHealthChecker healthChecker;
 
-2. **String Representation of JSON Array**:
-   - If the JSON node is textual (`node.isTextual()`), the method checks if the text is a JSON string that represents an array (e.g., starts with `[` and ends with `]`). If so, it uses `objectMapper.readValue(textValue, String[].class);` to parse the text into a `String[]`.
+    @Mock
+    private Environment environment;
 
-3. **Simple String Handling**:
-   - If the textual node does not represent an array, it is assumed to be a simple string. The method converts this string into a single-element array with `value = new String[]{textValue};`.
+    @Mock
+    private MeterRegistry meterRegistry;
 
-### Summary:
-The root cause was the limited handling of different JSON node types, leading to exceptions when processing unexpected formats. The fix expanded the method to recognize and correctly process JSON arrays, string representations of arrays, and simple strings. This comprehensive approach ensures robust handling of varied input formats without causing exceptions.
+    @Mock
+    private MessageProducer messageProducer;
+
+    @Mock
+    private HistogramBuckets histogramBuckets;
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
+        when(environment.getProperty("vmb.consumer.topic")).thenReturn("testTopic");
+        when(environment.getProperty("vmb.consumer.topic.subscription")).thenReturn("testSubscription");
+        when(histogramBuckets.histogramBoundaries()).thenReturn(new double[]{1, 2, 3});
+    }
+
+    @Test
+    public void testInitializeMessageConsumer() {
+        // Test initialization logic
+        messageConsumer.initializeMessageConsumer();
+
+        // Verify that methods are called as expected
+        verify(environment, times(1)).getProperty("vmb.consumer.topic");
+        verify(environment, times(1)).getProperty("vmb.consumer.topic.subscription");
+    }
+
+    @Test
+    public void testRun() {
+        // Mock consumer behavior
+        when(consumer.isConnected()).thenReturn(true);
+
+        // Test run logic
+        Thread consumerThread = new Thread(messageConsumer);
+        consumerThread.start();
+
+        // Verify that forwardMessages is called
+        verify(messageConsumer, atLeastOnce()).forwardMessages();
+    }
+
+    @Test
+    public void testForwardMessages() {
+        // Mock message and consumer behavior
+        Message<byte[]> message = mock(Message.class);
+        when(message.getData()).thenReturn("TestMessage".getBytes());
+        when(consumer.isConnected()).thenReturn(true);
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(any(), anyLong(), any(TimeUnit.class)))
+                .thenReturn(message);
+
+        // Test message forwarding logic
+        messageConsumer.forwardMessages();
+
+        // Verify message processing
+        verify(messageProducer, times(1)).publishTheMessageToVMB("TestMessage");
+        verify(messageConsumer, times(1)).acknowledgeMessage(message);
+    }
+
+    @Test
+    public void testAcknowledgeMessage() {
+        // Mock message behavior
+        Message<byte[]> message = mock(Message.class);
+        when(message.getData()).thenReturn("TestMessage".getBytes());
+        
+        // Test acknowledgment logic
+        messageConsumer.acknowledgeMessage(message);
+
+        // Verify acknowledgment
+        verify(VMBUtil, times(1)).acknowledgeMessage(consumer, message);
+    }
+
+    @Test
+    public void testRetryConsumerConnection() {
+        // Test retry logic
+        messageConsumer.retryConsumerConnection();
+
+        // Verify that consumer is reinitialized
+        verify(VMBUtil, times(1)).createConsumerConnection(any(), any());
+    }
+
+    @Test
+    public void testCloseConsumer() {
+        // Mock consumer behavior
+        when(consumer.isConnected()).thenReturn(true);
+
+        // Test close logic
+        messageConsumer.closeConsumer();
+
+        // Verify consumer closure
+        verify(VMBUtil, times(1)).closeConsumer(consumer);
+    }
+
+    @Test
+    public void testShutdown() {
+        // Test shutdown logic
+        messageConsumer.shutdown();
+
+        // Verify that consumer is closed
+        verify(VMBUtil, times(1)).closeConsumer(consumer);
+    }
+}
+```
+
+### Notes:
+- **Mocks**: The test uses Mockito to mock dependencies like `CustomHealthChecker`, `Environment`, `MeterRegistry`, `MessageProducer`, and `HistogramBuckets`.
+- **Test Initialization**: `@BeforeEach` is used to set up the test environment before each test case.
+- **Verification**: The tests verify that certain methods are called using `verify` statements.
+- **Thread Execution**: For the `run` method, a separate thread is started to simulate the consumer's behavior.
+
+Ensure that necessary dependencies, such as Mockito and JUnit, are included in your project's build configuration (e.g., Maven or Gradle) to execute these tests.

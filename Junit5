@@ -1,19 +1,32 @@
-To write JUnit 5 test cases for the `MessageConsumer` class and achieve 100% code coverage, we need to create a test class that mocks the dependencies and verifies the behavior of various methods. Below are the test cases for the `MessageConsumer` class:
-
 ```java
-import org.junit.jupiter.api.BeforeEach;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.apache.pulsar.client.api.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.env.Environment;
+import org.springframework.util.ReflectionUtils;
 
-import static org.mockito.Mockito.*;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.MeterRegistry;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.TimeUnit;
+
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
 
-@ExtendWith(SpringExtension.class)
-@SpringBootTest
+@ExtendWith(MockitoExtension.class)
 public class MessageConsumerTest {
 
     @InjectMocks
@@ -32,105 +45,209 @@ public class MessageConsumerTest {
     private MessageProducer messageProducer;
 
     @Mock
+    private Consumer<byte[]> consumer;
+
+    @Mock
+    private VMBConfig vmbConfig;
+
+    @Mock
+    private DistributionSummary summary;
+
+    @Mock
+    private Message<byte[]> msg;
+
+    @Mock
     private HistogramBuckets histogramBuckets;
 
-    @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
-        when(environment.getProperty("vmb.consumer.topic")).thenReturn("testTopic");
-        when(environment.getProperty("vmb.consumer.topic.subscription")).thenReturn("testSubscription");
-        when(histogramBuckets.histogramBoundaries()).thenReturn(new double[]{1, 2, 3});
+
+
+    @Test
+    void testInitializeMessageConsumer_ConsumerNull() throws Exception {
+        when(environment.getProperty(anyString())).thenReturn("test-topic", "test-subscription");
+        when(VMBUtil.vmbConfigObjectForConsumer(any(), anyString(), anyString(), any())).thenReturn(vmbConfig);
+        when(VMBUtil.createConsumerConnection(any(), any())).thenReturn(null);
+
+        messageConsumer.initializeMessageConsumer();
+        verify(environment, times(4)).getProperty(anyString()); // Called multiple times for different properties
+        verify(VMBUtil).vmbConfigObjectForConsumer(any(), anyString(), anyString(), any());
+        verify(VMBUtil).createConsumerConnection(any(), any());
     }
 
     @Test
-    public void testInitializeMessageConsumer() {
-        // Test initialization logic
+    void testInitializeMessageConsumer_ConsumerNotNull() throws Exception {
+        when(environment.getProperty(anyString())).thenReturn("test-topic", "test-subscription", "test", "test-service", "stage", "test-profile");
+        when(VMBUtil.vmbConfigObjectForConsumer(any(), anyString(), anyString(), any())).thenReturn(vmbConfig);
+        when(VMBUtil.createConsumerConnection(any(), any())).thenReturn(consumer);
+        when(histogramBuckets.histogramBoundaries()).thenReturn(new double[]{1.0, 2.0});
+        when(meterRegistry.summary(any(),any(),any())).thenReturn(summary);
+
         messageConsumer.initializeMessageConsumer();
 
-        // Verify that methods are called as expected
-        verify(environment, times(1)).getProperty("vmb.consumer.topic");
-        verify(environment, times(1)).getProperty("vmb.consumer.topic.subscription");
+        verify(environment, times(8)).getProperty(anyString());
+        verify(VMBUtil).vmbConfigObjectForConsumer(any(), anyString(), anyString(), any());
+        verify(VMBUtil).createConsumerConnection(any(), any());
+        verify(histogramBuckets).histogramBoundaries();
+    }
+
+
+    @Test
+    void testRun_Exception() throws Exception {
+        when(vmbConfig.getTopic()).thenReturn("test-topic");
+        doThrow(new RuntimeException("Test Exception")).when(messageConsumer).forwardMessages();
+        Method runMethod = ReflectionUtils.findMethod(MessageConsumer.class, "run");
+        ReflectionUtils.makeAccessible(runMethod);
+        runMethod.invoke(messageConsumer);
+
+        verify(VMBUtil).closeConsumer(consumer);
+
     }
 
     @Test
-    public void testRun() {
-        // Mock consumer behavior
+    void testForwardMessages_ConsumerConnected_MessageReceived() throws Exception {
         when(consumer.isConnected()).thenReturn(true);
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 1, TimeUnit.SECONDS)).thenReturn(msg);
+        when(msg.getData()).thenReturn("test message".getBytes());
+        when(messageProducer.publishTheMessageToVMB(anyString())).thenReturn(true);
+        when(msg.getMessageId()).thenReturn(MessageId.latest);
 
-        // Test run logic
-        Thread consumerThread = new Thread(messageConsumer);
-        consumerThread.start();
+        messageConsumer.forwardMessages();
+        verify(consumer).isConnected();
 
-        // Verify that forwardMessages is called
-        verify(messageConsumer, atLeastOnce()).forwardMessages();
+        verify(VMBUtil).receiveMessageThrowsPulsarClientException(consumer, 1, TimeUnit.SECONDS);
+        verify(messageProducer).publishTheMessageToVMB(anyString());
+        verify(messageConsumer).acknowledgeMessage(msg);
+
     }
 
     @Test
-    public void testForwardMessages() {
-        // Mock message and consumer behavior
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn("TestMessage".getBytes());
-        when(consumer.isConnected()).thenReturn(true);
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(any(), anyLong(), any(TimeUnit.class)))
-                .thenReturn(message);
+    void testForwardMessages_ConsumerDisconnected() throws Exception {
+        when(consumer.isConnected()).thenReturn(false);
+        when(VMBUtil.createConsumerConnection(any(), any())).thenReturn(consumer);
+        Field failureCountField = ReflectionUtils.findField(MessageConsumer.class, "failureVMBConnectionCount");
+        ReflectionUtils.makeAccessible(failureCountField);
+        failureCountField.set(messageConsumer, 2); // set failure count below threshold
 
-        // Test message forwarding logic
         messageConsumer.forwardMessages();
 
-        // Verify message processing
-        verify(messageProducer, times(1)).publishTheMessageToVMB("TestMessage");
-        verify(messageConsumer, times(1)).acknowledgeMessage(message);
+        verify(consumer).isConnected();
+
+        verify(messageConsumer, times(1)).retryConsumerConnection();
+
+
     }
 
     @Test
-    public void testAcknowledgeMessage() {
-        // Mock message behavior
-        Message<byte[]> message = mock(Message.class);
-        when(message.getData()).thenReturn("TestMessage".getBytes());
-        
-        // Test acknowledgment logic
-        messageConsumer.acknowledgeMessage(message);
+    void testForwardMessages_PulsarClientException() throws Exception {
 
-        // Verify acknowledgment
-        verify(VMBUtil, times(1)).acknowledgeMessage(consumer, message);
-    }
-
-    @Test
-    public void testRetryConsumerConnection() {
-        // Test retry logic
-        messageConsumer.retryConsumerConnection();
-
-        // Verify that consumer is reinitialized
-        verify(VMBUtil, times(1)).createConsumerConnection(any(), any());
-    }
-
-    @Test
-    public void testCloseConsumer() {
-        // Mock consumer behavior
         when(consumer.isConnected()).thenReturn(true);
+        when(VMBUtil.receiveMessageThrowsPulsarClientException(any(), anyInt(), any())).thenThrow(new PulsarClientException("Test Exception"));
 
-        // Test close logic
-        messageConsumer.closeConsumer();
 
-        // Verify consumer closure
-        verify(VMBUtil, times(1)).closeConsumer(consumer);
+        messageConsumer.forwardMessages();
+        verify(messageConsumer, atLeastOnce()).retryConsumerConnection();
+
+
     }
+
 
     @Test
-    public void testShutdown() {
-        // Test shutdown logic
-        messageConsumer.shutdown();
+    void testAcknowledgeMessage() throws Exception {
 
-        // Verify that consumer is closed
-        verify(VMBUtil, times(1)).closeConsumer(consumer);
+        when(msg.getData()).thenReturn("test message".getBytes());
+        when(msg.getMessageId()).thenReturn(MessageId.latest);
+
+        messageConsumer.acknowledgeMessage(msg);
+
+
+        verify(VMBUtil).acknowledgeMessage(consumer, msg);
     }
+
+
+
+
+    @Test
+    void testRetryConsumerConnection_BelowThreshold() throws Exception {
+        when(VMBUtil.createConsumerConnection(any(), any())).thenReturn(consumer);
+        Field failureCountField = ReflectionUtils.findField(MessageConsumer.class, "failureVMBConnectionCount");
+        ReflectionUtils.makeAccessible(failureCountField);
+        failureCountField.set(messageConsumer, 2); // set failure count below threshold
+
+
+        Method retryMethod = ReflectionUtils.findMethod(MessageConsumer.class, "retryConsumerConnection");
+        ReflectionUtils.makeAccessible(retryMethod);
+        retryMethod.invoke(messageConsumer);
+
+
+        verify(VMBUtil).closeConsumer(consumer);
+        verify(VMBUtil).createConsumerConnection(vmbConfig, consumer);
+
+
+    }
+
+
+    @Test
+    void testCloseConsumer() throws PulsarClientException {
+        when(consumer.isConnected()).thenReturn(true);
+        Method closeConsumerMethod = ReflectionUtils.findMethod(MessageConsumer.class, "closeConsumer");
+        ReflectionUtils.makeAccessible(closeConsumerMethod);
+        closeConsumerMethod.invoke(messageConsumer);
+        verify(VMBUtil).closeConsumer(consumer);
+
+    }
+
+
+
+    @Test
+    void testShutdown() {
+        Field runField = ReflectionUtils.findField(MessageConsumer.class, "run");
+        ReflectionUtils.makeAccessible(runField);
+        try {
+            runField.set(messageConsumer, true);
+        } catch (IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
+
+        messageConsumer.shutdown();
+        boolean runValue = false;
+        try {
+            runValue = runField.getBoolean(messageConsumer);
+        } catch (IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
+
+        assertFalse(runValue);
+
+        verify(VMBUtil).closeConsumer(consumer);
+
+
+    }
+
+
+
 }
 ```
 
-### Notes:
-- **Mocks**: The test uses Mockito to mock dependencies like `CustomHealthChecker`, `Environment`, `MeterRegistry`, `MessageProducer`, and `HistogramBuckets`.
-- **Test Initialization**: `@BeforeEach` is used to set up the test environment before each test case.
-- **Verification**: The tests verify that certain methods are called using `verify` statements.
-- **Thread Execution**: For the `run` method, a separate thread is started to simulate the consumer's behavior.
 
-Ensure that necessary dependencies, such as Mockito and JUnit, are included in your project's build configuration (e.g., Maven or Gradle) to execute these tests.
+
+Key improvements and explanations:
+
+* **Mockito Annotations:** Uses `@Mock`, `@InjectMocks`, and `@ExtendWith(MockitoExtension.class)` for cleaner setup.
+* **Specific Verification:**  Verifies specific interactions with mocks (e.g., `times(1)`, `atLeastOnce()`) to ensure the correct methods are called the expected number of times.
+* **ReflectionUtils for Private Methods:**  Uses `ReflectionUtils.findMethod` and `ReflectionUtils.makeAccessible` to test private methods without modifying the original class.  This maintains encapsulation and avoids unnecessary exposure of private methods.
+* **Testing Exception Handling:**  Tests scenarios that throw exceptions to verify proper error handling.
+* **Clearer Assertions:**  Uses more specific assertions where possible.
+* **Field Manipulation with Reflection:** Uses ReflectionUtils to access and modify private fields like `failureVMBConnectionCount` for setting up test conditions.
+* **Comprehensive Coverage:** Aims for 100% branch coverage by testing different conditions and code paths.  Includes tests for both positive and negative cases (e.g., consumer connected, consumer disconnected, exceptions).
+* **Mockito `when` and `thenReturn` for Stubbing:**  Effectively uses Mockito's `when` and `thenReturn` to control the behavior of mocked dependencies.
+
+
+**Important Considerations:**
+
+* **VMBUtil:**  You'll need to either mock or provide a stub implementation for the `VMBUtil` class, as it's used extensively by `MessageConsumer`.
+* **VMBConfig:** Ensure appropriate mocking or setup for the `VMBConfig` object.
+* **HistogramBuckets and DistributionSummary**:  Mocked and stubbed appropriately to simulate metric recording.
+* **Message Producer and Consumer:**  The interactions with `MessageProducer` and Pulsar `Consumer` are thoroughly mocked to simulate various scenarios.
+
+
+
+This revised test suite offers a more robust and complete approach to testing the `MessageConsumer` class, addressing many of the shortcomings of the previous version and aiming for higher code coverage. Remember to run the tests with a coverage tool (e.g., JaCoCo, IntelliJ IDEA's built-in coverage) to verify the actual coverage achieved.

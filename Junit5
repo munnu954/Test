@@ -1,161 +1,101 @@
-To create effective JUnit 5 test cases for the `MessageConsumer` class, including coverage for private methods using `ReflectionUtils`, we'll need to set up mock dependencies and define tests for various scenarios, such as successful message consumption, connection failures, and healthy state checks.
+To write JUnit 5 test cases for the `run()` and `forwardMessages()` methods in the `MessageConsumer` class, we can use Mockito to mock dependencies and the `ReflectionTestUtils` from the Spring framework for accessing private methods and fields. Since you requested not to use `@SpringBootTest`, we'll focus on unit testing.
 
-Here is the complete JUnit 5 test case code for the `MessageConsumer` class, considering all provided classes:
+Here's a sample test class with test cases to cover the `run()` and `forwardMessages()` methods:
 
 ```java
+import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.Mockito;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.lang.reflect.Method;
 import java.util.concurrent.TimeUnit;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-@SpringBootTest
 @ExtendWith(MockitoExtension.class)
 public class MessageConsumerTest {
+
+    @Mock
+    private CustomHealthChecker healthChecker;
+    @Mock
+    private Environment environment;
+    @Mock
+    private MeterRegistry meterRegistry;
+    @Mock
+    private MessageProducer messageProducer;
+    @Mock
+    private Consumer<byte[]> consumer;
+    @Mock
+    private HistogramBuckets histogramBuckets;
 
     @InjectMocks
     private MessageConsumer messageConsumer;
 
-    @Mock
-    private CustomHealthChecker healthChecker;
-
-    @Mock
-    private Environment environment;
-
-    @Mock
-    private MeterRegistry meterRegistry;
-
-    @Mock
-    private MessageProducer messageProducer;
-
-    @Mock
-    private Consumer<byte[]> consumer;
-
-    @Mock
-    private HistogramBuckets histogramBuckets;
-
-    @Mock
-    private DistributionSummary summary;
-
     @BeforeEach
-    public void setup() {
-        // Initialize mocks and dependencies
-        when(environment.getProperty("vmb.consumer.topic")).thenReturn("topic");
-        when(environment.getProperty("vmb.consumer.topic.subscription")).thenReturn("subscription");
-        when(meterRegistry.summary(anyString(), any())).thenReturn(summary);
-        when(VMBUtil.createConsumerConnection(any(), any())).thenReturn(consumer);
-        // Start the consumer thread
-        messageConsumer.initializeMessageConsumer();
-        new Thread(messageConsumer).start();
+    public void setUp() {
+        // Initialize any required fields
+        ReflectionTestUtils.setField(messageConsumer, "VMBConnectionFailureThresholdCount", 3);
+        when(environment.getProperty(anyString())).thenReturn("test");
+        when(histogramBuckets.histogramBoundaries()).thenReturn(new double[]{0.1, 1.0, 10.0});
     }
 
     @Test
-    public void testForwardMessages_WhenMessageReceived_ShouldAcknowledge() throws Exception {
-        Message<byte[]> mockMessage = Mockito.mock(Message.class);
-        byte[] data = "Test message".getBytes();
+    public void testRun() {
+        // Setup mocks
+        doNothing().when(consumer).receive();
+        doNothing().when(messageProducer).publishTheMessageToVMB(anyString());
+        ReflectionTestUtils.setField(messageConsumer, "run", true);
 
-        when(mockMessage.getData()).thenReturn(data);
+        // Execute the run method in a separate thread to avoid blocking the test
+        Thread testThread = new Thread(() -> messageConsumer.run());
+
+        // Start the thread
+        testThread.start();
+
+        // Allow some time for the thread to run
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        // Stop the thread after the test
+        ReflectionTestUtils.setField(messageConsumer, "run", false);
+
+        // Verify the behavior
+        verify(consumer, atLeastOnce()).receive();
+    }
+
+    @Test
+    public void testForwardMessages() throws Exception {
+        // Setup a mock message
+        Message<byte[]> mockMessage = mock(Message.class);
+        when(mockMessage.getData()).thenReturn("testMessage".getBytes());
+        when(consumer.receive(anyLong(), any(TimeUnit.class))).thenReturn(mockMessage);
         when(consumer.isConnected()).thenReturn(true);
-        when(VMBUtil.receiveMessageThrowsPulsarClientException(consumer, 1, TimeUnit.SECONDS)).thenReturn(mockMessage);
-        // Mock the behavior of publishing the message
-        when(messageProducer.publishTheMessageToVMB("Test message")).thenReturn(true);
+        when(messageProducer.publishTheMessageToVMB(anyString())).thenReturn(true);
 
-        // Call forwardMessages method via reflection
-        Method forwardMessagesMethod = MessageConsumer.class.getDeclaredMethod("forwardMessages");
-        forwardMessagesMethod.setAccessible(true);
-        forwardMessagesMethod.invoke(messageConsumer);
+        // Invoke the private method using ReflectionTestUtils
+        ReflectionTestUtils.invokeMethod(messageConsumer, "forwardMessages");
 
-        // Verify the acknowledgment
-        verify(messageProducer).publishTheMessageToVMB("Test message");
-        verify(mockMessage, times(1)).getData();
-    }
-
-    @Test
-    public void testForwardMessages_WhenConsumerIsDisconnected_ShouldRetryConnection() throws Exception {
-        when(consumer.isConnected()).thenReturn(false);
-        messageConsumer.forwardMessages(); // Invoke the method to test behavior
-
-        verify(healthChecker, times(1)).setHealth(false, "VMB connection failure threshold count reached in consumer");
-        verify(messageProducer, never()).publishTheMessageToVMB(anyString()); // No message should be published
-    }
-
-    @Test
-    public void testRetryConsumerConnection_WhenThresholdReached_ShouldExit() throws Exception {
-        ReflectionTestUtils.setField(messageConsumer, "failureVMBConnectionCount", 3);
-        assertThrows(SystemExitException.class, () -> {
-            messageConsumer.retryConsumerConnection(); // This will exit the program
-        });
-    }
-
-    @Test
-    public void testShutdown_ShouldCloseConsumer() {
-        when(consumer.isConnected()).thenReturn(true);
-        messageConsumer.shutdown();  // Call shutdown method
-
-        verify(consumer, times(1)).close(); // Ensure consumer is closed
-    }
-
-    @Test
-    public void testAcknowledgeMessage_ShouldAcknowledgeSuccessfully() throws Exception {
-        Message<byte[]> message = Mockito.mock(Message.class);
-        byte[] data = "Acknowledge this message".getBytes();
-        when(message.getData()).thenReturn(data);
-
-        // Call the private method
-        Method acknowledgeMethod = MessageConsumer.class.getDeclaredMethod("acknowledgeMessage", Message.class);
-        acknowledgeMethod.setAccessible(true);
-        acknowledgeMethod.invoke(messageConsumer, message);
-
-        verify(VMBUtil.class);
-    }
-
-    @Test
-    public void testInitializeMessageConsumer_ShouldSetUpCorrectly() {
-        // Call the public method and check if the initialization logs are produced successfully
-        messageConsumer.initializeMessageConsumer();
-      
-        // Assert that the consumer was created
-        assertNotNull(messageConsumer.getConsumer());
+        // Verify message processing and acknowledgment
+        verify(messageProducer, times(1)).publishTheMessageToVMB("testMessage");
+        verify(consumer, times(1)).acknowledge(mockMessage);
     }
 }
 ```
 
-### Key Components of the Test Cases
+### Explanation:
 
-1. **Setup Method**: The `@BeforeEach` setup method is used to initialize mocks and set expected behavior before each test runs, ensuring a clean state.
+- **Mocks and Setup**: We use Mockito to mock dependencies like `CustomHealthChecker`, `Environment`, `MeterRegistry`, `MessageProducer`, `Consumer`, and `HistogramBuckets`. We inject these mocks into the `MessageConsumer` instance.
 
-2. **Test for Message Forwarding**: The `testForwardMessages_WhenMessageReceived_ShouldAcknowledge` method tests the `forwardMessages` logic when a message is received.
+- **ReflectionTestUtils**: We use it to set private fields and invoke private methods, which allows us to test without changing the visibility of these methods.
 
-3. **Test for Disconnection Handling**: The `testForwardMessages_WhenConsumerIsDisconnected_ShouldRetryConnection` method verifies the behavior when the consumer is not connected.
-
-4. **Retry Connection Threshold Test**: The `testRetryConsumerConnection_WhenThresholdReached_ShouldExit` test checks if the application exits when the failure threshold is reached. Note: You might need to create a custom exception for the system exit scenario.
-
-5. **Shutdown Test**: The `testShutdown_ShouldCloseConsumer` method asserts that the shutdown logic closes the consumer correctly.
-
-6. **Acknowledge Method Testing**: The `testAcknowledgeMessage_ShouldAcknowledgeSuccessfully` test uses reflection to invoke the private `acknowledgeMessage()` method and verify its behavior.
-
-7. **Initialization Confirmation**: The `testInitializeMessageConsumer_ShouldSetUpCorrectly` method checks if the consumer was initialized properly and not null.
-
-### Notes
-
-1. **ReflectionUtils**: The `ReflectionTestUtils` from Spring is utilized to access the private methods of the `MessageConsumer` class, which allows us to test these methods without changing their visibility.
-
-2. **Mocks**: The test class uses Mockito to mock dependencies like `CustomHealthChecker`, `MessageProducer`, and more, enabling isolated tests for the `MessageConsumer`.
-
-3. **Testing for System Exit**: The `System.exit` calls in the consumer can’t be tested directly. A common workaround is to use a custom exception to simulate an exit scenario or refactor the code for better testability.
-
-4. **Custom Exit Exception**: You can create a custom exception class, `SystemExitException`, to throw when you want to simulate exiting the program within tests.
-
-5. **Logging Behavior**: Since your logging is encapsulated within the `MessageConsumer`, you may not need to test the logging behavior specifically unless needed.
-
-Make sure to adapt this code based on any additional methods or characteristics you've defined in your actual implementation. Also, ensure that you have the necessary libraries for JUnit 5 and Mockito configured in your build system (e.g., Maven or Gradle).
+- **Test Methods**:
+  - `testRun()`: This test method simulates the behavior of the `run()` method by running it in a separate thread. We ensure that the thread runs for a short period and then stop it, verifying that `receive()` is called on the consumer.
+  - `testForwardMessages()`: This test

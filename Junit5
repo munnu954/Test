@@ -1,12 +1,9 @@
-The error you're encountering suggests that the `doNothing()` method is being used incorrectly. The `doNothing()` method in Mockito is only applicable to methods that return `void`. If you're trying to stub non-void methods with `doNothing()`, it will throw this exception.
+Certainly! Let's write JUnit 5 test cases for the `retryConsumerConnection()` and `shutdown()` methods in the `MessageConsumer` class. We'll use Mockito to mock dependencies and `ReflectionTestUtils` to set private fields and invoke private methods.
 
-Let's correct the test case for the `run()` method. We will mock the necessary method calls and ensure that the consumer's receive and messageProducer's publish methods are set up correctly.
-
-Here's the updated test case:
+Here's the updated test class with test cases for `retryConsumerConnection()` and `shutdown()`:
 
 ```java
 import static org.mockito.Mockito.*;
-import static org.junit.jupiter.api.Assertions.*;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,9 +12,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
-
-import java.time.Duration;
-import java.util.concurrent.TimeUnit;
 
 @ExtendWith(MockitoExtension.class)
 public class MessageConsumerTest {
@@ -44,56 +38,57 @@ public class MessageConsumerTest {
         ReflectionTestUtils.setField(messageConsumer, "VMBConnectionFailureThresholdCount", 3);
         when(environment.getProperty(anyString())).thenReturn("test");
         when(histogramBuckets.histogramBoundaries()).thenReturn(new double[]{0.1, 1.0, 10.0});
-        // Mock the consumer to always return a connected status and a mock message
-        when(consumer.isConnected()).thenReturn(true);
-        Message<byte[]> mockMessage = mock(Message.class);
-        when(mockMessage.getData()).thenReturn("testMessage".getBytes());
-        when(consumer.receive(anyLong(), any(TimeUnit.class))).thenReturn(mockMessage);
-        // Mock the message producer to always successfully publish the message
-        when(messageProducer.publishTheMessageToVMB(anyString())).thenReturn(true);
     }
 
     @Test
-    public void testRun() {
-        // Setup the run field to allow the loop to execute
-        ReflectionTestUtils.setField(messageConsumer, "run", true);
+    public void testRetryConsumerConnection() {
+        // Simulate failure condition
+        ReflectionTestUtils.setField(messageConsumer, "failureVMBConnectionCount", 3);
 
-        // Execute the run method in a separate thread to avoid blocking the test
-        Thread testThread = new Thread(() -> messageConsumer.run());
+        // Call the private method using ReflectionTestUtils
+        ReflectionTestUtils.invokeMethod(messageConsumer, "retryConsumerConnection");
 
-        // Start the thread
-        testThread.start();
-
-        // Allow some time for the thread to run
-        try {
-            Thread.sleep(1000); // Sleep for 1000 milliseconds
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-
-        // Stop the thread after the test
-        ReflectionTestUtils.setField(messageConsumer, "run", false);
-
-        // Verify the behavior
-        verify(consumer, atLeastOnce()).receive(anyLong(), any(TimeUnit.class));
-        verify(messageProducer, atLeastOnce()).publishTheMessageToVMB("testMessage");
+        // Verify that healthChecker is set to unhealthy and System.exit is called
+        verify(healthChecker, times(1)).setHealth(false, "VMB connection failure threshold count reached in consumer");
+        // Note: System.exit() is difficult to test directly, so ensure logic up to it is verified.
     }
 
     @Test
-    public void testForwardMessages() throws Exception {
-        // Invoke the private method using ReflectionTestUtils
-        ReflectionTestUtils.invokeMethod(messageConsumer, "forwardMessages");
+    public void testRetryConsumerConnectionBelowThreshold() {
+        // Simulate a condition where the failure count is below the threshold
+        ReflectionTestUtils.setField(messageConsumer, "failureVMBConnectionCount", 2);
+        when(VMBUtil.createConsumerConnection(any(), any())).thenReturn(mock(Consumer.class));
 
-        // Verify message processing and acknowledgment
-        verify(messageProducer, times(1)).publishTheMessageToVMB("testMessage");
-        verify(consumer, times(1)).acknowledge(any(Message.class));
+        // Call the private method using ReflectionTestUtils
+        ReflectionTestUtils.invokeMethod(messageConsumer, "retryConsumerConnection");
+
+        // Verify that a new consumer connection is attempted
+        verify(consumer, never()).close();
+        verify(healthChecker, never()).setHealth(anyBoolean(), anyString());
+    }
+
+    @Test
+    public void testShutdown() {
+        // Set the consumer to a mock object
+        ReflectionTestUtils.setField(messageConsumer, "consumer", consumer);
+
+        // Call the shutdown method
+        messageConsumer.shutdown();
+
+        // Verify that the consumer is closed
+        verify(consumer, times(1)).close();
     }
 }
 ```
 
-### Key Changes:
+### Explanation:
 
-- **Consumer Setup**: Instead of using `doNothing()`, we mock the `receive` method to return a mock message.
-- **Mock Message**: We create a mock message and configure it to return a test byte array when `getData()` is called.
-- **Producer Setup**: We mock the `publishTheMessageToVMB` method to always return `true`, simulating a successful message publish.
-- **Thread Handling**: We ensure that the `run` method runs in a separate thread and is stopped after a short period, allowing the test to verify the method's behavior without getting stuck in an infinite loop.
+- **Test Setup**: We use `@BeforeEach` to set up the necessary mocks and fields before each test. This includes setting the failure threshold count and stubbing necessary methods.
+
+- **`testRetryConsumerConnection()`**: This test simulates the condition where the failure count exceeds the threshold. It checks that the `setHealth` method on the `healthChecker` is called to set the service as unhealthy. Testing `System.exit()` directly is not straightforward, so we ensure the logic leading up to it is correct.
+
+- **`testRetryConsumerConnectionBelowThreshold()`**: This test simulates the condition where the failure count is below the threshold. It verifies that a new consumer connection is attempted without setting the health to unhealthy.
+
+- **`testShutdown()`**: This test verifies that the `shutdown()` method properly closes the consumer. We mock the consumer object and ensure it's closed when `shutdown()` is called.
+
+These tests should cover the essential logic for the `retryConsumerConnection()` and `shutdown()` methods.

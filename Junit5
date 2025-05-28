@@ -1,9 +1,10 @@
-Certainly! Let's write JUnit 5 test cases for the `retryConsumerConnection()` and `shutdown()` methods in the `MessageConsumer` class. We'll use Mockito to mock dependencies and `ReflectionTestUtils` to set private fields and invoke private methods.
+The `NullPointerException` error is occurring because the `vmbConfig` object is not initialized before being used in the test. We need to mock or set up this `vmbConfig` object properly in the test setup to ensure it contains the necessary values.
 
-Here's the updated test class with test cases for `retryConsumerConnection()` and `shutdown()`:
+Here's how you can reframe the test cases to fix this issue by initializing the `vmbConfig` object:
 
 ```java
 import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,12 +33,23 @@ public class MessageConsumerTest {
     @InjectMocks
     private MessageConsumer messageConsumer;
 
+    private VMBConfig vmbConfig;
+
     @BeforeEach
     public void setUp() {
+        // Initialize VMBConfig
+        vmbConfig = new VMBConfig();
+        vmbConfig.setTopic("test-topic");
+        vmbConfig.setSubscriptionName("test-subscription");
+
+        // Set the vmbConfig field in MessageConsumer
+        ReflectionTestUtils.setField(messageConsumer, "vmbConfig", vmbConfig);
+        
         // Initialize any required fields
         ReflectionTestUtils.setField(messageConsumer, "VMBConnectionFailureThresholdCount", 3);
         when(environment.getProperty(anyString())).thenReturn("test");
         when(histogramBuckets.histogramBoundaries()).thenReturn(new double[]{0.1, 1.0, 10.0});
+        when(VMBUtil.createConsumerConnection(any(), any())).thenReturn(consumer);
     }
 
     @Test
@@ -48,7 +60,7 @@ public class MessageConsumerTest {
         // Call the private method using ReflectionTestUtils
         ReflectionTestUtils.invokeMethod(messageConsumer, "retryConsumerConnection");
 
-        // Verify that healthChecker is set to unhealthy and System.exit is called
+        // Verify that healthChecker is set to unhealthy
         verify(healthChecker, times(1)).setHealth(false, "VMB connection failure threshold count reached in consumer");
         // Note: System.exit() is difficult to test directly, so ensure logic up to it is verified.
     }
@@ -57,13 +69,12 @@ public class MessageConsumerTest {
     public void testRetryConsumerConnectionBelowThreshold() {
         // Simulate a condition where the failure count is below the threshold
         ReflectionTestUtils.setField(messageConsumer, "failureVMBConnectionCount", 2);
-        when(VMBUtil.createConsumerConnection(any(), any())).thenReturn(mock(Consumer.class));
 
         // Call the private method using ReflectionTestUtils
         ReflectionTestUtils.invokeMethod(messageConsumer, "retryConsumerConnection");
 
         // Verify that a new consumer connection is attempted
-        verify(consumer, never()).close();
+        verify(VMBUtil, times(1)).createConsumerConnection(any(), any());
         verify(healthChecker, never()).setHealth(anyBoolean(), anyString());
     }
 
@@ -81,14 +92,12 @@ public class MessageConsumerTest {
 }
 ```
 
-### Explanation:
+### Key Changes:
 
-- **Test Setup**: We use `@BeforeEach` to set up the necessary mocks and fields before each test. This includes setting the failure threshold count and stubbing necessary methods.
+- **Initialize `VMBConfig`**: We create a new `VMBConfig` instance and set required fields like `topic` and `subscriptionName` to avoid `NullPointerException`.
 
-- **`testRetryConsumerConnection()`**: This test simulates the condition where the failure count exceeds the threshold. It checks that the `setHealth` method on the `healthChecker` is called to set the service as unhealthy. Testing `System.exit()` directly is not straightforward, so we ensure the logic leading up to it is correct.
+- **Set `vmbConfig` in `MessageConsumer`**: We use `ReflectionTestUtils` to set the `vmbConfig` field in the `MessageConsumer` instance.
 
-- **`testRetryConsumerConnectionBelowThreshold()`**: This test simulates the condition where the failure count is below the threshold. It verifies that a new consumer connection is attempted without setting the health to unhealthy.
+- **Mock `createConsumerConnection`**: Ensure that `VMBUtil.createConsumerConnection` returns the mocked consumer.
 
-- **`testShutdown()`**: This test verifies that the `shutdown()` method properly closes the consumer. We mock the consumer object and ensure it's closed when `shutdown()` is called.
-
-These tests should cover the essential logic for the `retryConsumerConnection()` and `shutdown()` methods.
+These changes should help you avoid the `NullPointerException` and achieve the desired test coverage for the `retryConsumerConnection()` and `shutdown()` methods.

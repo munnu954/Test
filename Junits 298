@@ -1,50 +1,333 @@
-To handle a variety of input formats, including a simple string (e.g., `"tag": "WLS"`), you can update the code to handle three scenarios:
+To implement the requirement for your `AlarmRuleUpdatePublisher` application such that it will shut down the JVM and restart the pods on a health check failure, we need to ensure that the application correctly detects an unhealthy state and responds accordingly. Specifically, we'll update the health indicators to propagate fatal errors, implement a graceful shutdown for situations that cause the application to report unhealthy, and improve logging for better clarity and debugging.
 
-1. **JSON Array**: The value is an actual JSON array (e.g., `"tag": ["hidden"]`).
-2. **String Representation of JSON Array**: The value is a string that represents a JSON array (e.g., `"tag": "[\"WLS\"]"`).
-3. **Simple String**: The value is a simple string (e.g., `"tag": "WLS"`).
+Here's the rewritten code, including highlighted changes and improvements:
 
-Here's how you can modify the code to handle all these cases:
+### `AlarmRuleUpdatePublisherApplication` Class
 
 ```java
-@Repository
-public class AlarmRepositoryImpl {
-    public String[] getArrayValueForTags(JsonNode jsonNode, String key) {
-        String[] value = null;
-        ObjectMapper objectMapper = new ObjectMapper();
-        
-        if (jsonNode.has(key)) {
-            JsonNode node = jsonNode.get(key);
-            try {
-                if (node.isArray()) {
-                    // If the node is a JSON array, use treeToValue
-                    value = objectMapper.treeToValue(node, String[].class);
-                } else if (node.isTextual()) {
-                    String textValue = node.asText();
-                    if (textValue.startsWith("[") && textValue.endsWith("]")) {
-                        // If the text is a JSON string that represents an array, use readValue
-                        value = objectMapper.readValue(textValue, String[].class);
-                    } else {
-                        // If it's just a simple string, convert it to a single-element array
-                        value = new String[]{textValue};
-                    }
-                }
-            } catch (Exception e) {
-                LOG.error("Exception in processing tags: " + e.getMessage());
-            }
+@SpringBootApplication
+public class AlarmRuleUpdatePublisherApplication {
+    private static ConfigurableApplicationContext context = null;
+
+    private static final Logger logger = LoggerFactory.getLogger(AlarmRuleUpdatePublisherApplication.class);
+
+    public static void main(String[] args) {
+        try {
+            SpringApplication app = new SpringApplication(AlarmRuleUpdatePublisherApplication.class);
+            app.setBannerMode(Banner.Mode.OFF);
+            context = app.run(args);
+
+            AlarmDBQueueReader reader = context.getBean(AlarmDBQueueReader.class);
+            reader.start();
+            logger.info("Application successfully started.");
+        } catch (Exception ex) {
+            logger.error("Fatal exception during startup: ", ex);
+            System.exit(1); // Make sure to exit on critical startup failure
         }
-        
-        return value;
     }
 }
 ```
 
-### Key Changes:
-1. **Handling Simple Strings**:
-   - Added logic to check if the text value is neither an array nor a JSON string representation of an array.
-   - If the node's value is a simple string, it's converted into a single-element array.
+### `AlarmDBQueueReader` Class
 
-2. **Extended Type Checking**:
-   - For textual nodes, additional checks determine if the text is a JSON array or a simple string.
+```java
+@Component
+public class AlarmDBQueueReader extends Thread implements HealthIndicator {
+    public static LinkedList<String> almQueue = new LinkedList<>();
+    private boolean operate = true;
+    private boolean _shutdown = false;
+    private BlockingQueue<String> queue = new ArrayBlockingQueue<>(10);
+    Health health = Health.up().build(); // Initialize health indicator
 
-This approach ensures that the method can handle JSON arrays, string representations of arrays, and simple strings uniformly, converting all inputs to a `String[]`.
+    private static final Logger logger = LoggerFactory.getLogger(AlarmDBQueueReader.class);
+
+    @Autowired
+    private AlarmPublisher alarmPublisher;
+
+    @Autowired
+    private PGDataSource dataSource;
+
+    PGConnection connection;
+
+    @Autowired
+    public AlarmDBQueueReader(AlarmPublisher alarmPublisher, @Qualifier("alarmDataSource") PGDataSource dataSource, Environment env) {
+        this.alarmPublisher = alarmPublisher;
+        this.dataSource = dataSource;
+
+        alarmPublisher.start();
+        setupDatabaseConnection();
+    }
+
+    private void setupDatabaseConnection() {
+        PGNotificationListener listener = new PGNotificationListener() {
+            @Override
+            public void notification(int processId, String channelName, String payload) {
+                queue.offer("/channels/" + channelName + "  " + payload);
+            }
+        };
+
+        // Log into the db
+        try {
+            connection = (PGConnection) dataSource.getConnection();
+            connection.addNotificationListener(listener);
+            Statement statement = connection.createStatement();
+            statement.execute("LISTEN ruleUpdate");
+            statement.close();
+        } catch (SQLException e) {
+            health = Health.down().withDetail("Error", e.getLocalizedMessage()).build();
+            logger.error("Error setting up database connection: ", e);
+            handleHealthFailure(); // Handle the health failure
+        }
+    }
+
+    public void start() {
+        super.start();
+    }
+
+    @Override
+    public void run() {
+        BlockingQueue<String> queue = getQueue();
+        while (!(_shutdown)) {
+            processMessage(queue);
+        }
+        logger.info("Alarm DB Queue reader thread stopped.");
+    }
+
+    public BlockingQueue<String> getQueue() {
+        return queue;
+    }
+
+    public void processMessage(BlockingQueue<String> queue) {
+        try {
+            String msg = queue.take();
+            Instant startTime = Instant.now();
+            msg = msg.substring(msg.indexOf("("), msg.length());
+            logger.debug("Processing message: " + msg);
+            alarmPublisher.addMessageQueue(msg, startTime);
+        } catch (InterruptedException e) {
+            logger.error("Thread interrupted while waiting for messages: ", e);
+            Thread.currentThread().interrupt(); // Restore the interrupted status
+        } catch (Exception e) {
+            logger.error("Unexpected error while processing message: ", e);
+        }
+    }
+
+    @Override
+    public Health health() {
+        return health;
+    }
+
+    private void handleHealthFailure() {
+        logger.error("Database health check failed. Shutting down the application.");
+        System.exit(1); // Exit JVM on health failure
+    }
+}
+```
+
+### `DatabaseHealthContributor` Class
+
+```java
+@Component("RSDDatabase")
+public class DatabaseHealthContributor implements HealthIndicator {
+    protected final Logger logger = LogManager.getLogger(this.getClass());
+
+    @Autowired
+    private PGDataSource ds;
+
+    @Override
+    public Health health() {
+        try (Connection conn = ds.getConnection(); 
+             Statement stmt = conn.createStatement()) {
+             
+            stmt.execute("SELECT datname FROM pg_database;");
+            return Health.up().build(); // Return healthy if connection is successful
+        } catch (SQLException ex) {
+            logger.error("RSD Health-Indicator: Service is DOWN due to SQL exception: ", ex);
+            return Health.down().build();
+        }
+    }
+}
+```
+
+### `ApolloServiceHealth` Class
+
+```java
+@Service
+public class ApolloServiceHealth implements HealthIndicator {
+    private boolean healthy = true;
+    private Health.Builder status = Health.up();
+    private String description = "";
+
+    protected final Logger logger = LogManager.getLogger(this.getClass());
+
+    @Override
+    public Health health() {
+        if (!this.healthy) {
+            logger.error("GLOBAL Health-Indicator: Service is Down: {}", description);
+            status = Health.down();
+        } else {
+            logger.info("GLOBAL Health-Indicator: Service is UP: {}", description);
+            status = Health.up();
+        }
+        return status.build();
+    }
+
+    public void setHealthy(boolean healthy) {
+        this.healthy = healthy;
+    }
+
+    public void setHealthy(boolean healthy, String description) {
+        this.healthy = healthy;
+        this.description = description;
+    }
+}
+```
+
+### `AlarmPublisher` Class
+
+```java
+@Component
+public class AlarmPublisher extends Thread implements HealthIndicator {
+    private boolean _run = true;
+    private String _topic;
+    private Producer<byte[]> _producer = null;
+    private Queue<String> _msgQueue = new LinkedList<>();
+    Health health = Health.up().build();
+    private DistributionSummary summary;
+
+    protected final Logger logger = LogManager.getLogger(this.getClass());
+
+    @Autowired
+    public AlarmPublisher(ResourceLoader myResourceLoader, Environment env, MeterRegistry meterRegistry, HistogramBuckets histogramBuckets) {
+        createProducer(env);// Moved producer creation logic to its own method for clarity
+        initializeMetrics(meterRegistry, histogramBuckets);
+    }
+
+    private void createProducer(Environment env) {
+        try {
+            _topic = env.getProperty("vmb.producer.topic");
+            VMConfig prodVMBConfig = VMUtil.vmbConfigObjectForProducer(env, _topic, false);
+            _producer = VMUtil.createProducerConnectionWithoutEncryption(prodVMBConfig, null);
+            if (_producer == null) {
+                logger.error("Producer is NULL. Exiting the program.");
+                health = Health.down().withDetail("Error", "Pulsar Producer is not created").build();
+                System.exit(0); // Ensure we exit on severe failure
+            }
+            logger.info("Successfully created producer for Topic: {}", _topic);
+        } catch (Exception e) {
+            logger.error("Exception occurred while creating producer: ", e);
+            health = Health.down().withDetail("Error", e.getLocalizedMessage()).build();
+        }
+    }
+
+    private void initializeMetrics(MeterRegistry meterRegistry, HistogramBuckets histogramBuckets) {
+        try {
+            summary = DistributionSummary.builder(AlarmRuleUpdatePublisherConstants.METRIC_BASENAME)
+                    .serviceLevelObjectives(histogramBuckets.histogramBoundaries())
+                    .tags(AlarmRuleUpdatePublisherConstants.ENVIRONMENT, 
+                          env.getProperty(AlarmRuleUpdatePublisherConstants.ACTIVE_PROFILE),
+                          AlarmRuleUpdatePublisherConstants.SERVICE, 
+                          env.getProperty(AlarmRuleUpdatePublisherConstants.APPLICATION_NAME), 
+                          AlarmRuleUpdatePublisherConstants.LEVEL, 
+                          AlarmRuleUpdatePublisherConstants.STAGE)
+                    .register(meterRegistry);
+        } catch (Exception e) {
+            logger.error("Exception while initializing latency summary: ", e);
+        }
+    }
+
+    public void addMessageQueue(String msg, Instant startTime) {
+        synchronized (_msgQueue) {
+            logger.debug("Adding to message Queue: {}", msg);
+            _msgQueue.add(msg);
+            logger.info("MESSAGE TO PUBLISH: {}", msg);
+            _msgQueue.notifyAll(); // Notify the waiting thread
+        }
+    }
+
+    public void run() {
+        logger.debug("Alarm Publisher Thread started.");
+        try {
+            while (_run) {
+                insideThread();
+            }
+        } catch (Exception e) {
+            logger.error("Exception in run: ", e);
+        } finally {
+            VMUtil.closeProducer(_producer);
+        }
+    }
+
+    public void insideThread() throws PulsarClientException {
+        try {
+            String content;
+            synchronized (_msgQueue) {
+                if (_msgQueue.isEmpty()) {
+                    logger.debug("Message queue is empty, waiting...");
+                    try {
+                        _msgQueue.wait();
+                    } catch (InterruptedException ie) {
+                        logger.error("Error waiting on message queue: ", ie);
+                        Thread.currentThread().interrupt(); // Restore interrupt status
+                    }
+                }
+                content = _msgQueue.poll(); // Safe to poll as we have a wait
+                if (content == null) return; // If nothing is received, simply return
+            }
+
+            MessageId msgId = VMUtil.sendMessageThrowsPulsarClientException(_producer, content.getBytes());
+            logger.debug("Published Message Id: {} \n CONTENT: {}", msgId, content);
+            // Additional latency calculations omitted for brevity
+        } catch (PulsarClientException | Exception e) {
+            logger.error("Exception in publishing message: ", e);
+            health = Health.down().withDetail("Error", e.getLocalizedMessage()).build();
+            throw e; // Rethrow the exception to handle in run
+        }
+    }
+
+    @Override
+    public Health health() {
+        return health; // Return current health status
+    }
+}
+```
+
+### Key Changes and Highlights:
+
+1. **Shutdown on Health Failure**:
+   - In `AlarmDBQueueReader`, we implemented `handleHealthFailure()` to shut down the JVM in case of a health failure detected during the connection setup.
+   - **Added**: 
+   ```java
+   private void handleHealthFailure() {
+       logger.error("Database health check failed. Shutting down the application.");
+       System.exit(1); // Exit JVM on health failure
+   }
+   ```
+
+2. **Improved Logging**:
+   - All error logs now provide more context and clarity, including specific messages about the state of the application and the operations being performed.
+   - **Updated messages**: `logger.info("Application successfully started.");`, `logger.error("Error while setting up database connection: ", e);`, and similar enhancements across the code.
+
+3. **Proper Exception Handling**:
+   - In `AlarmPublisher` and `AlarmDBQueueReader`, exception handling now ensures that the application logs enough context to understand the issue if it occurs.
+   - Exceptions from database connectivity now automatically trigger health checks that might shut down the application.
+
+4. **Thread Safety Improvements**:
+   - Added synchronized blocks where necessary to prevent concurrent access issues, particularly in message handling methods and the queue.
+
+5. **Exit on Producer Creation Failure**:
+   - The `AlarmPublisher` class now has a check to exit immediately if the producer cannot be created.
+   ```java
+   if (_producer == null) {
+       logger.error("Producer is NULL. Exiting the program.");
+       health = Health.down().withDetail("Error", "Pulsar Producer is not created").build();
+       System.exit(0); // Ensure we exit on severe failure
+   }
+   ```
+
+6. **Graceful Handling and Notifications**:
+   - The application now logs messages that give insight into both healthy and unhealthy states, ensuring operators can troubleshoot the service effectively.
+
+### Summary
+
+This implementation enhances the robustness of your `AlarmRuleUpdatePublisher` application by ensuring it shuts down on critical health check failures. The improved logging provides clearer insights, making it easier to identify issues during operation and for post-mortem analysis. Through structured exception handling and synchronized access, the code supports reliable operation under varying conditions.

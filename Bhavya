@@ -1,14 +1,70 @@
-Here’s how you can convert the provided data into XML format:
-
-```xml
-<root>
-    <username>823115_QA191</username>
-    <ecpdId>823115</ecpdId>
-    <eventObj>
-        <ecpdID>823115</ecpdID>
-        <userName>823115_QA191</userName>
-    </eventObj>
-</root>
-```
-
-This XML structure represents the same data as your original input. If you need any modifications or additional information, feel free to ask!
+Issue to Resolution – Complete Flow
+🔴 Issue Observed
+Service: osqar-qualification-manager
+Environment: UAT
+Problem:
+Application health checks were failing intermittently
+Liveness probe had timeoutSeconds = 1
+This is too low → app not responding within 1 sec → pod may restart unnecessarily
+🔍 Initial Investigation
+Checked HPA:
+Bash
+kubectl get hpa -n ibwv-uat-osqar | grep osqar-qualification-manager
+✔ Found HPA exists
+✔ CPU usage was very low (0%) → no scaling issue
+Verified Pods:
+Bash
+kubectl get pods -n ibwv-uat-osqar | grep osqar-qualification-manager
+✔ Pods were running
+❗ But issue likely due to probe timeout, not pod crash
+Checked Deployment YAML:
+Bash
+kubectl get deploy osqar-qualification-manager -n ibwv-uat-osqar -o yaml
+Found:
+YAML
+livenessProbe:
+  periodSeconds: 10
+  timeoutSeconds: 1   ❌ (too low)
+⚠️ Root Cause
+timeoutSeconds: 1
+👉 Application not responding within 1 sec
+👉 Kubernetes marks container unhealthy
+👉 Can cause unnecessary restarts / false failures
+🛠️ Fix Applied
+Edited deployment directly:
+Bash
+kubectl edit deploy osqar-qualification-manager -n ibwv-uat-osqar
+Changed:
+YAML
+timeoutSeconds: 1  →  5   ✅
+✔ As suggested by team (safe incremental change)
+✔ Did NOT change periodSeconds (kept as 10)
+🚀 Deployment Behavior
+After saving:
+Kubernetes automatically triggered rollout
+Old pods terminated
+New pods created with updated config
+✅ Verification
+Checked pods again:
+Bash
+kubectl get pods -n ibwv-uat-osqar | grep osqar-qualification-manager
+✔ New pods started (~3 min age)
+✔ Status = Running
+✔ Ready = 1/1
+(Optional validation)
+Bash
+kubectl get deploy osqar-qualification-manager -n ibwv-uat-osqar -o yaml | grep timeoutSeconds
+✔ Confirmed value updated to 5
+🎯 Final Outcome
+Liveness probe timeout increased from 1s → 5s
+Pods restarted successfully
+No failures observed after deployment
+Service is stable
+🟢 Key Learnings
+Very low timeoutSeconds can cause false health failures
+Always increase gradually (1 → 5, not directly 30)
+kubectl edit deploy automatically triggers rollout
+Pod restart confirms config change applied
+🗣️ One-line Summary (for Lead / Interview)
+👉
+“Identified that liveness probe timeout was too low (1s), updated it to 5s, which triggered a rollout, and verified new pods are running successfully without issues.”

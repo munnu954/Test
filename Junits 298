@@ -1,1 +1,72 @@
-.
+Looking closely at your controller implementation, there are two major architectural issues here:
+ * The Double-Conversion Anti-Pattern (Unnecessary ObjectMapper usage)
+ * The Manual Instantiation of ObjectMapper
+1. Do you really need ObjectMapper in this controller?
+In most clean architectures, NO.
+Look at the lifecycle of your request:
+ * Spring MVC automatically uses Jackson under the hood to deserialize the incoming raw JSON payload into Tmf656EventPayload jsonPayload (via @RequestBody).
+ * Inside the method, you immediately call objectMapper.writeValueAsString(jsonPayload) to serialize it right back into a JSON string just to pass it to loggingService and queueService.enqueueHttpEvent(rawJsonString, ...).
+Incoming JSON -> [Spring Jackson Deserializes] -> Tmf656EventPayload -> [ObjectMapper Serializes BACK] -> rawJsonString
+
+This causes unnecessary CPU and memory overhead on every incoming HTTP request.
+2. Better Alternatives
+Alternative A: Pass the typed object to queueService (Best Practice)
+Instead of enqueuing raw JSON strings, let queueService accept the strongly-typed DTO Tmf656EventPayload (or a domain model).
+ * Advantage: Eliminates ObjectMapper from the controller entirely and keeps your domain strongly typed.
+@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
+public ResponseEntity<Void> receiveClientListenerEvent(@Valid @RequestBody Tmf656EventPayload jsonPayload) {
+    try {
+        log.info("[TMF-656] Inbound HTTP POST event received for eventId={}", jsonPayload.getEventId());
+        
+        serviceProblemService.registerOrUpdate(jsonPayload);
+        queueService.enqueueHttpEvent(jsonPayload, AlarmSource.EATON);
+
+        return ResponseEntity.noContent().build();
+    } catch (Exception e) {
+        log.error("[TMF-656] Error processing listener event: {}", e.getMessage(), e);
+        return ResponseEntity.badRequest().build();
+    }
+}
+
+Alternative B: Accept @RequestBody String rawJson + Manually Parse (If raw JSON is strictly required)
+If downstream services or auditing systems strictly demand the exact, unmodified raw JSON payload string as received over the wire:
+ * Accept @RequestBody String rawJsonPayload in the method signature.
+ * Convert it to Tmf656EventPayload once using an injected ObjectMapper (or validate it).
+ * This preserves the original wire payload without formatting distortions caused by round-trip deserialization/serialization.
+3. If you DO need ObjectMapper, how should it be fixed?
+If you decide to keep ObjectMapper in this class or another service, do not instantiate it with new.
+The comment in your code notes:
+> * Avoids "No qualifying bean of type ObjectMapper" startup failure
+> 
+This error occurs when Spring Boot's JacksonAutoConfiguration is missing, disabled, or excluded. Fix the root cause by providing a centralized @Bean configuration:
+@Configuration
+public class JacksonConfig {
+
+    @Bean
+    public ObjectMapper objectMapper() {
+        return Jackson2ObjectMapperBuilder.json()
+                .modules(new JavaTimeModule())
+                .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .build();
+    }
+}
+
+Then, allow Lombok's @RequiredArgsConstructor to inject it cleanly:
+@RestController
+@RequiredArgsConstructor
+@RequestMapping("/api/alarms")
+@ConditionalOnWebApplication(type = Type.SERVLET)
+public class Tmf656ListenerController {
+
+    private final AlarmQueueService queueService;
+    private final Tmf656ServiceProblemService serviceProblemService;
+    private final AlarmLoggingService loggingService;
+    private final ObjectMapper objectMapper; // Clean constructor injection via Lombok
+    
+    // ...
+}
+
+Summary Recommendation
+ * Remove the serialization step: Refactor queueService.enqueueHttpEvent(...) to accept Tmf656EventPayload directly.
+ * Remove ObjectMapper from the Controller: Controllers should only route requests, delegate business logic, and return HTTP responses.
+ * Provide a @Bean ObjectMapper globally if other services in your microservice need custom serialization rules.
